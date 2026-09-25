@@ -1,0 +1,3484 @@
+{
+"alibaba": {
+"deepseek-v4-flash-0731": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Flash 0731",
+"release_date": "2026-07-31"
+},
+"qvq-max": {
+"family": "qvq",
+"knowledge": "2024-04",
+"name": "QVQ Max",
+"release_date": "2025-03-25"
+},
+"qwen-flash": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen Flash",
+"release_date": "2025-07-28"
+},
+"qwen-max": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen Max",
+"release_date": "2024-04-03"
+},
+"qwen-mt-plus": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-MT Plus",
+"release_date": "2025-01"
+},
+"qwen-mt-turbo": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-MT Turbo",
+"release_date": "2025-01"
+},
+"qwen-omni-turbo": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-Omni Turbo",
+"release_date": "2025-01-19"
+},
+"qwen-omni-turbo-realtime": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-Omni Turbo Realtime",
+"release_date": "2025-05-08"
+},
+"qwen-plus": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen Plus",
+"release_date": "2024-01-25"
+},
+"qwen-plus-character-ja": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen Plus Character (Japanese)",
+"release_date": "2024-01"
+},
+"qwen-turbo": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen Turbo",
+"release_date": "2024-11-01"
+},
+"qwen-vl-max": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-VL Max",
+"release_date": "2024-04-08"
+},
+"qwen-vl-ocr": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-VL OCR",
+"release_date": "2024-10-28"
+},
+"qwen-vl-plus": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen-VL Plus",
+"release_date": "2024-01-25"
+},
+"qwen2-5-14b-instruct": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5 14B Instruct",
+"release_date": "2024-09"
+},
+"qwen2-5-32b-instruct": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5 32B Instruct",
+"release_date": "2024-09"
+},
+"qwen2-5-72b-instruct": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5 72B Instruct",
+"release_date": "2024-09"
+},
+"qwen2-5-7b-instruct": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5 7B Instruct",
+"release_date": "2024-09"
+},
+"qwen2-5-omni-7b": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5-Omni 7B",
+"release_date": "2024-12"
+},
+"qwen2-5-vl-72b-instruct": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5-VL 72B Instruct",
+"release_date": "2024-09"
+},
+"qwen2-5-vl-7b-instruct": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen2.5-VL 7B Instruct",
+"release_date": "2024-09"
+},
+"qwen3-14b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 14B",
+"release_date": "2025-04"
+},
+"qwen3-235b-a22b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 235B-A22B",
+"release_date": "2025-04"
+},
+"qwen3-32b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 32B",
+"release_date": "2025-04"
+},
+"qwen3-8b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 8B",
+"release_date": "2025-04"
+},
+"qwen3-asr-flash": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen3-ASR Flash",
+"release_date": "2025-09-08"
+},
+"qwen3-coder-30b-a3b-instruct": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Coder 30B-A3B Instruct",
+"release_date": "2025-04"
+},
+"qwen3-coder-480b-a35b-instruct": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Coder 480B-A35B Instruct",
+"release_date": "2025-04"
+},
+"qwen3-coder-flash": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 Coder Flash",
+"release_date": "2025-07-28"
+},
+"qwen3-coder-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 Coder Plus",
+"release_date": "2025-07-23"
+},
+"qwen3-livetranslate-flash-realtime": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen3-LiveTranslate Flash Realtime",
+"release_date": "2025-09-22"
+},
+"qwen3-max": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 Max",
+"release_date": "2025-09-23"
+},
+"qwen3-next-80b-a3b-instruct": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Next 80B-A3B Instruct",
+"release_date": "2025-09"
+},
+"qwen3-next-80b-a3b-thinking": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Next 80B-A3B (Thinking)",
+"release_date": "2025-09"
+},
+"qwen3-omni-flash": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen3-Omni Flash",
+"release_date": "2025-09-15"
+},
+"qwen3-omni-flash-realtime": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen3-Omni Flash Realtime",
+"release_date": "2025-09-15"
+},
+"qwen3-vl-235b-a22b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-VL 235B-A22B",
+"release_date": "2025-04"
+},
+"qwen3-vl-30b-a3b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-VL 30B-A3B",
+"release_date": "2025-04"
+},
+"qwen3-vl-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-VL Plus",
+"release_date": "2025-09-23"
+},
+"qwen3.5-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.5 Plus",
+"release_date": "2026-02-16"
+},
+"qwen3.6-max-preview": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.6 Max Preview",
+"release_date": "2026-04-20"
+},
+"qwen3.6-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.6 Plus",
+"release_date": "2026-04-02"
+},
+"qwen3.7-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.7 Plus",
+"release_date": "2026-06-02"
+},
+"qwq-plus": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "QwQ Plus",
+"release_date": "2025-03-05"
+}
+},
+"amazon-bedrock": {
+"amazon.nova-2-lite-v1:0": {
+"family": "nova",
+"knowledge": "2025-10",
+"name": "Nova 2 Lite",
+"release_date": "2025-12-02"
+},
+"amazon.nova-lite-v1:0": {
+"family": "nova-lite",
+"knowledge": "2024-10",
+"name": "Nova Lite",
+"release_date": "2024-12-03"
+},
+"amazon.nova-micro-v1:0": {
+"family": "nova-micro",
+"knowledge": "2024-10",
+"name": "Nova Micro",
+"release_date": "2024-12-03"
+},
+"amazon.nova-pro-v1:0": {
+"family": "nova-pro",
+"knowledge": "2024-10",
+"name": "Nova Pro",
+"release_date": "2024-12-03"
+},
+"anthropic.claude-fable-5": {
+"family": "claude-fable",
+"knowledge": "2026-01-31",
+"name": "Claude Fable 5",
+"release_date": "2026-06-09"
+},
+"anthropic.claude-fable-5-1": {
+"family": "claude-fable",
+"knowledge": "2026-06",
+"name": "Claude Fable 5.1",
+"release_date": "2026-09-01"
+},
+"anthropic.claude-haiku-4-5-20251001-v1:0": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5",
+"release_date": "2025-10-15"
+},
+"anthropic.claude-opus-4-1-20250805-v1:0": {
+"family": "claude-opus",
+"knowledge": "2025-03-31",
+"name": "Claude Opus 4.1",
+"release_date": "2025-08-05"
+},
+"anthropic.claude-opus-4-5-20251101-v1:0": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5",
+"release_date": "2025-11-01"
+},
+"anthropic.claude-opus-4-6-v1": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "Claude Opus 4.6",
+"release_date": "2026-02-05"
+},
+"anthropic.claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7",
+"release_date": "2026-04-16"
+},
+"anthropic.claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8",
+"release_date": "2026-05-28"
+},
+"anthropic.claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5",
+"release_date": "2026-07-24"
+},
+"anthropic.claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5",
+"release_date": "2026-09-22"
+},
+"anthropic.claude-sonnet-4-5-20250929-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5",
+"release_date": "2025-09-29"
+},
+"anthropic.claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6",
+"release_date": "2026-02-17"
+},
+"anthropic.claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5",
+"release_date": "2026-06-30"
+},
+"apac.amazon.nova-lite-v1:0": {
+"family": "nova-lite",
+"knowledge": "2024-10",
+"name": "Nova Lite (APAC)",
+"release_date": "2024-12-03"
+},
+"apac.amazon.nova-micro-v1:0": {
+"family": "nova-micro",
+"knowledge": "2024-10",
+"name": "Nova Micro (APAC)",
+"release_date": "2024-12-03"
+},
+"apac.amazon.nova-pro-v1:0": {
+"family": "nova-pro",
+"knowledge": "2024-10",
+"name": "Nova Pro (APAC)",
+"release_date": "2024-12-03"
+},
+"apac.anthropic.claude-sonnet-4-20250514-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-03-31",
+"name": "Claude Sonnet 4 (APAC)",
+"release_date": "2025-05-22"
+},
+"au.anthropic.claude-haiku-4-5-20251001-v1:0": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (AU)",
+"release_date": "2025-10-15"
+},
+"au.anthropic.claude-opus-4-6-v1": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "AU Anthropic Claude Opus 4.6",
+"release_date": "2026-02-05"
+},
+"au.anthropic.claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7 (AU)",
+"release_date": "2026-04-16"
+},
+"au.anthropic.claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8 (AU)",
+"release_date": "2026-05-28"
+},
+"au.anthropic.claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5 (AU)",
+"release_date": "2026-07-24"
+},
+"au.anthropic.claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5 (AU)",
+"release_date": "2026-09-22"
+},
+"au.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (AU)",
+"release_date": "2025-09-29"
+},
+"au.anthropic.claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "AU Anthropic Claude Sonnet 4.6",
+"release_date": "2026-02-17"
+},
+"au.anthropic.claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5 (AU)",
+"release_date": "2026-06-30"
+},
+"ca.amazon.nova-lite-v1:0": {
+"family": "nova-lite",
+"knowledge": "2024-10",
+"name": "Nova Lite (CA)",
+"release_date": "2024-12-03"
+},
+"deepseek.r1-v1:0": {
+"family": "deepseek-thinking",
+"knowledge": "2024-07",
+"name": "DeepSeek-R1",
+"release_date": "2025-01-20"
+},
+"deepseek.v3.2": {
+"family": "deepseek",
+"knowledge": "2024-07",
+"name": "DeepSeek V3.2",
+"release_date": "2025-12-01"
+},
+"eu.amazon.nova-2-lite-v1:0": {
+"family": "nova",
+"knowledge": "2025-10",
+"name": "Nova 2 Lite (EU)",
+"release_date": "2025-12-02"
+},
+"eu.amazon.nova-lite-v1:0": {
+"family": "nova-lite",
+"knowledge": "2024-10",
+"name": "Nova Lite (EU)",
+"release_date": "2024-12-03"
+},
+"eu.amazon.nova-micro-v1:0": {
+"family": "nova-micro",
+"knowledge": "2024-10",
+"name": "Nova Micro (EU)",
+"release_date": "2024-12-03"
+},
+"eu.amazon.nova-pro-v1:0": {
+"family": "nova-pro",
+"knowledge": "2024-10",
+"name": "Nova Pro (EU)",
+"release_date": "2024-12-03"
+},
+"eu.anthropic.claude-fable-5": {
+"family": "claude-fable",
+"knowledge": "2026-01-31",
+"name": "Claude Fable 5 (EU)",
+"release_date": "2026-06-09"
+},
+"eu.anthropic.claude-haiku-4-5-20251001-v1:0": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (EU)",
+"release_date": "2025-10-15"
+},
+"eu.anthropic.claude-opus-4-5-20251101-v1:0": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5 (EU)",
+"release_date": "2025-11-01"
+},
+"eu.anthropic.claude-opus-4-6-v1": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "Claude Opus 4.6 (EU)",
+"release_date": "2026-02-05"
+},
+"eu.anthropic.claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7 (EU)",
+"release_date": "2026-04-16"
+},
+"eu.anthropic.claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8 (EU)",
+"release_date": "2026-05-28"
+},
+"eu.anthropic.claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5 (EU)",
+"release_date": "2026-07-24"
+},
+"eu.anthropic.claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5 (EU)",
+"release_date": "2026-09-22"
+},
+"eu.anthropic.claude-sonnet-4-20250514-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-03-31",
+"name": "Claude Sonnet 4 (EU)",
+"release_date": "2025-05-22"
+},
+"eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (EU)",
+"release_date": "2025-09-29"
+},
+"eu.anthropic.claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6 (EU)",
+"release_date": "2026-02-17"
+},
+"eu.anthropic.claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5 (EU)",
+"release_date": "2026-06-30"
+},
+"global.amazon.nova-2-lite-v1:0": {
+"family": "nova",
+"knowledge": "2025-10",
+"name": "Nova 2 Lite (Global)",
+"release_date": "2025-12-02"
+},
+"global.anthropic.claude-fable-5": {
+"family": "claude-fable",
+"knowledge": "2026-01-31",
+"name": "Claude Fable 5 (Global)",
+"release_date": "2026-06-09"
+},
+"global.anthropic.claude-fable-5-1": {
+"family": "claude-fable",
+"knowledge": "2026-06",
+"name": "Claude Fable 5.1 (Global)",
+"release_date": "2026-09-01"
+},
+"global.anthropic.claude-haiku-4-5-20251001-v1:0": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (Global)",
+"release_date": "2025-10-15"
+},
+"global.anthropic.claude-opus-4-5-20251101-v1:0": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5 (Global)",
+"release_date": "2025-11-01"
+},
+"global.anthropic.claude-opus-4-6-v1": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "Claude Opus 4.6 (Global)",
+"release_date": "2026-02-05"
+},
+"global.anthropic.claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7 (Global)",
+"release_date": "2026-04-16"
+},
+"global.anthropic.claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8 (Global)",
+"release_date": "2026-05-28"
+},
+"global.anthropic.claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5 (Global)",
+"release_date": "2026-07-24"
+},
+"global.anthropic.claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5 (Global)",
+"release_date": "2026-09-22"
+},
+"global.anthropic.claude-sonnet-4-20250514-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-03-31",
+"name": "Claude Sonnet 4 (Global)",
+"release_date": "2025-05-22"
+},
+"global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (Global)",
+"release_date": "2025-09-29"
+},
+"global.anthropic.claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6 (Global)",
+"release_date": "2026-02-17"
+},
+"global.anthropic.claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5 (Global)",
+"release_date": "2026-06-30"
+},
+"global.openai.gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna (Global)",
+"release_date": "2026-07-09"
+},
+"global.openai.gpt-5.6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol (Global)",
+"release_date": "2026-07-09"
+},
+"global.openai.gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra (Global)",
+"release_date": "2026-07-09"
+},
+"global.openai.gpt-6-astra": {
+"family": "gpt-astra",
+"knowledge": "2026-04-30",
+"name": "GPT-6 Astra (Global)",
+"release_date": "2026-09-04"
+},
+"global.openai.gpt-6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-05-18",
+"name": "GPT-6 Luna (Global)",
+"release_date": "2026-09-22"
+},
+"global.openai.gpt-6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-04-20",
+"name": "GPT-6 Sol (Global)",
+"release_date": "2026-09-22"
+},
+"global.xai.grok-4.6": {
+"family": "grok",
+"knowledge": "2026-02-01",
+"name": "Grok 4.6 (Global)",
+"release_date": "2026-08-12"
+},
+"google.gemma-3-12b-it": {
+"family": "gemma",
+"knowledge": "2024-08",
+"name": "Gemma 3 12B IT",
+"release_date": "2025-03-12"
+},
+"google.gemma-3-27b-it": {
+"family": "gemma",
+"knowledge": "2024-08",
+"name": "Gemma 3 27B IT",
+"release_date": "2025-03-12"
+},
+"google.gemma-3-4b-it": {
+"family": "gemma",
+"knowledge": "2024-08",
+"name": "Gemma 3 4B IT",
+"release_date": "2025-03-12"
+},
+"in.openai.gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna (India)",
+"release_date": "2026-07-09"
+},
+"in.openai.gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra (India)",
+"release_date": "2026-07-09"
+},
+"jp.amazon.nova-2-lite-v1:0": {
+"family": "nova",
+"knowledge": "2025-10",
+"name": "Nova 2 Lite (JP)",
+"release_date": "2025-12-02"
+},
+"jp.anthropic.claude-haiku-4-5-20251001-v1:0": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (JP)",
+"release_date": "2025-10-15"
+},
+"jp.anthropic.claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7 (JP)",
+"release_date": "2026-04-16"
+},
+"jp.anthropic.claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8 (JP)",
+"release_date": "2026-05-28"
+},
+"jp.anthropic.claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5 (JP)",
+"release_date": "2026-07-24"
+},
+"jp.anthropic.claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5 (JP)",
+"release_date": "2026-09-22"
+},
+"jp.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (JP)",
+"release_date": "2025-09-29"
+},
+"jp.anthropic.claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6 (JP)",
+"release_date": "2026-02-17"
+},
+"jp.anthropic.claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5 (JP)",
+"release_date": "2026-06-30"
+},
+"meta.llama3-1-70b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.1 70B Instruct",
+"release_date": "2024-07-23"
+},
+"meta.llama3-1-8b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.1 8B Instruct",
+"release_date": "2024-07-23"
+},
+"meta.llama3-3-70b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.3 70B Instruct",
+"release_date": "2024-12-06"
+},
+"meta.llama4-maverick-17b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2024-08",
+"name": "Llama 4 Maverick 17B Instruct",
+"release_date": "2025-04-05"
+},
+"meta.llama4-scout-17b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2024-08",
+"name": "Llama 4 Scout 17B Instruct",
+"release_date": "2025-04-05"
+},
+"mistral.devstral-2-123b": {
+"family": "devstral",
+"knowledge": "2025-12",
+"name": "Devstral 2 123B",
+"release_date": "2025-12-09"
+},
+"mistral.mistral-large-3-675b-instruct": {
+"family": "mistral-large",
+"knowledge": "2024-11",
+"name": "Mistral Large 3",
+"release_date": "2025-12-02"
+},
+"moonshot.kimi-k2-thinking": {
+"family": "kimi-thinking",
+"knowledge": "2024-08",
+"name": "Kimi K2 Thinking",
+"release_date": "2025-11-06"
+},
+"moonshotai.kimi-k2.5": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.5",
+"release_date": "2026-01-27"
+},
+"openai.gpt-5.4": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4",
+"release_date": "2026-03-05"
+},
+"openai.gpt-5.5": {
+"family": "gpt",
+"knowledge": "2025-12-01",
+"name": "GPT-5.5",
+"release_date": "2026-04-23"
+},
+"openai.gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna",
+"release_date": "2026-07-09"
+},
+"openai.gpt-5.6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol",
+"release_date": "2026-07-09"
+},
+"openai.gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra",
+"release_date": "2026-07-09"
+},
+"openai.gpt-6-astra": {
+"family": "gpt-astra",
+"knowledge": "2026-04-30",
+"name": "GPT-6 Astra",
+"release_date": "2026-09-04"
+},
+"openai.gpt-6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-05-18",
+"name": "GPT-6 Luna",
+"release_date": "2026-09-22"
+},
+"openai.gpt-6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-04-20",
+"name": "GPT-6 Sol",
+"release_date": "2026-09-22"
+},
+"qwen.qwen3-32b-v1:0": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 32B",
+"release_date": "2025-04"
+},
+"qwen.qwen3-coder-30b-a3b-v1:0": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Coder 30B-A3B Instruct",
+"release_date": "2025-07-31"
+},
+"qwen.qwen3-coder-480b-a35b-v1:0": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Coder 480B-A35B Instruct",
+"release_date": "2025-07-23"
+},
+"qwen.qwen3-coder-next": {
+"family": "qwen",
+"knowledge": "2025-09",
+"name": "Qwen3 Coder Next",
+"release_date": "2026-02-03"
+},
+"qwen.qwen3-next-80b-a3b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Next 80B-A3B Instruct",
+"release_date": "2025-09-11"
+},
+"qwen.qwen3-vl-235b-a22b": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 VL 235B A22B Instruct",
+"release_date": "2025-09-23"
+},
+"us.amazon.nova-2-lite-v1:0": {
+"family": "nova",
+"knowledge": "2025-10",
+"name": "Nova 2 Lite (US)",
+"release_date": "2025-12-02"
+},
+"us.amazon.nova-lite-v1:0": {
+"family": "nova-lite",
+"knowledge": "2024-10",
+"name": "Nova Lite (US)",
+"release_date": "2024-12-03"
+},
+"us.amazon.nova-micro-v1:0": {
+"family": "nova-micro",
+"knowledge": "2024-10",
+"name": "Nova Micro (US)",
+"release_date": "2024-12-03"
+},
+"us.amazon.nova-premier-v1:0": {
+"family": "nova",
+"knowledge": "2024-10",
+"name": "Nova Premier (US)",
+"release_date": "2025-04-30"
+},
+"us.amazon.nova-pro-v1:0": {
+"family": "nova-pro",
+"knowledge": "2024-10",
+"name": "Nova Pro (US)",
+"release_date": "2024-12-03"
+},
+"us.anthropic.claude-fable-5": {
+"family": "claude-fable",
+"knowledge": "2026-01-31",
+"name": "Claude Fable 5 (US)",
+"release_date": "2026-06-09"
+},
+"us.anthropic.claude-fable-5-1": {
+"family": "claude-fable",
+"knowledge": "2026-06",
+"name": "Claude Fable 5.1 (US)",
+"release_date": "2026-09-01"
+},
+"us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (US)",
+"release_date": "2025-10-15"
+},
+"us.anthropic.claude-opus-4-1-20250805-v1:0": {
+"family": "claude-opus",
+"knowledge": "2025-03-31",
+"name": "Claude Opus 4.1 (US)",
+"release_date": "2025-08-05"
+},
+"us.anthropic.claude-opus-4-5-20251101-v1:0": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5 (US)",
+"release_date": "2025-11-01"
+},
+"us.anthropic.claude-opus-4-6-v1": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "Claude Opus 4.6 (US)",
+"release_date": "2026-02-05"
+},
+"us.anthropic.claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7 (US)",
+"release_date": "2026-04-16"
+},
+"us.anthropic.claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8 (US)",
+"release_date": "2026-05-28"
+},
+"us.anthropic.claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5 (US)",
+"release_date": "2026-07-24"
+},
+"us.anthropic.claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5 (US)",
+"release_date": "2026-09-22"
+},
+"us.anthropic.claude-sonnet-4-20250514-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-03-31",
+"name": "Claude Sonnet 4 (US)",
+"release_date": "2025-05-22"
+},
+"us.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (US)",
+"release_date": "2025-09-29"
+},
+"us.anthropic.claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6 (US)",
+"release_date": "2026-02-17"
+},
+"us.anthropic.claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5 (US)",
+"release_date": "2026-06-30"
+},
+"us.deepseek.r1-v1:0": {
+"family": "deepseek-thinking",
+"knowledge": "2024-07",
+"name": "DeepSeek-R1 (US)",
+"release_date": "2025-01-20"
+},
+"us.meta.llama3-1-70b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.1 70B Instruct (US)",
+"release_date": "2024-07-23"
+},
+"us.meta.llama3-1-8b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.1 8B Instruct (US)",
+"release_date": "2024-07-23"
+},
+"us.meta.llama3-3-70b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.3 70B Instruct (US)",
+"release_date": "2024-12-06"
+},
+"us.meta.llama4-maverick-17b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2024-08",
+"name": "Llama 4 Maverick 17B Instruct (US)",
+"release_date": "2025-04-05"
+},
+"us.meta.llama4-scout-17b-instruct-v1:0": {
+"family": "llama",
+"knowledge": "2024-08",
+"name": "Llama 4 Scout 17B Instruct (US)",
+"release_date": "2025-04-05"
+},
+"us.openai.gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna (US)",
+"release_date": "2026-07-09"
+},
+"us.openai.gpt-5.6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol (US)",
+"release_date": "2026-07-09"
+},
+"us.openai.gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra (US)",
+"release_date": "2026-07-09"
+},
+"us.openai.gpt-6-astra": {
+"family": "gpt-astra",
+"knowledge": "2026-04-30",
+"name": "GPT-6 Astra (US)",
+"release_date": "2026-09-04"
+},
+"us.openai.gpt-6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-05-18",
+"name": "GPT-6 Luna (US)",
+"release_date": "2026-09-22"
+},
+"us.openai.gpt-6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-04-20",
+"name": "GPT-6 Sol (US)",
+"release_date": "2026-09-22"
+},
+"us.xai.grok-4.6": {
+"family": "grok",
+"knowledge": "2026-02-01",
+"name": "Grok 4.6 (US)",
+"release_date": "2026-08-12"
+},
+"xai.grok-4.6": {
+"family": "grok",
+"knowledge": "2026-02-01",
+"name": "Grok 4.6",
+"release_date": "2026-08-12"
+},
+"zai.glm-4.7": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.7",
+"release_date": "2025-12-22"
+},
+"zai.glm-4.7-flash": {
+"family": "glm-flash",
+"knowledge": "2025-04",
+"name": "GLM-4.7-Flash",
+"release_date": "2026-01-19"
+}
+},
+"anthropic": {
+"claude-fable-5-1": {
+"family": "claude-fable",
+"knowledge": "2026-06",
+"name": "Claude Fable 5.1",
+"release_date": "2026-09-01"
+},
+"claude-haiku-4-5": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (latest)",
+"release_date": "2025-10-15"
+},
+"claude-haiku-4-5-20251001": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5",
+"release_date": "2025-10-15"
+},
+"claude-opus-4-5": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5 (latest)",
+"release_date": "2025-11-24"
+},
+"claude-opus-4-5-20251101": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5",
+"release_date": "2025-11-24"
+},
+"claude-opus-4-6": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "Claude Opus 4.6",
+"release_date": "2026-02-04"
+},
+"claude-opus-4-7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7",
+"release_date": "2026-04-14"
+},
+"claude-opus-4-8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8",
+"release_date": "2026-05-28"
+},
+"claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5",
+"release_date": "2026-07-24"
+},
+"claude-opus-5-5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5",
+"release_date": "2026-09-22"
+},
+"claude-sonnet-4-5": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (latest)",
+"release_date": "2025-09-29"
+},
+"claude-sonnet-4-5-20250929": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5",
+"release_date": "2025-09-29"
+},
+"claude-sonnet-4-6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6",
+"release_date": "2026-02-17"
+},
+"claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5",
+"release_date": "2026-06-29"
+}
+},
+"deepseek": {
+"deepseek-flash": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4.1 Flash",
+"release_date": "2026-09-10"
+},
+"deepseek-v4-flash": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Flash",
+"release_date": "2026-09-10"
+},
+"deepseek-v4-flash-vision-exp": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Flash Vision Exp",
+"release_date": "2026-09-10"
+}
+},
+"github-copilot": {
+"claude-fable-5": {
+"family": "claude-fable",
+"knowledge": "2026-01-31",
+"name": "Claude Fable 5",
+"release_date": "2026-06-09"
+},
+"claude-fable-5.1": {
+"family": "claude-fable",
+"knowledge": "2026-06",
+"name": "Claude Fable 5.1",
+"release_date": "2026-09-01"
+},
+"claude-haiku-4.5": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (latest)",
+"release_date": "2025-10-15"
+},
+"claude-opus-4.7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7",
+"release_date": "2026-04-16"
+},
+"claude-opus-4.8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8",
+"release_date": "2026-05-28"
+},
+"claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5",
+"release_date": "2026-07-24"
+},
+"claude-opus-5.5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5",
+"release_date": "2026-09-22"
+},
+"claude-sonnet-4.6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6",
+"release_date": "2026-02-17"
+},
+"claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5",
+"release_date": "2026-06-30"
+},
+"gemini-3.5-flash": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3.5 Flash",
+"release_date": "2026-05-19"
+},
+"gemini-3.6-flash": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini 3.6 Flash",
+"release_date": "2026-07-21"
+},
+"gemini-3.7-flash": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini 3.7 Flash",
+"release_date": "2026-08-13"
+},
+"gpt-5-mini": {
+"family": "gpt-mini",
+"knowledge": "2024-05-30",
+"name": "GPT-5 Mini",
+"release_date": "2025-08-07"
+},
+"gpt-5.3-codex": {
+"family": "gpt-codex",
+"knowledge": "2025-08-31",
+"name": "GPT-5.3 Codex",
+"release_date": "2026-02-05"
+},
+"gpt-5.4": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4",
+"release_date": "2026-03-05"
+},
+"gpt-5.4-mini": {
+"family": "gpt-mini",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 mini",
+"release_date": "2026-03-17"
+},
+"gpt-5.4-nano": {
+"family": "gpt-nano",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 nano",
+"release_date": "2026-03-17"
+},
+"gpt-5.5": {
+"family": "gpt",
+"knowledge": "2025-12-01",
+"name": "GPT-5.5",
+"release_date": "2026-04-23"
+},
+"gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna",
+"release_date": "2026-07-09"
+},
+"gpt-5.6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol",
+"release_date": "2026-07-09"
+},
+"gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra",
+"release_date": "2026-07-09"
+},
+"gpt-6-astra": {
+"family": "gpt-astra",
+"knowledge": "2026-04-30",
+"name": "GPT-6 Astra",
+"release_date": "2026-09-04"
+},
+"gpt-6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-05-18",
+"name": "GPT-6 Luna",
+"release_date": "2026-09-22"
+},
+"gpt-6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-04-20",
+"name": "GPT-6 Sol",
+"release_date": "2026-09-22"
+},
+"grok-4.6": {
+"family": "grok",
+"knowledge": "2026-02-01",
+"name": "Grok 4.6",
+"release_date": "2026-08-12"
+},
+"grok-4.7": {
+"family": "grok",
+"knowledge": "2026-05",
+"name": "Grok 4.7",
+"release_date": "2026-09-21"
+},
+"kimi-k2.7-code": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.7 Code",
+"release_date": "2026-06-12"
+},
+"mai-code-1-flash-picker": {
+"family": "mai",
+"knowledge": "2025-12",
+"name": "MAI-Code-1-Flash",
+"release_date": "2026-06-02"
+}
+},
+"google": {
+"deep-research-max-preview-04-2026": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Deep Research Max Preview (Apr-21-2026)",
+"release_date": "2026-04-21"
+},
+"deep-research-preview-04-2026": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Deep Research Preview (Apr-21-2026)",
+"release_date": "2026-04-21"
+},
+"gemini-2.5-computer-use-preview-10-2025": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Computer Use Preview 10-2025",
+"release_date": "2025-10-07"
+},
+"gemini-2.5-flash": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Flash",
+"release_date": "2025-06-17"
+},
+"gemini-2.5-flash-image": {
+"family": "gemini-flash",
+"knowledge": "2024-06",
+"name": "Nano Banana",
+"release_date": "2025-08-26"
+},
+"gemini-2.5-flash-lite": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Flash-Lite",
+"release_date": "2025-06-17"
+},
+"gemini-2.5-flash-preview-tts": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Flash Preview TTS",
+"release_date": "2025-05-01"
+},
+"gemini-2.5-pro": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Pro",
+"release_date": "2025-06-17"
+},
+"gemini-2.5-pro-preview-tts": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Pro Preview TTS",
+"release_date": "2025-05-01"
+},
+"gemini-3-flash-preview": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3 Flash Preview",
+"release_date": "2025-12-17"
+},
+"gemini-3-pro-image": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Nano Banana Pro",
+"release_date": "2026-05-28"
+},
+"gemini-3-pro-image-preview": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Nano Banana Pro",
+"release_date": "2025-11-20"
+},
+"gemini-3.1-flash-image": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Nano Banana 2",
+"release_date": "2026-05-28"
+},
+"gemini-3.1-flash-image-preview": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Nano Banana 2",
+"release_date": "2026-02-26"
+},
+"gemini-3.1-flash-lite": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Flash Lite",
+"release_date": "2026-05-07"
+},
+"gemini-3.1-flash-lite-image": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Nano Banana 2 Lite",
+"release_date": "2026-06-30"
+},
+"gemini-3.1-flash-lite-preview": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Flash Lite Preview",
+"release_date": "2026-03-03"
+},
+"gemini-3.1-flash-live-preview": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Flash Live Preview",
+"release_date": "2026-03-26"
+},
+"gemini-3.1-flash-tts-preview": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Flash TTS Preview",
+"release_date": "2026-04-15"
+},
+"gemini-3.1-pro-preview": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Pro Preview",
+"release_date": "2026-02-19"
+},
+"gemini-3.1-pro-preview-customtools": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Pro Preview Custom Tools",
+"release_date": "2026-02-19"
+},
+"gemini-3.5-flash": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3.5 Flash",
+"release_date": "2026-05-19"
+},
+"gemini-3.5-flash-lite": {
+"family": "gemini-flash-lite",
+"knowledge": "2026-03",
+"name": "Gemini 3.5 Flash Lite",
+"release_date": "2026-07-21"
+},
+"gemini-3.5-live-translate-preview": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 3.5 Live Translate Preview",
+"release_date": "2026-06-09"
+},
+"gemini-3.6-flash": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini 3.6 Flash",
+"release_date": "2026-07-21"
+},
+"gemini-3.7-flash": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini 3.7 Flash",
+"release_date": "2026-08-13"
+},
+"gemini-embedding-001": {
+"family": "gemini",
+"knowledge": "2025-05",
+"name": "Gemini Embedding 001",
+"release_date": "2025-05-20"
+},
+"gemini-embedding-2": {
+"family": "gemini",
+"knowledge": "2025-11",
+"name": "Gemini Embedding 2",
+"release_date": "2026-04-22"
+},
+"gemini-flash-latest": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini Flash Latest",
+"release_date": "2026-08-13"
+},
+"gemini-flash-lite-latest": {
+"family": "gemini-flash-lite",
+"knowledge": "2026-03",
+"name": "Gemini Flash-Lite Latest",
+"release_date": "2026-07-21"
+}
+},
+"groq": {
+"llama-3.1-8b-instant": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.1 8B",
+"release_date": "2024-07-23"
+},
+"llama-3.3-70b-versatile": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama 3.3 70B",
+"release_date": "2024-12-06"
+}
+},
+"llama": {
+"cerebras-llama-4-maverick-17b-128e-instruct": {
+"family": "llama",
+"knowledge": "2025-01",
+"name": "Cerebras-Llama-4-Maverick-17B-128E-Instruct",
+"release_date": "2025-04-05"
+},
+"cerebras-llama-4-scout-17b-16e-instruct": {
+"family": "llama",
+"knowledge": "2025-01",
+"name": "Cerebras-Llama-4-Scout-17B-16E-Instruct",
+"release_date": "2025-04-05"
+},
+"groq-llama-4-maverick-17b-128e-instruct": {
+"family": "llama",
+"knowledge": "2025-01",
+"name": "Groq-Llama-4-Maverick-17B-128E-Instruct",
+"release_date": "2025-04-05"
+},
+"llama-3.3-70b-instruct": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama-3.3-70B-Instruct",
+"release_date": "2024-12-06"
+},
+"llama-3.3-8b-instruct": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama-3.3-8B-Instruct",
+"release_date": "2024-12-06"
+},
+"llama-4-maverick-17b-128e-instruct-fp8": {
+"family": "llama",
+"knowledge": "2024-08",
+"name": "Llama-4-Maverick-17B-128E-Instruct-FP8",
+"release_date": "2025-04-05"
+},
+"llama-4-scout-17b-16e-instruct-fp8": {
+"family": "llama",
+"knowledge": "2024-08",
+"name": "Llama-4-Scout-17B-16E-Instruct-FP8",
+"release_date": "2025-04-05"
+}
+},
+"mistral": {
+"codestral-latest": {
+"family": "codestral",
+"knowledge": "2024-10",
+"name": "Codestral (latest)",
+"release_date": "2024-05-29"
+},
+"devstral-2512": {
+"family": "devstral",
+"knowledge": "2025-12",
+"name": "Devstral 2",
+"release_date": "2025-12-09"
+},
+"devstral-latest": {
+"family": "devstral",
+"knowledge": "2025-12",
+"name": "Devstral 2",
+"release_date": "2025-12-09"
+},
+"devstral-medium-2507": {
+"family": "devstral",
+"knowledge": "2025-05",
+"name": "Devstral Medium",
+"release_date": "2025-07-10"
+},
+"devstral-medium-latest": {
+"family": "devstral",
+"knowledge": "2025-12",
+"name": "Devstral 2 (latest)",
+"release_date": "2025-12-02"
+},
+"devstral-small-2505": {
+"family": "devstral",
+"knowledge": "2025-05",
+"name": "Devstral Small 2505",
+"release_date": "2025-05-07"
+},
+"devstral-small-2507": {
+"family": "devstral",
+"knowledge": "2025-05",
+"name": "Devstral Small",
+"release_date": "2025-07-10"
+},
+"labs-devstral-small-2512": {
+"family": "devstral",
+"knowledge": "2025-12",
+"name": "Devstral Small 2",
+"release_date": "2025-12-09"
+},
+"magistral-medium-latest": {
+"family": "magistral-medium",
+"knowledge": "2025-06",
+"name": "Magistral Medium (latest)",
+"release_date": "2025-03-17"
+},
+"magistral-small": {
+"family": "magistral-small",
+"knowledge": "2025-06",
+"name": "Magistral Small",
+"release_date": "2025-03-17"
+},
+"ministral-3b-latest": {
+"family": "ministral",
+"knowledge": "2024-10",
+"name": "Ministral 3B (latest)",
+"release_date": "2024-10-01"
+},
+"ministral-8b-latest": {
+"family": "ministral",
+"knowledge": "2024-10",
+"name": "Ministral 8B (latest)",
+"release_date": "2024-10-01"
+},
+"mistral-large-2411": {
+"family": "mistral-large",
+"knowledge": "2024-11",
+"name": "Mistral Large 2.1",
+"release_date": "2024-11-18"
+},
+"mistral-large-2512": {
+"family": "mistral-large",
+"knowledge": "2024-11",
+"name": "Mistral Large 3",
+"release_date": "2024-11-01"
+},
+"mistral-large-latest": {
+"family": "mistral-large",
+"knowledge": "2024-11",
+"name": "Mistral Large (latest)",
+"release_date": "2024-11-01"
+},
+"mistral-medium-2505": {
+"family": "mistral-medium",
+"knowledge": "2025-05",
+"name": "Mistral Medium 3",
+"release_date": "2025-05-07"
+},
+"mistral-medium-2508": {
+"family": "mistral-medium",
+"knowledge": "2025-05",
+"name": "Mistral Medium 3.1",
+"release_date": "2025-08-12"
+},
+"mistral-nemo": {
+"family": "mistral-nemo",
+"knowledge": "2024-07",
+"name": "Mistral Nemo",
+"release_date": "2024-07-01"
+},
+"mistral-small-2506": {
+"family": "mistral-small",
+"knowledge": "2025-03",
+"name": "Mistral Small 3.2",
+"release_date": "2025-06-20"
+},
+"mistral-small-2603": {
+"family": "mistral-small",
+"knowledge": "2025-06",
+"name": "Mistral Small 4",
+"release_date": "2026-03-16"
+},
+"mistral-small-latest": {
+"family": "mistral-small",
+"knowledge": "2025-06",
+"name": "Mistral Small (latest)",
+"release_date": "2026-03-16"
+},
+"open-mistral-7b": {
+"family": "mistral",
+"knowledge": "2023-12",
+"name": "Mistral 7B",
+"release_date": "2023-09-27"
+},
+"open-mistral-nemo": {
+"family": "mistral-nemo",
+"knowledge": "2024-07",
+"name": "Open Mistral Nemo",
+"release_date": "2024-07-01"
+},
+"open-mixtral-8x22b": {
+"family": "mixtral",
+"knowledge": "2024-04",
+"name": "Mixtral 8x22B",
+"release_date": "2024-04-17"
+},
+"open-mixtral-8x7b": {
+"family": "mixtral",
+"knowledge": "2024-01",
+"name": "Mixtral 8x7B",
+"release_date": "2023-12-11"
+},
+"pixtral-12b": {
+"family": "pixtral",
+"knowledge": "2024-09",
+"name": "Pixtral 12B",
+"release_date": "2024-09-01"
+},
+"pixtral-large-latest": {
+"family": "pixtral",
+"knowledge": "2024-11",
+"name": "Pixtral Large (latest)",
+"release_date": "2024-11-01"
+}
+},
+"moonshotai": {
+"kimi-k2.6": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.6",
+"release_date": "2026-04-21"
+},
+"kimi-k2.7-code": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.7 Code",
+"release_date": "2026-06-12"
+},
+"kimi-k2.7-code-highspeed": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.7 Code HighSpeed",
+"release_date": "2026-06-12"
+}
+},
+"ollama-cloud": {
+"deepseek-v4-flash:0731": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Flash 0731",
+"release_date": "2026-07-31"
+},
+"deepseek-v4.1-flash": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4.1 Flash",
+"release_date": "2026-09-10"
+},
+"gemma4:31b": {
+"family": "gemma",
+"knowledge": "2025-01",
+"name": "gemma4:31b",
+"release_date": "2026-04-02"
+},
+"kimi-k2.7-code": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "kimi-k2.7-code",
+"release_date": "2026-06-12"
+},
+"minimax-m2.5": {
+"family": "minimax",
+"knowledge": "2025-01",
+"name": "minimax-m2.5",
+"release_date": "2026-02-12"
+},
+"minimax-m3": {
+"family": "minimax-m3",
+"knowledge": "2025-01",
+"name": "minimax-m3",
+"release_date": "2026-05-31"
+}
+},
+"openai": {
+"gpt-3.5-turbo": {
+"family": "gpt",
+"knowledge": "2021-09-01",
+"name": "GPT-3.5-turbo",
+"release_date": "2023-03-01"
+},
+"gpt-4": {
+"family": "gpt",
+"knowledge": "2023-11",
+"name": "GPT-4",
+"release_date": "2023-11-06"
+},
+"gpt-4-turbo": {
+"family": "gpt",
+"knowledge": "2023-12",
+"name": "GPT-4 Turbo",
+"release_date": "2023-11-06"
+},
+"gpt-4.1": {
+"family": "gpt",
+"knowledge": "2024-04",
+"name": "GPT-4.1",
+"release_date": "2025-04-14"
+},
+"gpt-4.1-mini": {
+"family": "gpt-mini",
+"knowledge": "2024-04",
+"name": "GPT-4.1 mini",
+"release_date": "2025-04-14"
+},
+"gpt-4.1-nano": {
+"family": "gpt-nano",
+"knowledge": "2024-04",
+"name": "GPT-4.1 nano",
+"release_date": "2025-04-14"
+},
+"gpt-4o": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o",
+"release_date": "2024-05-13"
+},
+"gpt-4o-2024-05-13": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o (2024-05-13)",
+"release_date": "2024-05-13"
+},
+"gpt-4o-2024-08-06": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o (2024-08-06)",
+"release_date": "2024-08-06"
+},
+"gpt-4o-2024-11-20": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o (2024-11-20)",
+"release_date": "2024-11-20"
+},
+"gpt-4o-mini": {
+"family": "gpt-mini",
+"knowledge": "2023-09",
+"name": "GPT-4o mini",
+"release_date": "2024-07-18"
+},
+"gpt-5": {
+"family": "gpt",
+"knowledge": "2024-09-30",
+"name": "GPT-5",
+"release_date": "2025-08-07"
+},
+"gpt-5-mini": {
+"family": "gpt-mini",
+"knowledge": "2024-05-30",
+"name": "GPT-5 Mini",
+"release_date": "2025-08-07"
+},
+"gpt-5-nano": {
+"family": "gpt-nano",
+"knowledge": "2024-05-30",
+"name": "GPT-5 Nano",
+"release_date": "2025-08-07"
+},
+"gpt-5-pro": {
+"family": "gpt-pro",
+"knowledge": "2024-09-30",
+"name": "GPT-5 Pro",
+"release_date": "2025-10-06"
+},
+"gpt-5.1": {
+"family": "gpt",
+"knowledge": "2024-09-30",
+"name": "GPT-5.1",
+"release_date": "2025-11-13"
+},
+"gpt-5.2": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2",
+"release_date": "2025-12-11"
+},
+"gpt-5.2-chat-latest": {
+"family": "gpt-codex",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2 Chat",
+"release_date": "2025-12-11"
+},
+"gpt-5.2-pro": {
+"family": "gpt-pro",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2 Pro",
+"release_date": "2025-12-11"
+},
+"gpt-5.3-chat-latest": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.3 Chat (latest)",
+"release_date": "2026-03-03"
+},
+"gpt-5.3-codex": {
+"family": "gpt-codex",
+"knowledge": "2025-08-31",
+"name": "GPT-5.3 Codex",
+"release_date": "2026-02-05"
+},
+"gpt-5.3-codex-spark": {
+"family": "gpt-codex-spark",
+"knowledge": "2025-08-31",
+"name": "GPT-5.3 Codex Spark",
+"release_date": "2026-02-05"
+},
+"gpt-5.4": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4",
+"release_date": "2026-03-05"
+},
+"gpt-5.4-mini": {
+"family": "gpt-mini",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 mini",
+"release_date": "2026-03-17"
+},
+"gpt-5.4-nano": {
+"family": "gpt-nano",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 nano",
+"release_date": "2026-03-17"
+},
+"gpt-5.4-pro": {
+"family": "gpt-pro",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 Pro",
+"release_date": "2026-03-05"
+},
+"gpt-5.5": {
+"family": "gpt",
+"knowledge": "2025-12-01",
+"name": "GPT-5.5",
+"release_date": "2026-04-23"
+},
+"gpt-5.5-pro": {
+"family": "gpt-pro",
+"knowledge": "2025-12-01",
+"name": "GPT-5.5 Pro",
+"release_date": "2026-04-23"
+},
+"gpt-5.6": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6",
+"release_date": "2026-07-09"
+},
+"gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna",
+"release_date": "2026-07-09"
+},
+"gpt-5.6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol",
+"release_date": "2026-07-09"
+},
+"gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra",
+"release_date": "2026-07-09"
+},
+"gpt-6-astra": {
+"family": "gpt-astra",
+"knowledge": "2026-04-30",
+"name": "GPT-6 Astra",
+"release_date": "2026-09-04"
+},
+"gpt-6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-05-18",
+"name": "GPT-6 Luna",
+"release_date": "2026-09-22"
+},
+"gpt-6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-04-20",
+"name": "GPT-6 Sol",
+"release_date": "2026-09-22"
+},
+"gpt-realtime-2.1": {
+"family": "gpt",
+"knowledge": "2024-09-30",
+"name": "GPT-Realtime-2.1",
+"release_date": "2026-07-06"
+},
+"o1": {
+"family": "o",
+"knowledge": "2023-09",
+"name": "o1",
+"release_date": "2024-12-05"
+},
+"o1-pro": {
+"family": "o-pro",
+"knowledge": "2023-09",
+"name": "o1-pro",
+"release_date": "2025-03-19"
+},
+"o3": {
+"family": "o",
+"knowledge": "2024-05",
+"name": "o3",
+"release_date": "2025-04-16"
+},
+"o3-mini": {
+"family": "o-mini",
+"knowledge": "2024-05",
+"name": "o3-mini",
+"release_date": "2024-12-20"
+},
+"o3-pro": {
+"family": "o-pro",
+"knowledge": "2024-05",
+"name": "o3-pro",
+"release_date": "2025-06-10"
+},
+"o4-mini": {
+"family": "o-mini",
+"knowledge": "2024-05",
+"name": "o4-mini",
+"release_date": "2025-04-16"
+},
+"text-embedding-3-large": {
+"family": "text-embedding",
+"knowledge": "2024-01",
+"name": "text-embedding-3-large",
+"release_date": "2024-01-25"
+},
+"text-embedding-3-small": {
+"family": "text-embedding",
+"knowledge": "2024-01",
+"name": "text-embedding-3-small",
+"release_date": "2024-01-25"
+},
+"text-embedding-ada-002": {
+"family": "text-embedding",
+"knowledge": "2022-12",
+"name": "text-embedding-ada-002",
+"release_date": "2022-12-15"
+}
+},
+"openrouter": {
+"aion-labs/aion-rp-llama-3.1-8b": {
+"family": "llama",
+"knowledge": "2023-12-31",
+"name": "Aion-RP 1.0 (8B)",
+"release_date": "2025-02-04"
+},
+"amazon/nova-lite-v1": {
+"family": "nova-lite",
+"knowledge": "2024-10-31",
+"name": "Nova Lite 1.0",
+"release_date": "2024-12-05"
+},
+"amazon/nova-micro-v1": {
+"family": "nova-micro",
+"knowledge": "2024-10-31",
+"name": "Nova Micro 1.0",
+"release_date": "2024-12-05"
+},
+"amazon/nova-pro-v1": {
+"family": "nova-pro",
+"knowledge": "2024-10-31",
+"name": "Nova Pro 1.0",
+"release_date": "2024-12-05"
+},
+"anthracite-org/magnum-v4-72b": {
+"knowledge": "2024-06-30",
+"name": "Magnum v4 72B",
+"release_date": "2024-10-22"
+},
+"anthropic/claude-3-haiku": {
+"family": "claude",
+"knowledge": "2023-08-31",
+"name": "Claude 3 Haiku",
+"release_date": "2024-03-13"
+},
+"anthropic/claude-fable-5": {
+"family": "claude-fable",
+"knowledge": "2026-01-31",
+"name": "Claude Fable 5",
+"release_date": "2026-06-09"
+},
+"anthropic/claude-fable-5.1": {
+"family": "claude-fable",
+"knowledge": "2026-06",
+"name": "Claude Fable 5.1",
+"release_date": "2026-09-01"
+},
+"anthropic/claude-haiku-4.5": {
+"family": "claude-haiku",
+"knowledge": "2025-02-28",
+"name": "Claude Haiku 4.5 (latest)",
+"release_date": "2025-10-15"
+},
+"anthropic/claude-opus-4.1": {
+"family": "claude-opus",
+"knowledge": "2025-03-31",
+"name": "Claude Opus 4.1 (latest)",
+"release_date": "2025-08-05"
+},
+"anthropic/claude-opus-4.5": {
+"family": "claude-opus",
+"knowledge": "2025-05",
+"name": "Claude Opus 4.5 (latest)",
+"release_date": "2025-11-24"
+},
+"anthropic/claude-opus-4.6": {
+"family": "claude-opus",
+"knowledge": "2025-05-31",
+"name": "Claude Opus 4.6",
+"release_date": "2026-02-05"
+},
+"anthropic/claude-opus-4.7": {
+"family": "claude-opus",
+"knowledge": "2026-01-31",
+"name": "Claude Opus 4.7",
+"release_date": "2026-04-16"
+},
+"anthropic/claude-opus-4.8": {
+"family": "claude-opus",
+"knowledge": "2026-01",
+"name": "Claude Opus 4.8",
+"release_date": "2026-05-28"
+},
+"anthropic/claude-opus-5": {
+"family": "claude-opus",
+"knowledge": "2026-05",
+"name": "Claude Opus 5",
+"release_date": "2026-07-24"
+},
+"anthropic/claude-opus-5.5": {
+"family": "claude-opus",
+"knowledge": "2026-06",
+"name": "Claude Opus 5.5",
+"release_date": "2026-09-22"
+},
+"anthropic/claude-sonnet-4": {
+"family": "claude-sonnet",
+"knowledge": "2025-01-31",
+"name": "Claude Sonnet 4",
+"release_date": "2025-05-22"
+},
+"anthropic/claude-sonnet-4.5": {
+"family": "claude-sonnet",
+"knowledge": "2025-07-31",
+"name": "Claude Sonnet 4.5 (latest)",
+"release_date": "2025-09-29"
+},
+"anthropic/claude-sonnet-4.6": {
+"family": "claude-sonnet",
+"knowledge": "2025-08-31",
+"name": "Claude Sonnet 4.6",
+"release_date": "2026-02-17"
+},
+"anthropic/claude-sonnet-5": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet 5",
+"release_date": "2026-06-30"
+},
+"baidu/ernie-4.5-vl-424b-a47b": {
+"family": "ernie",
+"knowledge": "2025-03-31",
+"name": "ERNIE 4.5 VL 424B A47B ",
+"release_date": "2025-06-30"
+},
+"bytedance/ui-tars-1.5-7b": {
+"knowledge": "2025-01-31",
+"name": "UI-TARS 7B ",
+"release_date": "2025-07-22"
+},
+"cognitivecomputations/dolphin-mistral-24b-venice-edition": {
+"family": "mistral",
+"knowledge": "2024-04-30",
+"name": "Uncensored",
+"release_date": "2025-07-09"
+},
+"cohere/command-a": {
+"family": "command-a",
+"knowledge": "2024-08-31",
+"name": "Command A",
+"release_date": "2025-03-13"
+},
+"cohere/command-r-08-2024": {
+"family": "command-r",
+"knowledge": "2024-06-01",
+"name": "Command R",
+"release_date": "2024-08-30"
+},
+"cohere/command-r-plus-08-2024": {
+"family": "command-r",
+"knowledge": "2024-06-01",
+"name": "Command R+",
+"release_date": "2024-08-30"
+},
+"cohere/command-r7b-12-2024": {
+"family": "command-r",
+"knowledge": "2024-06-01",
+"name": "Command R7B",
+"release_date": "2024-12-02"
+},
+"deepseek/deepseek-chat": {
+"family": "deepseek",
+"knowledge": "2025-09",
+"name": "DeepSeek Chat",
+"release_date": "2025-12-01"
+},
+"deepseek/deepseek-chat-v3-0324": {
+"family": "deepseek",
+"knowledge": "2024-07-31",
+"name": "DeepSeek V3 0324",
+"release_date": "2025-03-24"
+},
+"deepseek/deepseek-chat-v3.1": {
+"family": "deepseek",
+"knowledge": "2025-03-31",
+"name": "DeepSeek V3.1",
+"release_date": "2025-08-21"
+},
+"deepseek/deepseek-r1": {
+"family": "deepseek-thinking",
+"knowledge": "2024-07",
+"name": "DeepSeek-R1",
+"release_date": "2025-01-20"
+},
+"deepseek/deepseek-r1-0528": {
+"family": "deepseek",
+"knowledge": "2025-03-31",
+"name": "R1 0528",
+"release_date": "2025-05-28"
+},
+"deepseek/deepseek-r1-distill-llama-70b": {
+"family": "deepseek-thinking",
+"knowledge": "2024-07-31",
+"name": "R1 Distill Llama 70B",
+"release_date": "2025-01-23"
+},
+"deepseek/deepseek-v3.1-terminus": {
+"family": "deepseek",
+"knowledge": "2025-03-31",
+"name": "DeepSeek V3.1 Terminus",
+"release_date": "2025-09-22"
+},
+"deepseek/deepseek-v3.2": {
+"family": "deepseek",
+"knowledge": "2024-07",
+"name": "DeepSeek V3.2",
+"release_date": "2025-12-01"
+},
+"deepseek/deepseek-v3.2-exp": {
+"family": "deepseek",
+"knowledge": "2025-07-31",
+"name": "DeepSeek V3.2 Exp",
+"release_date": "2025-09-29"
+},
+"deepseek/deepseek-v4-flash": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Flash",
+"release_date": "2026-04-24"
+},
+"deepseek/deepseek-v4-flash-0731": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Flash 0731",
+"release_date": "2026-07-31"
+},
+"deepseek/deepseek-v4-pro": {
+"family": "deepseek-thinking",
+"knowledge": "2025-05",
+"name": "DeepSeek V4 Pro",
+"release_date": "2026-04-24"
+},
+"deepseek/deepseek-v4.1-flash": {
+"family": "deepseek-flash",
+"knowledge": "2025-05",
+"name": "DeepSeek V4.1 Flash",
+"release_date": "2026-09-10"
+},
+"google/gemini-2.5-flash": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Flash",
+"release_date": "2025-06-17"
+},
+"google/gemini-2.5-flash-image": {
+"family": "gemini-flash",
+"knowledge": "2024-06",
+"name": "Nano Banana",
+"release_date": "2025-08-26"
+},
+"google/gemini-2.5-flash-lite": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Flash-Lite",
+"release_date": "2025-06-17"
+},
+"google/gemini-2.5-pro": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 2.5 Pro",
+"release_date": "2025-06-17"
+},
+"google/gemini-2.5-pro-preview": {
+"family": "gemini",
+"knowledge": "2025-01-31",
+"name": "Gemini 2.5 Pro Preview 06-05",
+"release_date": "2025-06-05"
+},
+"google/gemini-3-flash-preview": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3 Flash Preview",
+"release_date": "2025-12-17"
+},
+"google/gemini-3-pro-image": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Nano Banana Pro",
+"release_date": "2026-05-28"
+},
+"google/gemini-3-pro-image-preview": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Nano Banana Pro Preview",
+"release_date": "2025-11-20"
+},
+"google/gemini-3.1-flash-image": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Nano Banana 2",
+"release_date": "2026-05-28"
+},
+"google/gemini-3.1-flash-image-preview": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Nano Banana 2 Preview",
+"release_date": "2026-02-26"
+},
+"google/gemini-3.1-flash-lite": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Flash Lite",
+"release_date": "2026-05-07"
+},
+"google/gemini-3.1-flash-lite-image": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Nano Banana 2 Lite",
+"release_date": "2026-06-30"
+},
+"google/gemini-3.1-flash-lite-preview": {
+"family": "gemini-flash-lite",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Flash Lite Preview",
+"release_date": "2026-03-03"
+},
+"google/gemini-3.1-pro-preview": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Pro Preview",
+"release_date": "2026-02-19"
+},
+"google/gemini-3.1-pro-preview-customtools": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini 3.1 Pro Preview Custom Tools",
+"release_date": "2026-02-19"
+},
+"google/gemini-3.5-flash": {
+"family": "gemini-flash",
+"knowledge": "2025-01",
+"name": "Gemini 3.5 Flash",
+"release_date": "2026-05-19"
+},
+"google/gemini-3.5-flash-lite": {
+"family": "gemini-flash-lite",
+"knowledge": "2026-03",
+"name": "Gemini 3.5 Flash Lite",
+"release_date": "2026-07-21"
+},
+"google/gemini-3.6-flash": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini 3.6 Flash",
+"release_date": "2026-07-21"
+},
+"google/gemini-3.7-flash": {
+"family": "gemini-flash",
+"knowledge": "2026-03",
+"name": "Gemini 3.7 Flash",
+"release_date": "2026-08-13"
+},
+"google/gemma-2-27b-it": {
+"family": "gemma",
+"knowledge": "2024-06-30",
+"name": "Gemma 2 27B",
+"release_date": "2024-07-13"
+},
+"google/gemma-3-12b-it": {
+"family": "gemma",
+"knowledge": "2024-08",
+"name": "Gemma 3 12B IT",
+"release_date": "2025-03-12"
+},
+"google/gemma-3-27b-it": {
+"family": "gemma",
+"knowledge": "2024-08",
+"name": "Gemma 3 27B IT",
+"release_date": "2025-03-12"
+},
+"google/gemma-3-4b-it": {
+"family": "gemma",
+"knowledge": "2024-08",
+"name": "Gemma 3 4B IT",
+"release_date": "2025-03-12"
+},
+"gryphe/mythomax-l2-13b": {
+"knowledge": "2023-06-30",
+"name": "MythoMax 13B",
+"release_date": "2023-07-02"
+},
+"mancer/weaver": {
+"family": "alpha",
+"knowledge": "2023-06-30",
+"name": "Weaver (alpha)",
+"release_date": "2023-08-02"
+},
+"meta-llama/llama-3.1-70b-instruct": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama-3.1-70B-Instruct",
+"release_date": "2024-07-23"
+},
+"meta-llama/llama-3.1-8b-instruct": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama-3.1-8B-Instruct",
+"release_date": "2024-07-23"
+},
+"meta-llama/llama-3.2-1b-instruct": {
+"family": "llama",
+"knowledge": "2023-12-31",
+"name": "Llama 3.2 1B Instruct",
+"release_date": "2024-09-25"
+},
+"meta-llama/llama-3.2-3b-instruct": {
+"family": "llama",
+"knowledge": "2023-12-31",
+"name": "Llama 3.2 3B Instruct",
+"release_date": "2024-09-25"
+},
+"meta-llama/llama-3.3-70b-instruct": {
+"family": "llama",
+"knowledge": "2023-12",
+"name": "Llama-3.3-70B-Instruct",
+"release_date": "2024-12-06"
+},
+"meta-llama/llama-4-maverick": {
+"family": "llama",
+"knowledge": "2024-08-31",
+"name": "Llama 4 Maverick",
+"release_date": "2025-04-05"
+},
+"meta-llama/llama-4-scout": {
+"family": "llama",
+"knowledge": "2024-08-31",
+"name": "Llama 4 Scout",
+"release_date": "2025-04-05"
+},
+"meta-llama/llama-guard-4-12b": {
+"family": "llama",
+"knowledge": "2024-08-31",
+"name": "Llama Guard 4 12B",
+"release_date": "2025-04-30"
+},
+"meta/muse-glimmer-30b": {
+"family": "muse",
+"knowledge": "2026-01-04",
+"name": "Muse Glimmer 30B",
+"release_date": "2026-08-10"
+},
+"microsoft/phi-4": {
+"family": "phi",
+"knowledge": "2024-06-30",
+"name": "Phi 4",
+"release_date": "2025-01-10"
+},
+"microsoft/wizardlm-2-8x22b": {
+"knowledge": "2024-04-30",
+"name": "WizardLM-2 8x22B",
+"release_date": "2024-04-16"
+},
+"minimax/minimax-01": {
+"family": "minimax",
+"knowledge": "2024-03-31",
+"name": "MiniMax-01",
+"release_date": "2025-01-15"
+},
+"minimax/minimax-m1": {
+"family": "minimax",
+"knowledge": "2024-06-30",
+"name": "MiniMax M1",
+"release_date": "2025-06-17"
+},
+"mistralai/codestral-2508": {
+"family": "codestral",
+"knowledge": "2025-03-31",
+"name": "Codestral 2508",
+"release_date": "2025-08-01"
+},
+"mistralai/devstral-2512": {
+"family": "devstral",
+"knowledge": "2025-12",
+"name": "Devstral 2",
+"release_date": "2025-12-09"
+},
+"mistralai/mistral-large": {
+"family": "mistral-large",
+"knowledge": "2024-11-30",
+"name": "Mistral Large",
+"release_date": "2024-02-26"
+},
+"mistralai/mistral-large-2407": {
+"family": "mistral-large",
+"knowledge": "2024-03-31",
+"name": "Mistral Large 2407",
+"release_date": "2024-11-19"
+},
+"mistralai/mistral-large-2512": {
+"family": "mistral-large",
+"knowledge": "2024-11",
+"name": "Mistral Large 3",
+"release_date": "2025-12-02"
+},
+"mistralai/mistral-medium-3": {
+"family": "mistral-medium",
+"knowledge": "2025-03-31",
+"name": "Mistral Medium 3",
+"release_date": "2025-05-07"
+},
+"mistralai/mistral-medium-3.1": {
+"family": "mistral-medium",
+"knowledge": "2025-06-30",
+"name": "Mistral Medium 3.1",
+"release_date": "2025-08-13"
+},
+"mistralai/mistral-nemo": {
+"family": "mistral-nemo",
+"knowledge": "2024-07",
+"name": "Mistral Nemo",
+"release_date": "2024-07-01"
+},
+"mistralai/mistral-saba": {
+"family": "mistral",
+"knowledge": "2024-09-30",
+"name": "Saba",
+"release_date": "2025-02-17"
+},
+"mistralai/mistral-small-24b-instruct-2501": {
+"family": "mistral-small",
+"knowledge": "2023-10-31",
+"name": "Mistral Small 3",
+"release_date": "2025-01-30"
+},
+"mistralai/mistral-small-2603": {
+"family": "mistral-small",
+"knowledge": "2025-06",
+"name": "Mistral Small 4",
+"release_date": "2026-03-16"
+},
+"mistralai/mistral-small-3.1-24b-instruct": {
+"family": "mistral-small",
+"knowledge": "2023-10-31",
+"name": "Mistral Small 3.1 24B",
+"release_date": "2025-03-17"
+},
+"mistralai/mistral-small-3.2-24b-instruct": {
+"family": "mistral-small",
+"knowledge": "2023-10-31",
+"name": "Mistral Small 3.2 24B",
+"release_date": "2025-06-20"
+},
+"mistralai/mixtral-8x22b-instruct": {
+"family": "mistral",
+"knowledge": "2024-01-31",
+"name": "Mixtral 8x22B Instruct",
+"release_date": "2024-04-17"
+},
+"moonshotai/kimi-k2": {
+"family": "kimi-k2",
+"knowledge": "2024-12-31",
+"name": "Kimi K2 0711",
+"release_date": "2025-07-11"
+},
+"moonshotai/kimi-k2-0905": {
+"family": "kimi-k2",
+"knowledge": "2024-12-31",
+"name": "Kimi K2 0905",
+"release_date": "2025-09-04"
+},
+"moonshotai/kimi-k2-thinking": {
+"family": "kimi-thinking",
+"knowledge": "2024-08",
+"name": "Kimi K2 Thinking",
+"release_date": "2025-11-06"
+},
+"moonshotai/kimi-k2.5": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.5",
+"release_date": "2026-01"
+},
+"moonshotai/kimi-k2.6": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.6",
+"release_date": "2026-04-21"
+},
+"moonshotai/kimi-k2.7-code": {
+"family": "kimi-k2",
+"knowledge": "2025-01",
+"name": "Kimi K2.7 Code",
+"release_date": "2026-06-12"
+},
+"nousresearch/hermes-3-llama-3.1-405b": {
+"family": "nousresearch",
+"knowledge": "2023-12-31",
+"name": "Hermes 3 405B Instruct",
+"release_date": "2024-08-16"
+},
+"nousresearch/hermes-3-llama-3.1-70b": {
+"family": "nousresearch",
+"knowledge": "2023-12-31",
+"name": "Hermes 3 70B Instruct",
+"release_date": "2024-08-18"
+},
+"nousresearch/hermes-4-405b": {
+"family": "hermes",
+"knowledge": "2024-08-31",
+"name": "Hermes 4 405B",
+"release_date": "2025-08-26"
+},
+"openai/gpt-3.5-turbo": {
+"family": "gpt",
+"knowledge": "2021-09-01",
+"name": "GPT-3.5-turbo",
+"release_date": "2023-03-01"
+},
+"openai/gpt-3.5-turbo-0613": {
+"family": "gpt",
+"knowledge": "2021-09-30",
+"name": "GPT-3.5 Turbo (older v0613)",
+"release_date": "2024-01-25"
+},
+"openai/gpt-3.5-turbo-16k": {
+"family": "gpt",
+"knowledge": "2021-09-30",
+"name": "GPT-3.5 Turbo 16k",
+"release_date": "2023-08-28"
+},
+"openai/gpt-3.5-turbo-instruct": {
+"family": "gpt",
+"knowledge": "2021-09-30",
+"name": "GPT-3.5 Turbo Instruct",
+"release_date": "2023-09-28"
+},
+"openai/gpt-4": {
+"family": "gpt",
+"knowledge": "2023-11",
+"name": "GPT-4",
+"release_date": "2023-11-06"
+},
+"openai/gpt-4-turbo": {
+"family": "gpt",
+"knowledge": "2023-12",
+"name": "GPT-4 Turbo",
+"release_date": "2023-11-06"
+},
+"openai/gpt-4.1": {
+"family": "gpt",
+"knowledge": "2024-04",
+"name": "GPT-4.1",
+"release_date": "2025-04-14"
+},
+"openai/gpt-4.1-mini": {
+"family": "gpt-mini",
+"knowledge": "2024-04",
+"name": "GPT-4.1 mini",
+"release_date": "2025-04-14"
+},
+"openai/gpt-4.1-nano": {
+"family": "gpt-nano",
+"knowledge": "2024-04",
+"name": "GPT-4.1 nano",
+"release_date": "2025-04-14"
+},
+"openai/gpt-4o": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o",
+"release_date": "2024-05-13"
+},
+"openai/gpt-4o-2024-05-13": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o (2024-05-13)",
+"release_date": "2024-05-13"
+},
+"openai/gpt-4o-2024-08-06": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o (2024-08-06)",
+"release_date": "2024-08-06"
+},
+"openai/gpt-4o-2024-11-20": {
+"family": "gpt",
+"knowledge": "2023-09",
+"name": "GPT-4o (2024-11-20)",
+"release_date": "2024-11-20"
+},
+"openai/gpt-4o-mini": {
+"family": "gpt-mini",
+"knowledge": "2023-09",
+"name": "GPT-4o mini",
+"release_date": "2024-07-18"
+},
+"openai/gpt-4o-mini-2024-07-18": {
+"family": "o-mini",
+"knowledge": "2023-10-31",
+"name": "GPT-4o-mini (2024-07-18)",
+"release_date": "2024-07-18"
+},
+"openai/gpt-5": {
+"family": "gpt",
+"knowledge": "2024-09-30",
+"name": "GPT-5",
+"release_date": "2025-08-07"
+},
+"openai/gpt-5-image": {
+"family": "gpt",
+"knowledge": "2024-10-01",
+"name": "GPT-5 Image",
+"release_date": "2025-10-14"
+},
+"openai/gpt-5-mini": {
+"family": "gpt-mini",
+"knowledge": "2024-05-30",
+"name": "GPT-5 Mini",
+"release_date": "2025-08-07"
+},
+"openai/gpt-5-nano": {
+"family": "gpt-nano",
+"knowledge": "2024-05-30",
+"name": "GPT-5 Nano",
+"release_date": "2025-08-07"
+},
+"openai/gpt-5-pro": {
+"family": "gpt-pro",
+"knowledge": "2024-09-30",
+"name": "GPT-5 Pro",
+"release_date": "2025-10-06"
+},
+"openai/gpt-5.1": {
+"family": "gpt",
+"knowledge": "2024-09-30",
+"name": "GPT-5.1",
+"release_date": "2025-11-13"
+},
+"openai/gpt-5.1-codex": {
+"family": "gpt-codex",
+"knowledge": "2024-09-30",
+"name": "GPT-5.1 Codex",
+"release_date": "2025-11-13"
+},
+"openai/gpt-5.1-codex-max": {
+"family": "gpt-codex",
+"knowledge": "2024-09-30",
+"name": "GPT-5.1 Codex Max",
+"release_date": "2025-11-13"
+},
+"openai/gpt-5.1-codex-mini": {
+"family": "gpt-codex",
+"knowledge": "2024-09-30",
+"name": "GPT-5.1 Codex mini",
+"release_date": "2025-11-13"
+},
+"openai/gpt-5.2": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2",
+"release_date": "2025-12-11"
+},
+"openai/gpt-5.2-chat": {
+"family": "gpt-codex",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2 Chat",
+"release_date": "2025-12-10"
+},
+"openai/gpt-5.2-codex": {
+"family": "gpt-codex",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2 Codex",
+"release_date": "2025-12-11"
+},
+"openai/gpt-5.2-pro": {
+"family": "gpt-pro",
+"knowledge": "2025-08-31",
+"name": "GPT-5.2 Pro",
+"release_date": "2025-12-11"
+},
+"openai/gpt-5.3-codex": {
+"family": "gpt-codex",
+"knowledge": "2025-08-31",
+"name": "GPT-5.3 Codex",
+"release_date": "2026-02-05"
+},
+"openai/gpt-5.4": {
+"family": "gpt",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4",
+"release_date": "2026-03-05"
+},
+"openai/gpt-5.4-mini": {
+"family": "gpt-mini",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 mini",
+"release_date": "2026-03-17"
+},
+"openai/gpt-5.4-nano": {
+"family": "gpt-nano",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 nano",
+"release_date": "2026-03-17"
+},
+"openai/gpt-5.4-pro": {
+"family": "gpt-pro",
+"knowledge": "2025-08-31",
+"name": "GPT-5.4 Pro",
+"release_date": "2026-03-05"
+},
+"openai/gpt-5.5": {
+"family": "gpt",
+"knowledge": "2025-12-01",
+"name": "GPT-5.5",
+"release_date": "2026-04-23"
+},
+"openai/gpt-5.5-pro": {
+"family": "gpt-pro",
+"knowledge": "2025-12-01",
+"name": "GPT-5.5 Pro",
+"release_date": "2026-04-23"
+},
+"openai/gpt-5.6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna",
+"release_date": "2026-07-09"
+},
+"openai/gpt-5.6-luna-pro": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Luna Pro",
+"release_date": "2026-07-09"
+},
+"openai/gpt-5.6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol",
+"release_date": "2026-07-09"
+},
+"openai/gpt-5.6-sol-pro": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Sol Pro",
+"release_date": "2026-07-09"
+},
+"openai/gpt-5.6-terra": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra",
+"release_date": "2026-07-09"
+},
+"openai/gpt-5.6-terra-pro": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT-5.6 Terra Pro",
+"release_date": "2026-07-09"
+},
+"openai/gpt-6-astra": {
+"family": "gpt-astra",
+"knowledge": "2026-04-30",
+"name": "GPT-6 Astra",
+"release_date": "2026-09-04"
+},
+"openai/gpt-6-luna": {
+"family": "gpt-luna",
+"knowledge": "2026-05-18",
+"name": "GPT-6 Luna",
+"release_date": "2026-09-22"
+},
+"openai/gpt-6-sol": {
+"family": "gpt-sol",
+"knowledge": "2026-04-20",
+"name": "GPT-6 Sol",
+"release_date": "2026-09-22"
+},
+"openai/o1": {
+"family": "o",
+"knowledge": "2023-09",
+"name": "o1",
+"release_date": "2024-12-05"
+},
+"openai/o1-pro": {
+"family": "o-pro",
+"knowledge": "2023-09",
+"name": "o1-pro",
+"release_date": "2025-03-19"
+},
+"openai/o3": {
+"family": "o",
+"knowledge": "2024-05",
+"name": "o3",
+"release_date": "2025-04-16"
+},
+"openai/o3-mini": {
+"family": "o-mini",
+"knowledge": "2024-05",
+"name": "o3-mini",
+"release_date": "2024-12-20"
+},
+"openai/o3-mini-high": {
+"family": "o",
+"knowledge": "2023-10-31",
+"name": "o3 Mini High",
+"release_date": "2025-02-12"
+},
+"openai/o3-pro": {
+"family": "o-pro",
+"knowledge": "2024-05",
+"name": "o3-pro",
+"release_date": "2025-06-10"
+},
+"openai/o4-mini": {
+"family": "o-mini",
+"knowledge": "2024-05",
+"name": "o4-mini",
+"release_date": "2025-04-16"
+},
+"openai/o4-mini-high": {
+"family": "o",
+"knowledge": "2024-06-30",
+"name": "o4 Mini High",
+"release_date": "2025-04-16"
+},
+"qwen/qwen-2.5-72b-instruct": {
+"family": "qwen",
+"knowledge": "2024-06-30",
+"name": "Qwen2.5 72B Instruct",
+"release_date": "2024-09-19"
+},
+"qwen/qwen-2.5-7b-instruct": {
+"family": "qwen",
+"knowledge": "2024-06-30",
+"name": "Qwen2.5 7B Instruct",
+"release_date": "2024-10-16"
+},
+"qwen/qwen-2.5-coder-32b-instruct": {
+"family": "qwen",
+"knowledge": "2024-06-30",
+"name": "Qwen2.5 Coder 32B Instruct",
+"release_date": "2024-11-11"
+},
+"qwen/qwen-plus": {
+"family": "qwen",
+"knowledge": "2024-04",
+"name": "Qwen Plus",
+"release_date": "2024-01-25"
+},
+"qwen/qwen-plus-2025-07-28": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen Plus 0728",
+"release_date": "2025-09-08"
+},
+"qwen/qwen2.5-vl-72b-instruct": {
+"family": "qwen",
+"knowledge": "2024-06-30",
+"name": "Qwen2.5 VL 72B Instruct",
+"release_date": "2025-02-01"
+},
+"qwen/qwen3-14b": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 14B",
+"release_date": "2025-04-28"
+},
+"qwen/qwen3-235b-a22b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 235B-A22B",
+"release_date": "2025-04"
+},
+"qwen/qwen3-235b-a22b-2507": {
+"family": "qwen",
+"knowledge": "2025-06-30",
+"name": "Qwen3 235B A22B Instruct 2507",
+"release_date": "2025-07-21"
+},
+"qwen/qwen3-235b-a22b-thinking-2507": {
+"family": "qwen",
+"knowledge": "2025-06-30",
+"name": "Qwen3 235B A22B Thinking 2507",
+"release_date": "2025-07-25"
+},
+"qwen/qwen3-30b-a3b-instruct-2507": {
+"family": "qwen",
+"knowledge": "2025-06-30",
+"name": "Qwen3 30B A3B Instruct 2507",
+"release_date": "2025-07-29"
+},
+"qwen/qwen3-30b-a3b-thinking-2507": {
+"family": "qwen",
+"knowledge": "2025-06-30",
+"name": "Qwen3 30B A3B Thinking 2507",
+"release_date": "2025-08-28"
+},
+"qwen/qwen3-32b": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 32B",
+"release_date": "2025-04"
+},
+"qwen/qwen3-8b": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 8B",
+"release_date": "2025-04-28"
+},
+"qwen/qwen3-coder": {
+"family": "qwen",
+"knowledge": "2025-06-30",
+"name": "Qwen3 Coder 480B A35B",
+"release_date": "2025-07-23"
+},
+"qwen/qwen3-coder-30b-a3b-instruct": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Coder 30B-A3B Instruct",
+"release_date": "2025-04"
+},
+"qwen/qwen3-coder-flash": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 Coder Flash",
+"release_date": "2025-07-28"
+},
+"qwen/qwen3-coder-next": {
+"family": "qwen",
+"knowledge": "2025-09",
+"name": "Qwen3 Coder Next",
+"release_date": "2026-02-03"
+},
+"qwen/qwen3-coder-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 Coder Plus",
+"release_date": "2025-07-23"
+},
+"qwen/qwen3-max": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3 Max",
+"release_date": "2025-09-23"
+},
+"qwen/qwen3-next-80b-a3b-instruct": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Next 80B-A3B Instruct",
+"release_date": "2025-09"
+},
+"qwen/qwen3-next-80b-a3b-thinking": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3-Next 80B-A3B (Thinking)",
+"release_date": "2025-09"
+},
+"qwen/qwen3-vl-235b-a22b-instruct": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 VL 235B A22B Instruct",
+"release_date": "2025-09-23"
+},
+"qwen/qwen3-vl-235b-a22b-thinking": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 VL 235B A22B Thinking",
+"release_date": "2025-09-23"
+},
+"qwen/qwen3-vl-30b-a3b-instruct": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 VL 30B A3B Instruct",
+"release_date": "2025-10-06"
+},
+"qwen/qwen3-vl-30b-a3b-thinking": {
+"family": "qwen",
+"knowledge": "2025-03-31",
+"name": "Qwen3 VL 30B A3B Thinking",
+"release_date": "2025-10-06"
+},
+"qwen/qwen3.5-plus-02-15": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.5 Plus 2026-02-15",
+"release_date": "2026-02-16"
+},
+"qwen/qwen3.6-max-preview": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.6 Max Preview",
+"release_date": "2026-04-20"
+},
+"qwen/qwen3.6-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.6 Plus",
+"release_date": "2026-04-02"
+},
+"qwen/qwen3.7-plus": {
+"family": "qwen",
+"knowledge": "2025-04",
+"name": "Qwen3.7 Plus",
+"release_date": "2026-06-02"
+},
+"rekaai/reka-flash-3": {
+"family": "reka",
+"knowledge": "2025-01-31",
+"name": "Reka Flash 3",
+"release_date": "2025-03-12"
+},
+"sakana/fugu-ultra-v2": {
+"family": "fugu",
+"knowledge": "2026-08-28",
+"name": "Fugu Ultra v2",
+"release_date": "2026-09-11"
+},
+"sao10k/l3-lunaris-8b": {
+"family": "llama",
+"knowledge": "2023-12-31",
+"name": "Llama 3 8B Lunaris",
+"release_date": "2024-08-13"
+},
+"sao10k/l3.1-euryale-70b": {
+"family": "llama",
+"knowledge": "2023-12-31",
+"name": "Llama 3.1 Euryale 70B v2.2",
+"release_date": "2024-08-28"
+},
+"sao10k/l3.3-euryale-70b": {
+"family": "llama",
+"knowledge": "2023-12-31",
+"name": "Llama 3.3 Euryale 70B",
+"release_date": "2024-12-18"
+},
+"stepfun/step-3.5-flash": {
+"knowledge": "2025-01",
+"name": "Step 3.5 Flash",
+"release_date": "2026-01-29"
+},
+"stepfun/step-3.7-flash": {
+"knowledge": "2026-03-01",
+"name": "Step 3.7 Flash",
+"release_date": "2026-05-29"
+},
+"tencent/hunyuan-a13b-instruct": {
+"family": "hunyuan",
+"knowledge": "2025-03-31",
+"name": "Hunyuan A13B Instruct",
+"release_date": "2025-07-08"
+},
+"thedrummer/cydonia-24b-v4.1": {
+"knowledge": "2024-04-30",
+"name": "Cydonia 24B V4.1",
+"release_date": "2025-09-27"
+},
+"thedrummer/skyfall-36b-v2": {
+"knowledge": "2024-06-30",
+"name": "Skyfall 36B V2",
+"release_date": "2025-03-10"
+},
+"thedrummer/unslopnemo-12b": {
+"knowledge": "2024-04-30",
+"name": "UnslopNemo 12B",
+"release_date": "2024-11-08"
+},
+"undi95/remm-slerp-l2-13b": {
+"knowledge": "2023-06-30",
+"name": "ReMM SLERP 13B",
+"release_date": "2023-07-22"
+},
+"x-ai/grok-4.20": {
+"family": "grok",
+"knowledge": "2025-09-01",
+"name": "Grok 4.20",
+"release_date": "2026-03-31"
+},
+"x-ai/grok-4.20-multi-agent": {
+"family": "grok",
+"knowledge": "2025-09-01",
+"name": "Grok 4.20 Multi-Agent",
+"release_date": "2026-03-31"
+},
+"x-ai/grok-4.6": {
+"family": "grok",
+"knowledge": "2026-02-01",
+"name": "Grok 4.6",
+"release_date": "2026-08-12"
+},
+"x-ai/grok-4.7": {
+"family": "grok",
+"knowledge": "2026-05",
+"name": "Grok 4.7",
+"release_date": "2026-09-21"
+},
+"xiaomi/mimo-v2.5": {
+"family": "mimo",
+"knowledge": "2024-12",
+"name": "MiMo-V2.5",
+"release_date": "2026-04-22"
+},
+"xiaomi/mimo-v2.5-pro": {
+"family": "mimo",
+"knowledge": "2024-12",
+"name": "MiMo-V2.5-Pro",
+"release_date": "2026-04-22"
+},
+"z-ai/glm-4.5": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.5",
+"release_date": "2025-07-28"
+},
+"z-ai/glm-4.5-air": {
+"family": "glm-air",
+"knowledge": "2025-04",
+"name": "GLM-4.5-Air",
+"release_date": "2025-07-28"
+},
+"z-ai/glm-4.5v": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.5V",
+"release_date": "2025-08-11"
+},
+"z-ai/glm-4.6": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.6",
+"release_date": "2025-09-30"
+},
+"z-ai/glm-4.6v": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.6V",
+"release_date": "2025-12-08"
+},
+"z-ai/glm-4.7": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.7",
+"release_date": "2025-12-22"
+},
+"z-ai/glm-4.7-flash": {
+"family": "glm-flash",
+"knowledge": "2025-04",
+"name": "GLM-4.7-Flash",
+"release_date": "2026-01-19"
+},
+"~anthropic/claude-sonnet-latest": {
+"family": "claude-sonnet",
+"knowledge": "2026-01-31",
+"name": "Claude Sonnet Latest",
+"release_date": "2026-04-27"
+},
+"~google/gemini-flash-latest": {
+"family": "gemini-flash",
+"knowledge": "2025-01-01",
+"name": "Gemini Flash Latest",
+"release_date": "2026-04-27"
+},
+"~google/gemini-pro-latest": {
+"family": "gemini-pro",
+"knowledge": "2025-01",
+"name": "Gemini Pro Latest",
+"release_date": "2026-04-27"
+},
+"~openai/gpt-luna-latest": {
+"family": "gpt-luna",
+"knowledge": "2026-02-16",
+"name": "GPT Luna Latest",
+"release_date": "2026-09-11"
+},
+"~openai/gpt-mini-latest": {
+"family": "gpt-mini",
+"knowledge": "2025-08-31",
+"name": "GPT Mini Latest",
+"release_date": "2026-04-27"
+},
+"~openai/gpt-sol-latest": {
+"family": "gpt-sol",
+"knowledge": "2026-02-16",
+"name": "GPT Sol Latest",
+"release_date": "2026-09-11"
+},
+"~openai/gpt-terra-latest": {
+"family": "gpt-terra",
+"knowledge": "2026-02-16",
+"name": "GPT Terra Latest",
+"release_date": "2026-09-11"
+}
+},
+"xai": {
+"grok-4.6": {
+"family": "grok",
+"knowledge": "2026-02-01",
+"name": "Grok 4.6",
+"release_date": "2026-08-12"
+},
+"grok-4.7": {
+"family": "grok",
+"knowledge": "2026-05",
+"name": "Grok 4.7",
+"release_date": "2026-09-21"
+}
+},
+"zai": {
+"glm-4.5": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.5",
+"release_date": "2025-07-28"
+},
+"glm-4.5-air": {
+"family": "glm-air",
+"knowledge": "2025-04",
+"name": "GLM-4.5-Air",
+"release_date": "2025-07-28"
+},
+"glm-4.5-flash": {
+"family": "glm-flash",
+"knowledge": "2025-04",
+"name": "GLM-4.5-Flash",
+"release_date": "2025-07-28"
+},
+"glm-4.5v": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.5V",
+"release_date": "2025-08-11"
+},
+"glm-4.6": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.6",
+"release_date": "2025-09-30"
+},
+"glm-4.6v": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.6V",
+"release_date": "2025-12-08"
+},
+"glm-4.7": {
+"family": "glm",
+"knowledge": "2025-04",
+"name": "GLM-4.7",
+"release_date": "2025-12-22"
+},
+"glm-4.7-flash": {
+"family": "glm-flash",
+"knowledge": "2025-04",
+"name": "GLM-4.7-Flash",
+"release_date": "2026-01-19"
+},
+"glm-4.7-flashx": {
+"family": "glm-flash",
+"knowledge": "2025-04",
+"name": "GLM-4.7-FlashX",
+"release_date": "2026-01-19"
+}
+}
+}

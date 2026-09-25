@@ -1,0 +1,17 @@
+{
+  "name": "since-cutoff",
+  "owner": {
+    "name": "Mohammad Hijjawi",
+    "url": "https://github.com/MohammadHijjawi97"
+  },
+  "metadata": {
+    "description": "Measure and fix what your coding model gets wrong about your exact Python dependency versions."
+  },
+  "plugins": [
+    {
+      "name": "since-cutoff",
+      "source": "./",
+      "description": "Find which of your exact dependency versions your coding model writes wrong, and fix it with a small, verified AGENTS.md note."
+    }
+  ]
+}
