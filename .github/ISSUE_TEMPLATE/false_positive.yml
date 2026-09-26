@@ -1,0 +1,24 @@
+name: Wrong API change (false positive or missed break)
+description: since-cutoff reported a change that is not breaking, or missed one that is
+labels: [api-diff]
+body:
+  - type: input
+    id: package
+    attributes:
+      label: Package and versions
+      placeholder: "anthropic 0.60.0 -> 1.8.0"
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: The change
+      description: What since-cutoff printed, or the break it missed (symbol and parameter).
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Code that shows it
+      description: A few lines that work (or fail) on each version.
+      render: python

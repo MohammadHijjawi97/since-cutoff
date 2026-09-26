@@ -1,5 +1,7 @@
 # since-cutoff
 
+English | [简体中文](README.zh-CN.md)
+
 **Your coding agent learned your libraries before they changed.**
 since-cutoff finds exactly which APIs of *your* dependency versions it gets wrong, and fixes
 them with a small AGENTS.md note that is checked by a type checker, not by another LLM.
