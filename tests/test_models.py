@@ -69,6 +69,7 @@ def test_normalize_model_id():
     assert "claude-sonnet-4-5" in normalize_model_id("anthropic/claude-sonnet-4.5")
     assert "claude-sonnet-4-5" in normalize_model_id("claude-sonnet-4-5-20250929")
     assert "qwen3-coder" in normalize_model_id("qwen3-coder:30b")
+    assert normalize_model_id("claude-opus-4-6[1m]")[0] == "claude-opus-4-6"
 
 
 def test_lookup_prefers_the_requested_provider(registry):

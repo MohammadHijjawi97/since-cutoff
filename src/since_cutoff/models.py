@@ -70,7 +70,7 @@ def _maybe_date(value: Any) -> date | None:
 
 def normalize_model_id(model_id: str) -> list[str]:
     """Candidate spellings of a model id, most specific first."""
-    mid = model_id.strip().lower()
+    mid = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())  # "claude-opus-4-6[1m]"
     if "/" in mid:  # openrouter style "anthropic/claude-sonnet-4.5"
         mid = mid.split("/", 1)[1]
     candidates = [mid]

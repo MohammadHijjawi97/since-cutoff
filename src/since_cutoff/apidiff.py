@@ -143,7 +143,8 @@ class APIChange:
         if self.kind == KIND_CHANGED:
             return f"`{path}` changed kind ({pkg})"
         if self.kind == DEPRECATED:
-            extra = f": {self.deprecation}" if self.deprecation else ""
+            meaningful = self.deprecation and self.deprecation.strip(" .").lower() != "deprecated"
+            extra = f": {self.deprecation}" if meaningful else ""
             return f"`{path}` is deprecated ({pkg}){extra}"
         return f"`{path}` changed ({pkg})"
 
