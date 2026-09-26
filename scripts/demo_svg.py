@@ -1,7 +1,7 @@
 """Render README screenshots from real, cached runs.
 
     python scripts/demo_svg.py scan <project> [out.svg]
-    python scripts/demo_svg.py run  <project> [out.svg]   # replays a cached `since-cutoff run`
+    python scripts/demo_svg.py run  <project> [out.svg] [model]   # replays a cached `since-cutoff run`
 
 The `run` mode uses the same settings as the published example run, so every task, answer and
 note comes from the cache; no model is called.
@@ -47,8 +47,9 @@ def main() -> None:
         render_console(console, scan)
         render_scan_changes(console, scan, limit=2)
     else:
+        model = sys.argv[4] if len(sys.argv) > 4 else "claude-code:claude-haiku-4-5"
         settings = Settings(
-            model="claude-code:claude-haiku-4-5",
+            model=model,
             task_model="claude-code:claude-opus-4-6",
             max_probes=30,
             heldout=2,
@@ -59,8 +60,7 @@ def main() -> None:
         scan = engine.scan(project, target)
         run = engine.run(scan)
         console.print(
-            "[bold]$[/bold] since-cutoff run --model claude-code:claude-haiku-4-5 "
-            "--task-model claude-code:claude-opus-4-6"
+            f"[bold]$[/bold] since-cutoff run --model {model} --task-model claude-code:claude-opus-4-6"
         )
         render_console(console, scan, run)
     console.save_svg(str(out), title=f"since-cutoff {mode}")

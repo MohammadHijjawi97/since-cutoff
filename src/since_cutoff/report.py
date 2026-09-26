@@ -157,7 +157,8 @@ def headline(scan: ScanResult, run: RunResult | None) -> list[Text]:
             (f"{s['dependencies_changed']} of {s['dependencies_checked']}", "bold yellow"),
             " dependencies changed their API after the cutoff ",
             (
-                f"({s['breaking_changes']} breaking changes, {s['deprecations']} new deprecations)",
+                f"({s['breaking_changes']} changes flagged by the static diff, "
+                f"{s['deprecations']} new deprecations)",
                 "dim",
             ),
         )
@@ -258,7 +259,7 @@ def render_console(
     table.add_column("you use", justify="right", no_wrap=True)
     table.add_column("at cutoff", justify="right", no_wrap=True)
     table.add_column("status")
-    table.add_column("breaking", justify="right")
+    table.add_column("changes", justify="right")
     has_probes = run is not None and bool(run.probes)
     if has_probes:
         table.add_column("probed", justify="right")
@@ -302,7 +303,7 @@ def render_console(
             for a in failing[: None if verbose else 12]:
                 console.print(
                     Text.assemble(
-                        (f"  {a.outcome:<10}", _STYLE[a.outcome]),
+                        (f"  {a.outcome:<11}", _STYLE[a.outcome]),
                         a.change.describe(short=True).replace("`", ""),
                     )
                 )
@@ -323,7 +324,7 @@ def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> N
         console.print()
         console.print(
             Text(
-                f"{p.name} {p.cutoff_version} -> {p.locked}  ({len(p.breaking)} breaking, "
+                f"{p.name} {p.cutoff_version} -> {p.locked}  ({len(p.breaking)} flagged changes, "
                 f"{len(p.deprecations)} deprecated)",
                 style="bold",
             )
@@ -363,7 +364,7 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
         "",
         "## Dependencies",
         "",
-        "| package | you use | at cutoff | status | breaking | probed | stale | wrong |",
+        "| package | you use | at cutoff | status | changes | probed | stale | wrong |",
         "|---|---|---|---|---:|---:|---:|---:|",
     ]
     for r in s["packages"]:

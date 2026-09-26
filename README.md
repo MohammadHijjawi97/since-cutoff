@@ -76,18 +76,28 @@ tool-less copy of the model, so the agent cannot grade itself.
 
 ## A real run
 
-Claude Haiku 4.5 (training cutoff February 2025) on the 9-dependency sample project in
-[`examples/agent-app`](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app), with Claude Opus 4.6 writing the tasks and notes (the card at the top of this page):
+Two Claude models on the 9-dependency sample project in
+[`examples/agent-app`](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app),
+with Claude Opus 4.6 writing the tasks and notes:
 
-- **Stale API use in 3 of 5 probed dependencies.** Of 20 probed API changes: 5 stale, 1 wrong,
-  2 deprecated, 12 correct.
-- Stale code it wrote, each valid for the version it learned and broken for the pinned one:
-  `messages.create(temperature=...)` (anthropic 1.8), `hf_hub_download(resume_download=...)`,
-  `local_dir_use_symlinks=...` and `proxies=...` (huggingface-hub 2.0),
-  `client.beta.vector_stores` (openai 3.x).
-- **The fix is 8 notes, about 391 tokens**, 7 of them checked by the type checker.
-- **Held-out tasks: 14% correct without the notes, 57% with them** (14 paired tasks; 4 of 7
-  changes fixed, 95% CI 25-84%). The 6 previously-correct APIs stayed correct with the notes.
+| | Claude Haiku 4.5 | Claude Opus 4.6 |
+|---|---|---|
+| training cutoff | Feb 2025 | May 2025 |
+| API changes probed | 20 | 16 |
+| **stale** / wrong / deprecated / correct | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
+| libraries with stale use | 3 of 5 probed | 2 of 4 probed |
+| notes written (type-checker verified) | 8 (7), about 391 tokens | 10 (7), about 437 tokens |
+| **held-out correct, without -> with notes** | **14% -> 57%** (14 pairs) | **5% -> 65%** (20 pairs) |
+| previously-correct APIs after notes | 6/6 still correct | 6/6 still correct |
+
+The stronger model is not safer: Opus 4.6 confidently wrote APIs that were removed after its
+cutoff, including `anthropic.HUMAN_PROMPT` with `client.completions`. Stale code from both runs,
+each valid for the version the model learned and broken for the pinned one:
+`messages.create(temperature=...)` (anthropic 1.8), `hf_hub_download(resume_download=...)`,
+`local_dir_use_symlinks=...`, `force_filename=...` and `proxies=...` (huggingface-hub 2.0), and
+`client.beta.vector_stores` (openai 3.x).
+
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/run-opus.svg" alt="since-cutoff run: Claude Opus 4.6" width="860"></p>
 
 The notes it wrote (excerpt, verbatim):
 
@@ -106,7 +116,7 @@ The notes it wrote (excerpt, verbatim):
 <!-- since-cutoff:end -->
 ```
 
-Small sample, one model, one project: treat it as a demonstration, not a benchmark. The full
+Small samples, two models, one project: treat it as a demonstration, not a benchmark. The full
 report (every task, answer and type-checker error) is what `since-cutoff run` writes to
 `.since-cutoff/report.md`. To reproduce: `cd examples/agent-app && since-cutoff run --model
 claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.

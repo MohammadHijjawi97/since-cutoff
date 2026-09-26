@@ -22,8 +22,8 @@ is a small agent app with nine dependencies pinned to current releases: anthropi
 openai 3.19.2, huggingface-hub 2.0.0, langchain-core 1.6.5, langgraph 1.2.12, pydantic 2.13.5,
 fastapi, requests and httpx.
 
-The model under test is **Claude Haiku 4.5**, whose training cutoff is February 2025. Tasks and
-notes were written by Claude Opus 4.6.
+Two models were tested: **Claude Haiku 4.5** (training cutoff February 2025) and **Claude Opus 4.6**
+(May 2025). Tasks and notes were written by Claude Opus 4.6.
 
 ## How it measures
 
@@ -53,17 +53,22 @@ No generated code is ever executed.
 
 ## Results
 
-| | |
-|---|---|
-| API changes probed | 20 (plus 2 not counted: one off-task, one that never used the API) |
-| stale | **5** |
-| wrong | 1 |
-| deprecated | 2 |
-| correct | 12 |
-| libraries with stale use | **3 of the 5 probed** |
+| | Claude Haiku 4.5 | Claude Opus 4.6 |
+|---|---|---|
+| training cutoff | Feb 2025 | May 2025 |
+| API changes probed | 20 | 16 |
+| **stale** / wrong / deprecated / correct | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
+| libraries with stale use | 3 of 5 probed | 2 of 4 probed |
+| notes written (type-checker verified) | 8 (7), about 391 tokens | 10 (7), about 437 tokens |
+| **held-out correct, without -> with notes** | **14% -> 57%** (14 pairs) | **5% -> 65%** (20 pairs) |
+| previously-correct APIs after notes | 6/6 still correct | 6/6 still correct |
 
-The stale code, verbatim from the model's answers, each valid in the version it learned and
-broken in the pinned one:
+The stronger model is not safer. Opus 4.6 has a later cutoff and still wrote stale code more
+often in this sample, and it did so confidently: `anthropic.HUMAN_PROMPT` with
+`client.completions`, `hf_hub_download(force_filename=...)`, `resume_download=...`.
+
+More stale code from the Haiku run, each valid in the version it learned and broken in the pinned
+one:
 
 - `client.messages.create(..., temperature=...)`: removed in anthropic 1.8
 - `hf_hub_download(..., resume_download=True)`, `local_dir_use_symlinks=...` and `proxies=...`:
@@ -89,7 +94,7 @@ APIs it already got right were still right with the notes in its context.
 
 ## What these numbers do and don't say
 
-- **Small sample.** One model, one project, 20 probes. It is a demonstration of a method, not a
+- **Small sample.** Two models, one project, 16-20 probes each. It is a demonstration of a method, not a
   benchmark. The confidence interval is wide on purpose.
 - **A sample of changes, not all of them.** Probes are ranked (APIs the project's own code uses
   first, hard breaks before soft ones); the task writer also skips internals.
