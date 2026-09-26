@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use since-cutoff, please cite it as below."
+title: "since-cutoff: measure and fix what coding models get wrong about your dependency versions"
+type: software
+authors:
+  - family-names: Hijjawi
+    given-names: Mohammad
+    orcid: "https://orcid.org/0009-0001-3199-7769"
+repository-code: "https://github.com/MohammadHijjawi97/since-cutoff"
+license: MIT
+version: 0.1.0
+date-released: "2026-09-26"
+keywords:
+  - large language models
+  - coding agents
+  - knowledge cutoff
+  - API evolution
+  - static analysis

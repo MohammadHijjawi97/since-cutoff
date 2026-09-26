@@ -1,6 +1,6 @@
 # since-cutoff
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md)
 
 **Your coding agent learned your libraries before they changed.**
 since-cutoff finds exactly which APIs of *your* dependency versions it gets wrong, and fixes
@@ -8,9 +8,10 @@ them with a small AGENTS.md note that is checked by a type checker, not by anoth
 
 [![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
 
-<p align="center"><img src="docs/img/run.svg" alt="since-cutoff run: Claude Haiku 4.5 on a real project" width="860"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/run.svg" alt="since-cutoff run: Claude Haiku 4.5 on a real project" width="860"></p>
 
 ## The problem
 
@@ -28,11 +29,25 @@ For that sample project, 7 of 9 dependencies had changed their public API after 
 (the static diff flags 483 changes; many are internals, which the task writer skips). An agent that learned the old API writes code that fails at
 import or call time, or, worse, still runs because the old path is only deprecated.
 
-<p align="center"><img src="docs/img/scan.svg" alt="since-cutoff scan output" width="820"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" alt="since-cutoff scan output" width="820"></p>
 
 Documentation tools paste whole docs into the context and hope. since-cutoff **measures**
 which of those changes your model actually gets wrong, writes **only** the notes that are
 needed, and **proves** on held-out tasks that the notes fix them.
+
+## Features
+
+- **`scan`**: for every dependency, the version your model saw at its training cutoff vs. the one
+  you pin, and a static diff of what broke in between (no model calls, no API key).
+- **`run`**: probes the model with short tasks that need the changed APIs and scores its code with
+  a type checker against *both* versions: stale, wrong, deprecated or correct.
+- **Verified fixes**: one-line AGENTS.md / CLAUDE.md notes, kept only if their example
+  type-checks against your exact version, and re-tested on held-out tasks.
+- **Works where you are**: Claude Code plugin and skill, or any of Anthropic, OpenAI, OpenRouter,
+  DeepSeek, Ollama and OpenAI-compatible servers.
+- **Every lockfile**: uv, Poetry, PDM, pylock, Pipenv, requirements files, or a `.venv`.
+- **Safe and reproducible**: never runs package or model-written code; everything is cached;
+  full JSON and Markdown reports.
 
 ## Quick start
 
@@ -62,7 +77,7 @@ tool-less copy of the model, so the agent cannot grade itself.
 ## A real run
 
 Claude Haiku 4.5 (training cutoff February 2025) on the 9-dependency sample project in
-[`examples/agent-app`](examples/agent-app), with Claude Opus 4.6 writing the tasks and notes (the card at the top of this page):
+[`examples/agent-app`](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app), with Claude Opus 4.6 writing the tasks and notes (the card at the top of this page):
 
 - **Stale API use in 3 of 5 probed dependencies.** Of 20 probed API changes: 5 stale, 1 wrong,
   2 deprecated, 12 correct.
@@ -135,7 +150,18 @@ flowchart LR
 
 Everything is scored by a type checker against the exact package versions, each in an isolated
 environment with that package's own runtime dependencies. No LLM judges anything, and every
-number traces back to `results.json`. Details: [docs/how-it-works.md](docs/how-it-works.md).
+number traces back to `results.json`. Details: [docs/how-it-works.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md).
+
+## What it runs, sends and fetches
+
+- **Fetches** package metadata and wheels from PyPI and model cutoffs from models.dev (a snapshot
+  is bundled for offline use).
+- **Sends** prompts only to the model provider you choose (`run` only; `scan` sends nothing).
+  Prompts contain package names, versions, public signatures and docstrings of the changed APIs,
+  the generated tasks and, for notes, the model's own answer. Never your source code.
+- **Runs** basedpyright locally on the model's answers. It never executes them.
+- **Writes** `.since-cutoff/` in your project, its cache (`since-cutoff cache path`) and, with
+  `--apply`, one marked block in `AGENTS.md`/`CLAUDE.md`. No telemetry.
 
 ## Safe by design
 
@@ -184,8 +210,12 @@ Exit codes: `0` ok, `1` error (including "no model answer could be scored"), `2`
 
 ## Contributing
 
-Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The offline test
+Issues and pull requests are welcome; see [CONTRIBUTING.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/CONTRIBUTING.md). The offline test
 suite runs the whole pipeline with a toy library and a scripted model, so no API key is needed.
+
+## Citation
+
+If you use since-cutoff in research, please cite it (see [`CITATION.cff`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/CITATION.cff)).
 
 ## License
 

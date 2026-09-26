@@ -106,7 +106,9 @@ def template_bullet(change: APIChange) -> str:
         return f"`{change.owner + '.' if change.owner else ''}{change.name}`: pass `{change.parameter}` positionally in {pkg}."
     if change.kind == DEPRECATED:
         text = _safe(change.deprecation or "").rstrip(".")
-        msg = f": {text}" if text and text.lower() not in ("deprecated", "deprecated method") else ""
+        msg = (
+            f": {text}" if text and text.lower() not in ("deprecated", "deprecated method") else ""
+        )
         return f"`{change.path}` is deprecated in {pkg}{msg}. Avoid it in new code."
     if change.kind == KIND_CHANGED:
         return f"`{change.path}` changed kind in {pkg}; check its new signature before use."

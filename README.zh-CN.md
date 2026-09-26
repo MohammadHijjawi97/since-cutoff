@@ -1,6 +1,6 @@
 # since-cutoff
 
-[English](README.md) | 简体中文
+[English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | 简体中文
 
 **你的编程 Agent 学会你的依赖库时，那些库还没有改版。**
 since-cutoff 会找出：在*你项目锁定的确切版本*里，模型到底会把哪些 API 写错；
@@ -19,17 +19,26 @@ since-cutoff 会找出：在*你项目锁定的确切版本*里，模型到底�
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()`、`llm.predict()` 已移除 |
 | openai | 1.98.0 | 3.19.2 | 26 个破坏性变更，6 个新的弃用 |
 
-在这个示例项目中，9 个依赖里有 7 个在模型截止日期之后改了公开 API，共 483 个破坏性变更。
+在这个示例项目中，9 个依赖里有 7 个在模型截止日期之后改了公开 API（静态对比共标出 483 处变更，其中不少是内部实现，生成任务时会被跳过）。
 只学过旧 API 的 Agent 写出的代码会在导入或调用时报错；更糟的是，旧写法有时只是“已弃用”，代码还能跑。
 
 文档检索类工具会把整份文档塞进上下文然后碰运气。since-cutoff 则是先**测量**模型实际会写错哪些变更，
 **只**写必要的说明，并在**留出任务（held-out）**上**证明**这些说明确实有效。
 
+## 特性
+
+- **`scan`**：对每个依赖，比较模型截止日期时的版本和你锁定的版本，静态列出其间的破坏性变更（不调用模型，不需要 API key）。
+- **`run`**：用需要这些变更 API 的小任务测试模型，并用类型检查器分别对**两个版本**打分：过时、错误、已弃用或正确。
+- **经过验证的修复**：一行一条的 AGENTS.md / CLAUDE.md 说明，只有示例代码能通过你锁定版本的类型检查才会保留，并在留出任务上复测。
+- **随处可用**：Claude Code 插件和技能，或 Anthropic、OpenAI、OpenRouter、DeepSeek、Ollama 以及任何 OpenAI 兼容接口。
+- **支持各种 lockfile**：uv、Poetry、PDM、pylock、Pipenv、requirements 文件或 `.venv`。
+- **安全、可复现**：从不运行包代码或模型写的代码；所有结果都有缓存；输出完整的 JSON 和 Markdown 报告。
+
 ## 一次真实运行
 
-Claude Haiku 4.5（训练截止 2025 年 2 月），在 [`examples/agent-app`](examples/agent-app) 这个 9 个依赖的示例项目上运行，由 Claude Opus 4.6 生成任务和说明：
+Claude Haiku 4.5（训练截止 2025 年 2 月），在 [`examples/agent-app`](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app) 这个 9 个依赖的示例项目上运行，由 Claude Opus 4.6 生成任务和说明：
 
-<p align="center"><img src="docs/img/run.svg" alt="since-cutoff run 结果" width="860"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/run.svg" alt="since-cutoff run 结果" width="860"></p>
 
 - **5 个被测依赖中有 3 个出现过时 API 用法。** 20 个被测 API 变更：5 个 stale（过时）、1 个 wrong、2 个 deprecated、12 个正确。
 - 它写出的过时代码（对它学过的版本有效，对锁定版本无效）：`messages.create(temperature=...)`（anthropic 1.8）、`hf_hub_download(resume_download=...)`、`local_dir_use_symlinks=...`、`proxies=...`（huggingface-hub 2.0）、`client.beta.vector_stores`（openai 3.x）。
@@ -85,7 +94,7 @@ uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff ru
 5. 用 basedpyright 针对**两个版本**分别做类型检查：对旧版本有效、对你的版本无效，且错误涉及变更过的 API，即为 **stale（过时）**。
 6. 为失败项生成说明，只有示例代码通过类型检查的说明才会保留；再在留出任务上成对比较“有/无说明”的正确率。
 
-生成的代码**永远不会被执行**；包代码只做静态读取。详见 [docs/how-it-works.md](docs/how-it-works.md)（英文）。
+生成的代码**永远不会被执行**；包代码只做静态读取。详见 [docs/how-it-works.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md)（英文）。
 
 ## 在 CI 中使用
 
@@ -101,7 +110,7 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 
 ## 贡献
 
-欢迎提 Issue 和 PR，参见 [CONTRIBUTING.md](CONTRIBUTING.md)。离线测试用一个玩具库和脚本化模型跑完整流程，不需要任何 API key。
+欢迎提 Issue 和 PR，参见 [CONTRIBUTING.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/CONTRIBUTING.md)。离线测试用一个玩具库和脚本化模型跑完整流程，不需要任何 API key。
 
 ## 许可证
 
