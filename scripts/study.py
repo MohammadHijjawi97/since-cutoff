@@ -91,7 +91,11 @@ def run_pair(
             row[key] = sum(a.outcome == name for a in valid)
         row["probed"] = len(valid)
         pairs = run.pairing("heldout")
-        row["heldout_n"], row["heldout_before"], row["heldout_after"] = pairs.n, pairs.before, pairs.after
+        row["heldout_n"], row["heldout_before"], row["heldout_after"] = (
+            pairs.n,
+            pairs.before,
+            pairs.after,
+        )
         console.print(
             f"  {target.model_id:<32} {package:<18} probed={len(valid):<3} stale={row['stale']:<3} wrong={row['wrong']}"
         )

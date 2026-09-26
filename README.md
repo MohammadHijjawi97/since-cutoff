@@ -10,7 +10,7 @@ them with a small AGENTS.md note that is checked by a type checker, not by anoth
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<p align="center"><img src="docs/img/scan.svg" alt="since-cutoff scan output" width="820"></p>
+<p align="center"><img src="docs/img/run.svg" alt="since-cutoff run: Claude Haiku 4.5 on a real project" width="860"></p>
 
 ## The problem
 
@@ -24,9 +24,11 @@ with a July 2025 cutoff (Claude Sonnet 4.5) and current releases, found by `sinc
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()`, `llm.predict()` removed |
 | openai | 1.98.0 | 3.19.2 | 26 breaking changes, 6 new deprecations |
 
-For that sample project, 7 of 9 dependencies had changed their public API after the cutoff:
-483 breaking changes in total. An agent that learned the old API writes code that fails at
+For that sample project, 7 of 9 dependencies had changed their public API after the cutoff
+(the static diff flags 483 changes; many are internals, which the task writer skips). An agent that learned the old API writes code that fails at
 import or call time, or, worse, still runs because the old path is only deprecated.
+
+<p align="center"><img src="docs/img/scan.svg" alt="since-cutoff scan output" width="820"></p>
 
 Documentation tools paste whole docs into the context and hope. since-cutoff **measures**
 which of those changes your model actually gets wrong, writes **only** the notes that are
@@ -57,29 +59,42 @@ Then ask Claude to "check which of our dependencies you are out of date on", or 
 `/since-cutoff:since-cutoff`. The skill runs the CLI; the measuring itself is done by a fresh,
 tool-less copy of the model, so the agent cannot grade itself.
 
-## What you get
+## A real run
 
-`since-cutoff run` prints a card like this and writes `.since-cutoff/report.md` and
-`results.json`:
+Claude Haiku 4.5 (training cutoff February 2025) on the 9-dependency sample project in
+[`examples/agent-app`](examples/agent-app), with Claude Opus 4.6 writing the tasks and notes (the card at the top of this page):
 
-```text
-Stale API use in <n> of <m> probed dependencies
-7 of 9 dependencies changed their API after the cutoff (483 breaking changes, 10 new deprecations)
-Probed 30 API changes: <stale> stale · <wrong> wrong · <deprecated> deprecated · <correct> correct
-Fix: <k> notes (all checked by the type checker), about <t> tokens
-Held-out tasks correct without -> with notes: <before>% -> <after>%  (paired tasks, 95% CI)
-```
+- **Stale API use in 3 of 5 probed dependencies.** Of 20 probed API changes: 5 stale, 1 wrong,
+  2 deprecated, 12 correct.
+- Stale code it wrote, each valid for the version it learned and broken for the pinned one:
+  `messages.create(temperature=...)` (anthropic 1.8), `hf_hub_download(resume_download=...)`,
+  `local_dir_use_symlinks=...` and `proxies=...` (huggingface-hub 2.0),
+  `client.beta.vector_stores` (openai 3.x).
+- **The fix is 8 notes, about 391 tokens**, 7 of them checked by the type checker.
+- **Held-out tasks: 14% correct without the notes, 57% with them** (14 paired tasks; 4 of 7
+  changes fixed, 95% CI 25-84%). The 6 previously-correct APIs stayed correct with the notes.
 
-and a block you can keep in `AGENTS.md` or `CLAUDE.md` (`--apply` writes it; `unapply` removes it):
+The notes it wrote (excerpt, verbatim):
 
 ```markdown
 <!-- since-cutoff:start -->
 ## Library changes after the model's training cutoff
 
 **anthropic 1.8.0**
-- `client.messages.create(temperature=...)`: `temperature`, `top_p` and `top_k` were removed ...
+- `temperature=...` was removed from `messages.create()` in anthropic 1.8.0. Omit the `temperature` parameter entirely; there is no replacement.
+
+**huggingface-hub 2.0.0**
+- `hf_hub_download(..., resume_download=True)`: The `resume_download` parameter was removed in huggingface-hub 2.0.0. Omit it; downloads resume automatically.
+
+**openai 3.19.2**
+- `client.beta.vector_stores` is removed in openai 3.19.2. Use `client.vector_stores` instead.
 <!-- since-cutoff:end -->
 ```
+
+Small sample, one model, one project: treat it as a demonstration, not a benchmark. The full
+report (every task, answer and type-checker error) is what `since-cutoff run` writes to
+`.since-cutoff/report.md`. To reproduce: `cd examples/agent-app && since-cutoff run --model
+claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.
 
 ## Models
 

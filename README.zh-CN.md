@@ -6,7 +6,6 @@
 since-cutoff 会找出：在*你项目锁定的确切版本*里，模型到底会把哪些 API 写错；
 然后用一段很短的 AGENTS.md 说明来修复。每条说明都由类型检查器验证，而不是让另一个 LLM 打分。
 
-<p align="center"><img src="docs/img/scan.svg" alt="since-cutoff scan 输出" width="820"></p>
 
 ## 问题是什么
 
@@ -25,6 +24,19 @@ since-cutoff 会找出：在*你项目锁定的确切版本*里，模型到底�
 
 文档检索类工具会把整份文档塞进上下文然后碰运气。since-cutoff 则是先**测量**模型实际会写错哪些变更，
 **只**写必要的说明，并在**留出任务（held-out）**上**证明**这些说明确实有效。
+
+## 一次真实运行
+
+Claude Haiku 4.5（训练截止 2025 年 2 月），在 [`examples/agent-app`](examples/agent-app) 这个 9 个依赖的示例项目上运行，由 Claude Opus 4.6 生成任务和说明：
+
+<p align="center"><img src="docs/img/run.svg" alt="since-cutoff run 结果" width="860"></p>
+
+- **5 个被测依赖中有 3 个出现过时 API 用法。** 20 个被测 API 变更：5 个 stale（过时）、1 个 wrong、2 个 deprecated、12 个正确。
+- 它写出的过时代码（对它学过的版本有效，对锁定版本无效）：`messages.create(temperature=...)`（anthropic 1.8）、`hf_hub_download(resume_download=...)`、`local_dir_use_symlinks=...`、`proxies=...`（huggingface-hub 2.0）、`client.beta.vector_stores`（openai 3.x）。
+- **修复只需 8 条说明，约 391 个 token**，其中 7 条经过类型检查器验证。
+- **留出任务正确率：无说明 14%，有说明 57%**（14 对任务；7 个变更中修复了 4 个，95% 置信区间 25–84%）。之前答对的 6 个 API 在加入说明后仍然正确。
+
+样本小、只有一个模型和一个项目：请把它当作演示，而不是基准测试。
 
 ## 快速开始
 
