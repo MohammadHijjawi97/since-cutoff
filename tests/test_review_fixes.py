@@ -234,7 +234,7 @@ def test_untouched_answers_are_not_counted_as_correct(checker, toylib):
 
 
 @pytest.mark.pyright
-def test_new_only_errors_unrelated_to_any_change_are_wrong_not_stale(checker, tmp_path):
+def test_new_only_type_mismatches_are_not_stale(checker, tmp_path):
     v1 = SourceTree(
         "lib",
         "1",
@@ -254,7 +254,8 @@ def test_new_only_errors_unrelated_to_any_change_are_wrong_not_stale(checker, tm
     )
     code = "import lib\nlib.connect('h', '5432')\n"
     new, old = checker.check(v2, {"x": code})["x"], checker.check(v1, {"x": code})["x"]
-    assert classify(new, old, None, frozenset({"gone"}))[0] == WRONG
+    # A type mismatch caused by new annotations is neither staleness nor missing API knowledge.
+    assert classify(new, old, None, frozenset({"gone"}))[0] == PASS
 
 
 @pytest.mark.pyright
@@ -572,3 +573,61 @@ def test_reports_do_not_hide_existing_folders(tmp_path):
 def test_bare_model_names_get_a_hint(spec, hint):
     with pytest.raises(ProviderError, match=hint):
         check_spec(spec)
+
+
+# ------------------------------------------------ findings from the first real run
+def test_attribute_becoming_a_cached_property_is_not_breaking(tmp_path):
+    old = {
+        "pkg/__init__.py": "class Client:\n    def __init__(self):\n        self.messages = object()\n"
+    }
+    new = {
+        "pkg/__init__.py": "from functools import cached_property\nclass Client:\n    @cached_property\n    def messages(self):\n        return object()\n"
+    }
+    assert diff(tmp_path, old, new) == []
+
+
+@pytest.mark.pyright
+def test_union_narrowing_is_not_a_knowledge_error(checker, tmp_path):
+    lib = {
+        "lib/__init__.py": "class TextBlock:\n    text: str = ''\nclass ThinkingBlock:\n    thinking: str = ''\n"
+        "class ToolBlock:\n    name: str = ''\nclass Message:\n    content: list[TextBlock | ThinkingBlock | ToolBlock] = []\n"
+        "def create(model: str) -> Message:\n    return Message()\n"
+    }
+    v1 = SourceTree("lib", "1", write_tree(tmp_path / "v1", lib), ("lib",))
+    v2 = SourceTree("lib", "2", write_tree(tmp_path / "v2", lib), ("lib",))
+    code = "import lib\nprint(lib.create('m').content[0].text)\n"
+    new, old = checker.check(v2, {"x": code})["x"], checker.check(v1, {"x": code})["x"]
+    assert new.api_errors  # the type checker does complain ...
+    assert (
+        classify(new, old, None, frozenset(), frozenset({"text"}))[0] == PASS
+    )  # ... but it is not staleness
+
+
+@pytest.mark.pyright
+def test_stricter_annotations_are_not_staleness(checker, tmp_path):
+    v1 = SourceTree(
+        "lib",
+        "1",
+        write_tree(tmp_path / "v1", {"lib/__init__.py": "def add_node(name, action):\n    pass\n"}),
+        ("lib",),
+    )
+    v2 = SourceTree(
+        "lib",
+        "2",
+        write_tree(
+            tmp_path / "v2",
+            {
+                "lib/__init__.py": "from typing import Callable\ndef add_node(name: str, action: Callable[[int], int]) -> None:\n    pass\n"
+            },
+        ),
+        ("lib",),
+    )
+    code = "import lib\nlib.add_node('n', lambda x, y: x)\n"
+    new, old = checker.check(v2, {"x": code})["x"], checker.check(v1, {"x": code})["x"]
+    assert (
+        new.api_errors
+        and classify(
+            new, old, None, frozenset({"gone"}), frozenset({"add_node", "action", "name"})
+        )[0]
+        != STALE
+    )

@@ -204,6 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--task-model", help="model that writes tasks and notes (default: the tested model)"
     )
+    run.add_argument(
+        "--effort",
+        choices=["low", "medium", "high", "max", "default"],
+        default="low",
+        help="Claude Code thinking effort for all calls (default: low; 'default' keeps the CLI's own)",
+    )
     run.add_argument("--jobs", type=_positive, default=4, help="parallel model calls (default: 4)")
     run.add_argument(
         "--no-fix", action="store_true", help="only measure; do not write or verify notes"
@@ -331,6 +337,7 @@ def _settings(args: argparse.Namespace) -> Settings:
         s.heldout = args.heldout
         s.regression = args.regression
         s.jobs = max(1, args.jobs)
+        s.effort = None if args.effort == "default" else args.effort
         if args.quick:
             s.max_probes = min(s.max_probes, 12)
             s.heldout = min(s.heldout, 1)

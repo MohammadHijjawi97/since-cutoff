@@ -29,8 +29,16 @@ FIRST_CALL_TIMEOUT = 180.0
 class ClaudeCodeProvider:
     provider_name = "claude-code"
 
-    def __init__(self, model: str | None, *, timeout: float = 600.0, retries: int = 3) -> None:
+    def __init__(
+        self,
+        model: str | None,
+        *,
+        effort: str | None = None,
+        timeout: float = 600.0,
+        retries: int = 3,
+    ) -> None:
         self.model = model
+        self.effort = effort
         self.timeout = timeout
         self.retries = retries
         self.resolved_model: str | None = None
@@ -50,7 +58,8 @@ class ClaudeCodeProvider:
 
     @property
     def key(self) -> str:
-        return f"claude-code:{self.resolved_model or self.model or 'default'}"
+        base = f"claude-code:{self.resolved_model or self.model or 'default'}"
+        return f"{base}@{self.effort}" if self.effort else base
 
     def command(self, system_file: str) -> list[str]:
         cmd = [
@@ -64,6 +73,10 @@ class ClaudeCodeProvider:
         ]
         if self.model:
             cmd += ["--model", self.model]
+        if self.effort:
+            # Claude Code thinks at length by default; short coding answers do not need it, and
+            # a 7,000-token think for a 20-line answer makes a run 20x slower.
+            cmd += ["--effort", self.effort]
         cmd += ["--tools", "", "--system-prompt-file", system_file]
         return cmd
 

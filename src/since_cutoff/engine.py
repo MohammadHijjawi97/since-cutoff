@@ -124,6 +124,7 @@ class Settings:
     max_download_mb: float = 80.0
     python_version: str | None = None
     base_url: str | None = None
+    effort: str | None = "low"
     today: date = field(default_factory=date.today)
 
 
@@ -134,6 +135,7 @@ class ModelTarget:
     cutoff: date
     cutoff_source: str
     info: ModelInfo | None = None
+    effort: str | None = None
 
 
 @dataclass
@@ -324,6 +326,7 @@ class Engine:
         self._providers: dict[str, Provider] = {}
         self._sources: dict[tuple[str, str], SourceTree] = {}
         self._dep_roots: dict[tuple[str, str, date | None], list[Path]] = {}
+        self._vocabs: dict[tuple[str, str, date | None], frozenset[str]] = {}
 
     # -------------------------------------------------------------- helpers
     @property
@@ -337,7 +340,9 @@ class Engine:
             if self._provider_factory is None:
                 from since_cutoff.providers import make_provider
 
-                self._providers[spec] = make_provider(spec, base_url=self.settings.base_url)
+                self._providers[spec] = make_provider(
+                    spec, base_url=self.settings.base_url, effort=self.settings.effort
+                )
             else:
                 self._providers[spec] = self._provider_factory(spec)
         return self._providers[spec]
@@ -391,13 +396,18 @@ class Engine:
                 self.settings.model = spec = f"claude-code:{model_id}"
             else:
                 model_id, source_note = self._guess_claude_code_model(model)
+        effort = self.settings.effort if provider_name in ("claude-code", "claude") else None
         if self.settings.cutoff is not None:
             return ModelTarget(
-                spec, model_id or spec, self.settings.cutoff, "--cutoff" + source_note
+                spec,
+                model_id or spec,
+                self.settings.cutoff,
+                "--cutoff" + source_note,
+                effort=effort,
             )
         info = self.registry.require(model_id, provider_name)
         assert info.knowledge is not None
-        return ModelTarget(spec, info.id, info.knowledge, "models.dev" + source_note, info)
+        return ModelTarget(spec, info.id, info.knowledge, "models.dev" + source_note, info, effort)
 
     def _discover_claude_code_model(self, spec: str) -> str:
         self.reporter.info("Asking Claude Code which model it runs ...")
@@ -745,6 +755,13 @@ class Engine:
         self._dep_roots[key] = roots
         return roots
 
+    def _vocab(self, tree: SourceTree, deps: list[Path]) -> frozenset[str]:
+        key = (tree.name, tree.version, None)
+        cached = self._vocabs.get(key)
+        if cached is None:
+            cached = self._vocabs[key] = package_vocab([tree.root, *deps])
+        return cached
+
     def _score(self, attempts: list[Attempt], scan: ScanResult) -> None:
         by_pkg: dict[str, list[Attempt]] = {}
         for a in attempts:
@@ -773,8 +790,11 @@ class Engine:
                     a.outcome, a.error = ERROR, f"type check failed: {exc}"
                 continue
             related = change_identifiers(ps.changes)
+            vocab = self._vocab(new_tree, new_deps)
             for i, a in enumerate(items):
-                a.outcome, a.errors = classify(new[f"{i}"], old.get(f"{i}"), a.change, related)
+                a.outcome, a.errors = classify(
+                    new[f"{i}"], old.get(f"{i}"), a.change, related, vocab
+                )
 
     # --------------------------------------------------------------- notes
     def _note(self, spec: str, attempt: Attempt, scan: ScanResult) -> Note:
@@ -845,11 +865,6 @@ def change_identifiers(changes: Iterable[APIChange]) -> frozenset[str]:
     return frozenset(n for n in out if n and not n.startswith("__"))
 
 
-def _mentions(d: Diagnostic, names: frozenset[str]) -> bool:
-    words = set(_IDENT.findall(d.message)) | set(_IDENT.findall(d.context))
-    return bool(words & names)
-
-
 def touches(identifiers: frozenset[str], change: APIChange) -> bool:
     """Does the code exercise the changed API at all?
 
@@ -864,31 +879,112 @@ def touches(identifiers: frozenset[str], change: APIChange) -> bool:
     return True
 
 
+_CLASS_ATTR = re.compile(r'Cannot access attribute "(\w+)" for class "([\w.]+)"')
+_KWARG = re.compile(r"(?<![\w.=!<>])([A-Za-z_]\w*)\s*=(?!=)")
+_KNOWLEDGE = (
+    re.compile(r"is not a known attribute of module"),
+    re.compile(r"is unknown import symbol"),
+    re.compile(r"could not be resolved"),
+    re.compile(r"No parameter named"),
+    re.compile(r"Arguments? missing for parameters?"),
+    re.compile(r"Expected \d+ positional argument"),
+    re.compile(r"is not defined"),
+    re.compile(r"Cannot instantiate abstract class"),
+)
+
+
+def is_knowledge_error(
+    d: Diagnostic,
+    *,
+    fresh: bool,
+    siblings: list[Diagnostic],
+    vocab: frozenset[str],
+    related: frozenset[str],
+) -> bool:
+    """Is this diagnostic about *knowing the API* (names, parameters, arity)?
+
+    Type-strictness complaints are not: a union member lacking an attribute
+    (``msg.content[0].text`` where content may be a ThinkingBlock), a lambda where a typed
+    callable is expected, or an argument whose annotation got stricter. Those make code
+    type-incorrect without meaning the model does not know the library version.
+    """
+    first = d.message.splitlines()[0] if d.message else ""
+    m = _CLASS_ATTR.search(first)
+    if m:
+        attr = m.group(1)
+        same_spot = [
+            s
+            for s in siblings
+            if s is not d and (s.line, s.col) == (d.line, d.col) and _CLASS_ATTR.search(s.message)
+        ]
+        if any(_CLASS_ATTR.search(s.message).group(1) == attr for s in same_spot):  # type: ignore[union-attr]
+            return False  # several union members lack it: a narrowing complaint
+        return fresh or attr not in vocab
+    if first.startswith("No overloads for"):
+        # Overload mismatches are knowledge errors only when a keyword is unknown or changed.
+        kwargs = set(_KWARG.findall(d.context))
+        return bool(kwargs & related) or any(k not in vocab for k in kwargs)
+    if d.rule == "reportAbstractUsage":
+        return True
+    return any(p.search(first) for p in _KNOWLEDGE)
+
+
+def package_vocab(roots: Iterable[Path]) -> frozenset[str]:
+    """Names the package defines anywhere (functions, classes, attributes, parameters)."""
+    names: set[str] = set()
+    pattern = re.compile(
+        r"^\s*(?:async\s+)?def\s+(\w+)\s*\(([^)]*)|^\s*class\s+(\w+)|^\s*(?:self\.)?(\w+)\s*[:=]",
+        re.M,
+    )
+    for root in roots:
+        for path in root.rglob("*.py*"):
+            if path.suffix not in (".py", ".pyi"):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for fn, params, cls, attr in pattern.findall(text):
+                names.update(n for n in (fn, cls, attr) if n)
+                names.update(re.findall(r"(\w+)\s*(?::|=|,|$)", params))
+    return frozenset(names)
+
+
 def classify(
     new: CheckResult,
     old: CheckResult | None,
     change: APIChange | None = None,
     related: frozenset[str] = frozenset(),
+    vocab: frozenset[str] = frozenset(),
 ) -> tuple[str, list[str]]:
     """Label one answer by comparing checker results for the locked and the cutoff version.
 
-    STALE requires a statement that is clean on the cutoff version but has package errors on
-    the locked version, and at least one of those errors must involve an API that changed
-    (``related``). Errors that exist on both versions, or appear only because the new version
-    has stricter annotations, are WRONG.
+    Only *knowledge errors* count (unknown names, imports and parameters, missing required
+    arguments, arity), never pure type-strictness complaints. An answer is STALE when a
+    statement that is clean on the cutoff version has knowledge errors on the locked version;
+    WRONG when its knowledge errors are not explained by the version change.
     """
     if not new.syntax_ok:
         return INVALID, []
     if not new.uses_package:
         return OFFTASK, []
-    if new.api_errors:
-        errors = [d.short() for d in new.api_errors]
-        if old is not None and old.syntax_ok:
-            old_statements = {d.stmt for d in old.api_errors}
-            fresh = [d for d in new.api_errors if d.stmt not in old_statements]
-            names = related or (change_identifiers([change]) if change else frozenset())
-            if fresh and (not names or any(_mentions(d, names) for d in fresh)):
-                return STALE, errors
+    old_ok = old is not None and old.syntax_ok
+    old_statements = {d.stmt for d in old.api_errors} if old_ok and old is not None else set()
+    knowledge = [
+        d
+        for d in new.api_errors
+        if is_knowledge_error(
+            d,
+            fresh=old_ok and d.stmt not in old_statements,
+            siblings=new.api_errors,
+            vocab=vocab,
+            related=related,
+        )
+    ]
+    if knowledge:
+        errors = [d.short() for d in knowledge]
+        if old_ok and any(d.stmt not in old_statements for d in knowledge):
+            return STALE, errors
         return WRONG, errors
     if new.deprecations:
         return DEPRECATED, [d.short() for d in new.deprecations]

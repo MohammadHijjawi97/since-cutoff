@@ -57,10 +57,16 @@ def split_spec(spec: str) -> tuple[str, str | None]:
     return provider.strip().lower(), (model.strip() or None)
 
 
-def make_provider(spec: str, *, base_url: str | None = None, timeout: float = 600.0) -> Provider:
+def make_provider(
+    spec: str,
+    *,
+    base_url: str | None = None,
+    effort: str | None = None,
+    timeout: float = 600.0,
+) -> Provider:
     provider, model = split_spec(spec)
     if provider in ("claude-code", "claude"):
-        return ClaudeCodeProvider(model, timeout=timeout)
+        return ClaudeCodeProvider(model, effort=effort, timeout=timeout)
     if provider == "anthropic":
         if not model:
             raise ProviderError("anthropic needs a model, e.g. anthropic:claude-sonnet-4-5")

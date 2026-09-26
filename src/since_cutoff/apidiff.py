@@ -21,7 +21,7 @@ from since_cutoff.cache import stable_hash
 
 log = logging.getLogger(__name__)
 
-DIFF_SCHEMA = 6
+DIFF_SCHEMA = 7
 
 REMOVED = "removed"
 MOVED = "moved"
@@ -163,7 +163,7 @@ def load_api(import_name: str, root: Path) -> Any:
 
     # griffe warns about every annotation it cannot resolve in third-party code; that is noise
     # for our purpose (and would spill into the user's terminal from worker processes).
-    logging.getLogger("griffe").setLevel(logging.ERROR)
+    logging.getLogger("griffe").setLevel(logging.CRITICAL + 1)
 
     stubs = import_name.endswith("-stubs")
     module = griffe.load(
@@ -563,12 +563,27 @@ def _positional_rename(fn: Any, other: Any, param: str) -> bool:
     return param in mine and len(mine) == len(theirs)
 
 
+def _is_attribute_like(obj: Any) -> bool:
+    """Plain attributes and ``@property``/``@cached_property`` functions are read the same way."""
+    if getattr(obj, "is_attribute", False):
+        return True
+    if "property" in (getattr(obj, "labels", None) or set()):
+        return True
+    for dec in getattr(obj, "decorators", None) or []:
+        path = str(getattr(dec, "callable_path", "") or dec.value)
+        if path.split(".")[-1] in ("property", "cached_property"):
+            return True
+    return False
+
+
 def _compatible_kind_change(old: Any, new: Any, differ: _Differ) -> bool:
     """A class or function replaced by an alias to something equally callable is not a break."""
     if new is None:
         return False
     if _kind_of(old) == "function" and _kind_of(new) == "class":
         return True  # functions that became classes are still callable
+    if _is_attribute_like(old) and _is_attribute_like(new):
+        return True  # attribute <-> (cached_)property: ``obj.name`` reads the same
     if getattr(new, "is_attribute", False):
         value = getattr(new, "value", None)
         target_path = (
