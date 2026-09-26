@@ -7,6 +7,7 @@ since-cutoff finds exactly which APIs of *your* dependency versions it gets wron
 them with a small AGENTS.md note that is checked by a type checker, not by another LLM.
 
 [![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
@@ -53,13 +54,13 @@ needed, and **proves** on held-out tasks that the notes fix them.
 
 ```bash
 # list API changes since your model's cutoff (fast, no model calls)
-uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff scan
+uvx since-cutoff scan
 
 # probe the model, write verified notes, and apply them to AGENTS.md
-uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff run --apply
+uvx since-cutoff run --apply
 ```
 
-Or install it: `pipx install git+https://github.com/MohammadHijjawi97/since-cutoff`, then run
+Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) and run
 `since-cutoff`. Run it from your project root (anything with `uv.lock`, `poetry.lock`,
 `pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml` or a `.venv`).
 

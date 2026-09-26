@@ -115,10 +115,10 @@ experiment with a very practical payoff: the answer is a list of lines to put in
 
 ```bash
 # what changed since your model's cutoff (no model calls)
-uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff scan
+uvx since-cutoff scan
 
 # measure, write verified notes, apply them to AGENTS.md
-uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff run --apply
+uvx since-cutoff run --apply
 ```
 
 It works with Claude Code (as a plugin), Anthropic, OpenAI, OpenRouter, DeepSeek and Ollama.

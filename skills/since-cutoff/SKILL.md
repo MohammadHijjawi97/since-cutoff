@@ -2,7 +2,7 @@
 name: since-cutoff
 description: Check which of this project's Python dependencies changed their API after the model's training cutoff, measure which of those changes the model actually gets wrong, and write short, verified notes into AGENTS.md or CLAUDE.md. Use when the user asks whether the model knows their library versions, when code keeps failing on renamed or removed library APIs, or after upgrading dependencies.
 argument-hint: "[scan | run] [--apply] [--quick] [--model provider:model]"
-allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff:*), Read
+allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(uvx since-cutoff:*), Bash(pipx run since-cutoff:*), Read
 license: MIT
 ---
 
@@ -19,8 +19,7 @@ do not guess results**. Run the tool and report what it prints.
    - quick look, no model calls: `since-cutoff scan`
    - full measurement with verified notes: `since-cutoff run --quick`
 3. Run it. If `since-cutoff` is not installed, use
-   `uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff <args>`
-   (or `pipx run --spec git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff <args>`).
+   `uvx since-cutoff <args>` (or `pipx run since-cutoff <args>`).
    A full run makes many model calls and can take 5-20 minutes: tell the user before starting,
    and run it in the background (or with a long timeout) rather than a 2-minute foreground call.
    Everything is cached, so re-running after an interruption resumes quickly.

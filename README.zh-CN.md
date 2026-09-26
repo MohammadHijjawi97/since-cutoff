@@ -57,13 +57,13 @@ since-cutoff 会找出：在*你项目锁定的确切版本*里，模型到底�
 
 ```bash
 # 列出模型截止日期之后的 API 变更（很快，不调用模型）
-uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff scan
+uvx since-cutoff scan
 
 # 测试模型、生成经过验证的说明，并写入 AGENTS.md
-uvx --from git+https://github.com/MohammadHijjawi97/since-cutoff since-cutoff run --apply
+uvx since-cutoff run --apply
 ```
 
-也可以安装：`pipx install git+https://github.com/MohammadHijjawi97/since-cutoff`，然后运行 `since-cutoff`。
+也可以安装：`pipx install since-cutoff`（或 `pip install since-cutoff`），然后运行 `since-cutoff`。
 请在项目根目录运行（包含 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、
 `requirements*.txt`、`pyproject.toml` 或 `.venv` 的目录）。
 
