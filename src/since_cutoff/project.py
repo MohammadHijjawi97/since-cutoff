@@ -1,8 +1,9 @@
 """Discover a Python project's dependencies and the exact versions it uses.
 
 Version sources, most authoritative first: a lockfile (uv.lock, poetry.lock, pdm.lock,
-pylock.toml, Pipfile.lock), the project's virtual environment, pinned requirement files, and
-finally "latest release on PyPI" for anything that is declared but not pinned.
+pylock.toml, Pipfile.lock), the project's virtual environment, the pip block of a conda
+environment file, pinned requirement files, and finally "latest release on PyPI" for
+anything that is declared but not pinned.
 
 Dependencies that do not come from PyPI (git, local paths, workspace members, private indexes)
 are recorded but never looked up on PyPI by name.
@@ -24,6 +25,11 @@ from packaging.markers import InvalidMarker, Marker
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
 
 from since_cutoff.errors import ProjectError
 
@@ -114,6 +120,20 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
     if not lock.versions and installed:
         version_source = next(d for d in VENV_DIRS if (root / d).is_dir())
 
+    conda_pinned: set[str] = set()
+    if not lock.versions:
+        conda_env = next(
+            (root / n for n in ("environment.yml", "environment.yaml") if (root / n).is_file()),
+            None,
+        )
+        if conda_env is not None:
+            conda = _conda_pip(conda_env)
+            if conda:
+                conda_versions, conda_pinned = conda
+                declared.update({k: v for k, v in conda_versions.items() if k not in declared})
+                if not version_source:
+                    version_source = conda_env.name
+
     lock.members |= workspace
     direct_names = (set(declared) | lock.direct) - lock.members
     if not direct_names and lock.versions:
@@ -123,7 +143,7 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
     if not direct_names and not local:
         raise ProjectError(
             f"no dependencies found in {root}. Expected pyproject.toml, requirements*.txt, "
-            "a lockfile (uv.lock, poetry.lock, ...) or a .venv."
+            "a lockfile (uv.lock, poetry.lock, ...), a conda environment.yml or a .venv."
         )
 
     deps: list[Dependency] = []
@@ -133,6 +153,8 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
             version, source = lock.versions[key], version_source
         elif key in installed:
             version, source = installed[key], "installed"
+        elif key in conda_pinned and declared.get(key):
+            version, source = declared[key], version_source
         elif declared.get(key):
             version, source = declared[key], "pinned"
         non_pypi = lock.non_pypi.get(key) or local.get(key)
@@ -295,6 +317,54 @@ def _parse_pipfile_lock(path: Path) -> _Lock:
             if v.startswith("=="):
                 lock.versions[key] = v[2:]
     return lock
+
+
+_REQUIREMENT_LINE = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[.*\])?\s*==\s*([0-9][0-9A-Za-z.!+_-]*)$"
+)
+
+
+def _conda_pip(path: Path) -> tuple[dict[str, str], set[str]] | None:
+    """Pinned pip requirements from the ``pip:`` block of a conda environment file.
+
+    Conda-native entries and unpinned pip lines are ignored: only PyPI-installable lines
+    with an ``==`` pin are usable for version lookups. Returns ``None`` when the file
+    holds no pip pins at all.
+    """
+    if not _read_text(path).strip():
+        return None
+    if yaml is None:  # pragma: no cover
+        raise ProjectError(f"could not parse {path.name}: PyYAML is not installed")
+    try:
+        data = yaml.safe_load(_read_text(path))
+    except yaml.YAMLError as exc:
+        raise ProjectError(f"could not parse {path.name}: {exc}") from exc
+    if not isinstance(data, dict):
+        return None
+    versions: dict[str, str] = {}
+    pinned: set[str] = set()
+    for group in data.get("dependencies") or []:
+        if not isinstance(group, dict) or "pip" not in group:
+            continue
+        entries = group["pip"]
+        if not isinstance(entries, list):
+            raise ProjectError(f"could not parse {path.name}: the pip block is not a list")
+        for entry in entries:
+            if not isinstance(entry, str):
+                continue
+            line = re.split(r"\s+#", entry, maxsplit=1)[0].strip()
+            if not line or line.startswith(("-", "./", "../")):
+                continue
+            m = _REQUIREMENT_LINE.match(line)
+            if not m:
+                continue
+            name, version = m.group(1), m.group(2)
+            key = canonicalize_name(name)
+            versions[key] = version
+            pinned.add(key)
+    if not versions:
+        return None
+    return versions, pinned
 
 
 # ------------------------------------------------------ declared dependencies

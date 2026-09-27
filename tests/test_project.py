@@ -205,3 +205,71 @@ def test_unknown_lockfile_content_is_reported(tmp_path):
     write(tmp_path, "uv.lock", "this is = = not toml")
     with pytest.raises(ProjectError, match=r"could not parse uv\.lock"):
         parse_lockfile(tmp_path / "uv.lock")
+
+
+def test_conda_environment_yml_pip_pins(tmp_path):
+    write(
+        tmp_path,
+        "environment.yml",
+        """
+        name: app
+        dependencies:
+          - python=3.12
+          - pandas=2.2.3
+          - pip:
+            - anthropic==1.8.0
+            - "huggingface_hub==0.30.2"
+            - requests>=2
+            - my-extra[socks]==1.1.1
+            - -r extra.txt
+            - git+https://github.com/x/y.git
+            - ./local-package
+        """,
+    )
+    project = load_project(tmp_path)
+    v = versions(project)
+    assert project.version_source == "environment.yml"
+    assert v["anthropic"] == ("1.8.0", True, "environment.yml")
+    assert v["huggingface-hub"] == ("0.30.2", True, "environment.yml")
+    assert v["my-extra"] == ("1.1.1", True, "environment.yml")
+    # unpinned / non-PyPI pip lines are not usable
+    assert "requests" not in v
+    assert "extra" not in v
+    assert "local-package" not in v
+    # conda-native entries are not treated as Python dependencies
+    assert "pandas" not in v
+    assert "python" not in v
+
+
+def test_conda_environment_yaml_also_works(tmp_path):
+    write(
+        tmp_path,
+        "environment.yaml",
+        "name: app\ndependencies:\n  - pip:\n    - rich==13.7.1\n",
+    )
+    v = versions(load_project(tmp_path))
+    assert v["rich"] == ("13.7.1", True, "environment.yaml")
+
+
+def test_conda_environment_without_pip_pins_is_a_clear_error(tmp_path):
+    write(
+        tmp_path,
+        "environment.yml",
+        "name: app\ndependencies:\n  - python=3.12\n  - numpy=1.26\n",
+    )
+    with pytest.raises(ProjectError, match=r"conda environment\.yml"):
+        load_project(tmp_path)
+
+
+def test_conda_environment_malformed_yml_is_reported(tmp_path):
+    write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n   - unpinned\n - bad\n")
+    with pytest.raises(ProjectError, match=r"could not parse environment\.yml"):
+        load_project(tmp_path)
+
+
+def test_lockfile_wins_over_conda_environment(tmp_path):
+    write(tmp_path, "requirements.txt", "attrs\n")
+    write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n    - attrs==21.1.0\n")
+    write(tmp_path, "pylock.toml", '[[packages]]\nname = "attrs"\nversion = "25.1.0"\n')
+    v = versions(load_project(tmp_path))
+    assert v["attrs"] == ("25.1.0", True, "pylock.toml")
