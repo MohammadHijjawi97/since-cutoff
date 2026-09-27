@@ -93,7 +93,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 | `--model` | 使用 | 需要 |
 |---|---|---|
-| `claude-code`（默认） | 你的 Claude Code 登录（订阅或 API key），当前模型 | `claude` 命令行工具 |
+| `claude-code`（未检测到时） | 你的 Claude Code 登录（订阅或 API key），当前模型 | `claude` 命令行工具 |
 | `claude-code:sonnet`、`claude-code:claude-haiku-4-5` | 指定的 Claude 模型 | `claude` 命令行工具 |
 | `anthropic:<model>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | OpenAI API | `OPENAI_API_KEY` |
@@ -101,6 +101,8 @@ npx skills add MohammadHijjawi97/since-cutoff
 | `deepseek:<model>` | DeepSeek API | `DEEPSEEK_API_KEY` |
 | `ollama:<model>` | 本地 Ollama | 正在运行的 Ollama |
 | `openai-compatible:<model>` | 任何 OpenAI 兼容的服务 | `--base-url`，可选 `OPENAI_API_KEY` |
+
+不传 `--model` 时，since-cutoff 测试你的编程 Agent 当前配置的模型：先看 `SINCE_CUTOFF_MODEL`；在 Claude Code 里运行时只看 Claude Code 自己的模型；其他情况下读取 Claude Code、Codex、OpenCode 或 Aider 配置里的模型，先项目（一直向上到仓库根目录）后用户。它会说明模型来自哪里，找不到时使用 `claude-code`。
 
 训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。
 
@@ -148,7 +150,8 @@ Claude Haiku 4.5 那次运行写出的说明（节选，原文照录）：
 <p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/run.svg" width="100%" alt="since-cutoff 0.1.0 在 Claude Haiku 4.5 上的运行结果：探测的 5 个依赖中有 3 个出现过时的 API 用法；探测了 20 个 API 变更：5 个过时、1 个写错、2 个已弃用、12 个正确；8 条说明；留出任务正确率（无说明 -> 有说明）：14% -> 57%（14 对任务）"></p>
 </details>
 
-样本小，只有两个模型、一个项目：请把它当作方法的演示，而不是基准测试。每次运行都会把完整报告（每个任务、每个回答和每条类型检查错误）写入 `.since-cutoff/report.md`。用当前版本重复这个实验（它的对比和排序都有变化，所以探测不会完全相同）：`cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`。0.2.0 之后的版本还能保存一次运行所用的任务：加上 `--tasks-out tasks.json`，其他人就可以用 `--tasks-from tasks.json` 在完全相同的任务上重复这次运行，换一个模型或换一组说明都可以。非常欢迎把你自己项目上的结果发到 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)。
+样本小，只有两个模型、一个项目：请把它当作方法的演示，而不是基准测试。每次运行都会把完整报告（每个任务、每个回答和每条类型检查错误）写入 `.since-cutoff/report.md`。用当前版本重复这个实验（它的对比和排序都有变化，所以探测不会完全相同）：`cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`。想知道经过验证的说明是否比更简单的说明更有效，可以加上 `--compare template,signatures`：留出任务还会用不调用模型生成的说明再答一遍（直接由 API 对比得出的变更说明，或新的函数签名和 docstring），在同一批配对上打分，并给出每组说明的 token 数。
+从 0.3.0 起，还能保存一次运行所用的任务：加上 `--tasks-out tasks.json`，其他人就可以用 `--tasks-from tasks.json` 在完全相同的任务上重复这次运行，换一个模型或换一组说明都可以。非常欢迎把你自己项目上的结果发到 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)。
 
 测量方法的细节，以及这些数字能说明什么、不能说明什么，见[这篇文章](https://mohammadhijjawi97.github.io/since-cutoff/)（英文）。
 
@@ -269,7 +272,7 @@ jobs:
 | `step-summary` | `true` | 把 Markdown 摘要加到任务摘要（job summary）中 |
 | `cache` | `true` | 在多次运行之间保留 PyPI 元数据、包源码和 API 对比结果（`fail-on-changes` 让任务失败时也会保留） |
 | `args` | | 额外的 `since-cutoff scan` 参数，例如 `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.2.0` | 要运行的 since-cutoff 版本，或 `latest` |
+| `since-cutoff-version` | `0.3.0` | 要运行的 since-cutoff 版本，或 `latest` |
 
 输出：`changed-packages`（逗号分隔）、`changes`（破坏性变更数）、`deprecations`、`markdown`（摘要文件的路径，例如可用来把摘要发成 pull request 评论）和 `report`（完整报告的路径）。能通过多个导入路径访问的同一个变更只计一次。
 
@@ -279,7 +282,7 @@ jobs:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # 加上 --fail-on-changes 可以阻止提交

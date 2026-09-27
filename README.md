@@ -130,7 +130,7 @@ Prompts that work well:
 
 | `--model` | uses | needs |
 |---|---|---|
-| `claude-code` (default) | your Claude Code login (subscription or key), current model | the `claude` CLI |
+| `claude-code` (fallback) | your Claude Code login (subscription or key), current model | the `claude` CLI |
 | `claude-code:sonnet`, `claude-code:claude-haiku-4-5` | a specific Claude model | the `claude` CLI |
 | `anthropic:<model>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | OpenAI API | `OPENAI_API_KEY` |
@@ -138,6 +138,8 @@ Prompts that work well:
 | `deepseek:<model>` | DeepSeek API | `DEEPSEEK_API_KEY` |
 | `ollama:<model>` | local Ollama | Ollama running |
 | `openai-compatible:<model>` | any OpenAI-compatible server | `--base-url`, optional `OPENAI_API_KEY` |
+
+Without `--model`, since-cutoff tests the model your coding agent is set up with: `SINCE_CUTOFF_MODEL` if set; inside Claude Code, Claude Code's own model; elsewhere the model named in the Claude Code, Codex, OpenCode or Aider settings, the project's (up to the repository root) before the user's. It says where the model came from, and falls back to `claude-code`.
 
 Training cutoffs come from [models.dev](https://models.dev) (a snapshot is bundled for offline
 use). `since-cutoff models sonnet` lists them; `--cutoff 2025-07` overrides the date, and
@@ -206,7 +208,8 @@ benchmark. Every run writes its full report (each task, answer and type-checker 
 `.since-cutoff/report.md`. To repeat the experiment with the current version (its diff and
 ranking changed, so the probes will not be identical):
 `cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.
-Versions after 0.2.0 can also save the tasks a run used: add `--tasks-out tasks.json`, and anyone
+To see whether the verified notes beat simpler ones, add `--compare template,signatures`: the held-out tasks are also answered with notes built without a model (each change stated from the API diff, or the new signatures and docstrings), scored on the same pairs, with each block's size in tokens.
+Since 0.3.0, a run can also save its tasks: add `--tasks-out tasks.json`, and anyone
 can repeat the run on exactly the same tasks with `--tasks-from tasks.json`, for another model or
 another set of notes. Results from your own projects are very welcome in
 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6).
@@ -346,7 +349,7 @@ jobs:
 | `step-summary` | `true` | add the Markdown summary to the job summary |
 | `cache` | `true` | keep PyPI metadata, package sources and API diffs between runs (also when `fail-on-changes` fails the job) |
 | `args` | | more `since-cutoff scan` arguments, e.g. `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.2.0` | the since-cutoff release to run, or `latest` |
+| `since-cutoff-version` | `0.3.0` | the since-cutoff release to run, or `latest` |
 
 Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `deprecations`,
 `markdown` (the summary's path, for example to post it as a pull request comment) and `report`
@@ -358,7 +361,7 @@ Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `de
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # add --fail-on-changes to block the commit

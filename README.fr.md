@@ -138,7 +138,7 @@ Des prompts qui fonctionnent bien :
 
 | `--model` | utilise | nécessite |
 |---|---|---|
-| `claude-code` (par défaut) | votre connexion Claude Code (abonnement ou clé), modèle actuel | la CLI `claude` |
+| `claude-code` (à défaut) | votre connexion Claude Code (abonnement ou clé), modèle actuel | la CLI `claude` |
 | `claude-code:sonnet`, `claude-code:claude-haiku-4-5` | un modèle Claude précis | la CLI `claude` |
 | `anthropic:<model>` | API Anthropic | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | API OpenAI | `OPENAI_API_KEY` |
@@ -146,6 +146,8 @@ Des prompts qui fonctionnent bien :
 | `deepseek:<model>` | API DeepSeek | `DEEPSEEK_API_KEY` |
 | `ollama:<model>` | Ollama en local | Ollama en cours d'exécution |
 | `openai-compatible:<model>` | tout serveur compatible OpenAI | `--base-url`, `OPENAI_API_KEY` facultative |
+
+Sans `--model`, since-cutoff teste le modèle avec lequel votre agent est configuré : `SINCE_CUTOFF_MODEL` s'il est défini ; dans Claude Code, le modèle de Claude Code lui-même ; ailleurs, le modèle indiqué dans la configuration de Claude Code, Codex, OpenCode ou Aider, celle du projet (jusqu'à la racine du dépôt) avant celle de l'utilisateur. Il indique d'où vient le modèle et se rabat sur `claude-code` sinon.
 
 Les dates limites d'entraînement proviennent de [models.dev](https://models.dev) (un instantané
 est inclus pour une utilisation hors ligne). `since-cutoff models sonnet` les affiche ;
@@ -219,7 +221,8 @@ erreur du vérificateur de types) dans `.since-cutoff/report.md`. Pour reproduir
 avec la version actuelle (son diff et son classement ont changé, les sondes ne seront donc pas
 identiques) :
 `cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.
-Les versions postérieures à la 0.2.0 peuvent aussi enregistrer les tâches utilisées : ajoutez
+Pour savoir si les notes vérifiées font mieux que des notes plus simples, ajoutez `--compare template,signatures` : les tâches réservées sont aussi traitées avec des notes construites sans modèle (chaque changement énoncé d'après le diff de l'API, ou les nouvelles signatures et docstrings), évaluées sur les mêmes paires, avec la taille de chaque bloc en tokens.
+Depuis la 0.3.0, une exécution peut aussi enregistrer les tâches utilisées : ajoutez
 `--tasks-out tasks.json`, et chacun pourra refaire l'exécution sur exactement les mêmes tâches avec
 `--tasks-from tasks.json`, pour un autre modèle ou un autre jeu de notes. Les résultats obtenus
 sur vos propres projets sont les bienvenus dans la discussion
@@ -368,7 +371,7 @@ jobs:
 | `step-summary` | `true` | ajoute le résumé Markdown au résumé du job |
 | `cache` | `true` | conserve entre les exécutions les métadonnées PyPI, les sources des paquets et les diffs d'API (y compris quand `fail-on-changes` fait échouer le job) |
 | `args` | | arguments supplémentaires pour `since-cutoff scan`, par exemple `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.2.0` | la version de since-cutoff à exécuter, ou `latest` |
+| `since-cutoff-version` | `0.3.0` | la version de since-cutoff à exécuter, ou `latest` |
 
 Sorties : `changed-packages` (liste séparée par des virgules), `changes` (changements incompatibles),
 `deprecations`, `markdown` (le chemin du résumé, par exemple pour le publier en commentaire de
@@ -381,7 +384,7 @@ plusieurs chemins d'import n'est compté qu'une fois.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # ajoutez --fail-on-changes pour bloquer le commit

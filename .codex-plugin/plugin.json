@@ -1,6 +1,6 @@
 {
   "name": "since-cutoff",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Find which of your exact Python dependency versions your coding model writes wrong, and fix it with short, type-checked AGENTS.md notes.",
   "author": {
     "name": "Mohammad Hijjawi",

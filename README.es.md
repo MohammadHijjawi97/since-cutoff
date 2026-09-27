@@ -138,7 +138,7 @@ Prompts que funcionan bien:
 
 | `--model` | usa | requiere |
 |---|---|---|
-| `claude-code` (predeterminado) | tu sesión de Claude Code (suscripción o clave), con el modelo actual | la CLI `claude` |
+| `claude-code` (si no se detecta ninguno) | tu sesión de Claude Code (suscripción o clave), con el modelo actual | la CLI `claude` |
 | `claude-code:sonnet`, `claude-code:claude-haiku-4-5` | un modelo de Claude concreto | la CLI `claude` |
 | `anthropic:<model>` | API de Anthropic | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | API de OpenAI | `OPENAI_API_KEY` |
@@ -146,6 +146,8 @@ Prompts que funcionan bien:
 | `deepseek:<model>` | API de DeepSeek | `DEEPSEEK_API_KEY` |
 | `ollama:<model>` | Ollama en local | Ollama en ejecución |
 | `openai-compatible:<model>` | cualquier servidor compatible con OpenAI | `--base-url`, `OPENAI_API_KEY` opcional |
+
+Sin `--model`, since-cutoff prueba el modelo con el que está configurado tu agente: `SINCE_CUTOFF_MODEL` si existe; dentro de Claude Code, el modelo del propio Claude Code; fuera de él, el modelo indicado en la configuración de Claude Code, Codex, OpenCode o Aider, primero la del proyecto (hasta la raíz del repositorio) y después la del usuario. Indica de dónde sacó el modelo y, si no encuentra ninguno, usa `claude-code`.
 
 Las fechas de corte de entrenamiento se obtienen de [models.dev](https://models.dev) (el paquete
 incluye una instantánea para usarla sin conexión). `since-cutoff models sonnet` las lista;
@@ -218,7 +220,8 @@ benchmark. Cada ejecución escribe su informe completo (cada tarea, cada respues
 verificador de tipos) en `.since-cutoff/report.md`. Para repetir el experimento con la versión
 actual (su diff y su orden de prioridad cambiaron, así que los sondeos no serán idénticos):
 `cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.
-Las versiones posteriores a la 0.2.0 también guardan las tareas que usó una ejecución: añade
+Para comprobar si las notas verificadas superan a otras más simples, añade `--compare template,signatures`: las tareas reservadas se responden también con notas construidas sin modelo (cada cambio enunciado a partir del diff de la API, o las nuevas firmas y docstrings), evaluadas sobre los mismos pares y con el tamaño de cada bloque en tokens.
+Desde la versión 0.3.0, una ejecución también guarda las tareas que usó una ejecución: añade
 `--tasks-out tasks.json`, y cualquiera podrá repetir la ejecución con exactamente las mismas
 tareas usando `--tasks-from tasks.json`, con otro modelo o con otras notas. Los resultados de tus
 propios proyectos serán muy bienvenidos en
@@ -366,7 +369,7 @@ jobs:
 | `step-summary` | `true` | añade el resumen en Markdown al resumen del trabajo |
 | `cache` | `true` | conserva entre ejecuciones los metadatos de PyPI, el código fuente de los paquetes y los diffs de API (también cuando `fail-on-changes` hace fallar el trabajo) |
 | `args` | | más argumentos para `since-cutoff scan`, p. ej. `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.2.0` | la versión de since-cutoff que se ejecuta, o `latest` |
+| `since-cutoff-version` | `0.3.0` | la versión de since-cutoff que se ejecuta, o `latest` |
 
 Salidas: `changed-packages` (separados por comas), `changes` (cambios incompatibles),
 `deprecations`, `markdown` (la ruta del resumen, por ejemplo para publicarlo como comentario en la
@@ -379,7 +382,7 @@ de importación se cuenta una sola vez.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # añade --fail-on-changes para bloquear el commit

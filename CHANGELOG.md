@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-09-27
 
 - `run` now exits with code 1 when no API change could be probed (for example because every
   task-writer call hit a rate limit) or when the task writer failed for at least half of the

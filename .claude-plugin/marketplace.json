@@ -12,7 +12,7 @@
       "name": "since-cutoff",
       "source": "./",
       "description": "Find which of your exact dependency versions your coding model writes wrong, and fix it with a small, verified AGENTS.md note.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "author": {
         "name": "Mohammad Hijjawi",
         "url": "https://github.com/MohammadHijjawi97"
