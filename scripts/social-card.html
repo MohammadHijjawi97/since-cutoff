@@ -50,7 +50,9 @@
     letter-spacing: -1px;
     line-height: 1;
   }
-  .name span { color: var(--accent); }
+  .name .cur { color: var(--accent); }
+  .name { display: flex; align-items: center; gap: 22px; }
+  .name img { width: 76px; height: 76px; }
   .pitch {
     margin-top: 22px;
     max-width: 1010px;
@@ -96,7 +98,7 @@
 </head>
 <body>
   <header>
-    <div class="name">since-cutoff<span>_</span></div>
+    <div class="name"><img src="../docs/img/logo-dark.svg" alt=""><span>since-cutoff<span class="cur">_</span></span></div>
     <p class="pitch">Find which of your dependency APIs your coding model gets wrong &mdash; and fix it
       with <em>verified</em> AGENTS.md notes</p>
     <p class="sub">Scored by a type checker against your exact versions, not by another LLM.</p>

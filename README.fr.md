@@ -1,4 +1,9 @@
-# since-cutoff
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo.svg" width="96" height="96" alt="logo de since-cutoff">
+</picture></p>
+
+<h1 align="center">since-cutoff</h1>
 
 **Pour les projets Python écrits avec un agent de code : since-cutoff repère les API de vos
 dépendances qui ont changé après la date limite d'entraînement du modèle, mesure celles sur

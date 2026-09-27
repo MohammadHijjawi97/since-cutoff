@@ -1,4 +1,9 @@
-# since-cutoff
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo.svg" width="96" height="96" alt="since-cutoff 标志">
+</picture></p>
+
+<h1 align="center">since-cutoff</h1>
 
 **面向借助编程 Agent 开发的 Python 项目：since-cutoff 找出在模型训练截止日期之后发生变化的依赖 API，测出模型会写错其中哪些，再用简短的 AGENTS.md 说明来纠正；每条说明要么通过了类型检查器的验证，要么直接取自 API 对比结果。**
 

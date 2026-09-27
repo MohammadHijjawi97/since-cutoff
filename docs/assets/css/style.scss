@@ -1,0 +1,17 @@
+---
+---
+
+@import "{{ site.theme }}";
+
+// Brand colours (see docs/img/logo.svg) instead of the theme's teal.
+.page-header {
+  color: #fff;
+  background-color: #7a2e00;
+  background-image: linear-gradient(120deg, #7a2e00, #bc4c00);
+}
+.project-logo { display: block; margin: 0 auto 0.6rem; }
+.btn { color: rgba(255, 255, 255, 0.85); background-color: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); }
+.btn:hover { color: rgba(255, 255, 255, 0.95); background-color: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.35); }
+.main-content h1, .main-content h2, .main-content h3, .main-content h4, .main-content h5, .main-content h6 { color: #9a3e00; }
+.main-content a { color: #b04700; }
+.main-content :not(pre) > code { color: #3d2a1e; }
