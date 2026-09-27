@@ -29,6 +29,8 @@ PROVIDER_ALIASES = {
     "xai": "xai",
     "mistral": "mistral",
 }
+# The model makers themselves: preferred over resellers that list the same model id.
+FIRST_PARTY = frozenset(PROVIDER_ALIASES.values())
 
 
 @dataclass(frozen=True)
@@ -145,7 +147,14 @@ class ModelRegistry:
             hits = [m for m in models if m.id.lower() == cand]
             if not hits:
                 continue
-            hits.sort(key=lambda m: (m.provider != pref, m.knowledge is None, m.provider))
+            hits.sort(
+                key=lambda m: (
+                    m.provider != pref,
+                    m.knowledge is None,
+                    m.provider not in FIRST_PARTY,
+                    m.provider,
+                )
+            )
             return hits[0]
         return None
 

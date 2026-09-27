@@ -26,14 +26,29 @@ from rich.table import Table
 
 from since_cutoff import __version__
 from since_cutoff.cache import DiskCache, default_cache_dir
-from since_cutoff.engine import ERROR, STALE, Engine, Reporter, RunResult, ScanResult, Settings
+from since_cutoff.engine import (
+    ERROR,
+    STALE,
+    Engine,
+    ModelTarget,
+    Reporter,
+    RunResult,
+    ScanResult,
+    Settings,
+)
 from since_cutoff.errors import SinceCutoffError
 from since_cutoff.models import ModelRegistry, parse_cutoff
 from since_cutoff.notes import apply_block, remove_block
 from since_cutoff.project import load_project
-from since_cutoff.report import render_console, render_scan_changes, to_json, write_outputs
+from since_cutoff.report import (
+    render_console,
+    render_scan_changes,
+    render_scan_markdown,
+    to_json,
+    write_outputs,
+)
 
-COMMANDS = ("run", "scan", "models", "cache", "unapply")
+COMMANDS = ("run", "scan", "models", "cache", "unapply", "mcp")
 CACHE_NAMESPACES = (
     "pypi",
     "sources",
@@ -48,13 +63,17 @@ CACHE_NAMESPACES = (
 EXAMPLES = """examples:
   since-cutoff                          probe your Claude Code model on this project
   since-cutoff scan                     list API changes since the model's cutoff (no model calls)
+  since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown - >> "$GITHUB_STEP_SUMMARY"
+  since-cutoff scan --cutoff 2025-03   list API changes since a date, with no model involved
   since-cutoff run --apply              probe, then write verified notes into AGENTS.md
   since-cutoff run --quick --model openai:gpt-5.4
   since-cutoff run --model openai-compatible:my-model --base-url http://localhost:8000/v1
   since-cutoff models sonnet            show known models and their training cutoffs
+  since-cutoff mcp                      serve the read-only tools to coding agents over MCP (stdio)
 
 exit codes: 0 ok, 1 error (including: no model answer could be scored), 2 usage error,
-            3 stale API use found with --fail-on-stale
+            3 stale API use found with --fail-on-stale, or API changes found with
+            scan --fail-on-changes
 """
 
 
@@ -119,8 +138,8 @@ def _common(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--model",
-        default="claude-code",
-        help="model to test, as provider:model (default: claude-code, your Claude Code model). "
+        help="model to test, as provider:model (default: claude-code, your Claude Code model; "
+        "scan with --cutoff alone uses no model). "
         "Providers: claude-code, anthropic, openai, openrouter, deepseek, ollama, openai-compatible",
     )
     p.add_argument(
@@ -239,6 +258,17 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--limit", type=_positive, default=8, help="changes shown per package (default: 8)"
     )
+    scan.add_argument(
+        "--markdown",
+        metavar="PATH",
+        help="also write a short GitHub-flavoured Markdown summary to PATH, relative to the "
+        "current directory ('-' for stdout), e.g. for a CI job summary or a PR comment",
+    )
+    scan.add_argument(
+        "--fail-on-changes",
+        action="store_true",
+        help="exit with code 3 if any dependency changed its API after the cutoff (for CI)",
+    )
 
     models = sub.add_parser("models", help="list known models and their training cutoffs")
     models.add_argument(
@@ -254,6 +284,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     unapply.add_argument("path", nargs="?", default=".")
     unapply.add_argument("--target", help="file to clean (default: AGENTS.md and CLAUDE.md)")
+
+    mcp = sub.add_parser(
+        "mcp",
+        help="run an MCP server on stdio so coding agents can ask what changed since their "
+        "cutoff (no model calls)",
+    )
+    mcp.add_argument(
+        "--max-download-mb",
+        type=float,
+        default=80.0,
+        help="skip packages whose wheel is larger (default: 80)",
+    )
+    mcp.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -297,8 +340,12 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "debug", False):
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
     json_mode = getattr(args, "json", False)
+    markdown = getattr(args, "markdown", None)
+    if json_mode and markdown == "-":
+        err.print("[red]error:[/red] --json and --markdown - cannot both write to stdout")
+        return 2
     out = Console(highlight=False, soft_wrap=True, emoji=False)
-    ui = err if json_mode else out
+    ui = err if json_mode or markdown == "-" else out
     try:
         if args.command == "models":
             return _cmd_models(args, out)
@@ -306,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_cache(args)
         if args.command == "unapply":
             return _cmd_unapply(args, out)
+        if args.command == "mcp":
+            return _cmd_mcp(args)
         return _cmd_run(args, ui, json_mode)
     except SinceCutoffError as exc:
         err.print(f"[red]error:[/red] {escape(str(exc))}")
@@ -321,7 +370,7 @@ def _settings(args: argparse.Namespace) -> Settings:
     except ValueError as exc:
         raise SinceCutoffError(str(exc)) from exc
     s = Settings(
-        model=args.model,
+        model=args.model or "claude-code",
         cutoff=cutoff,
         all_deps=args.all_deps,
         include=args.only,
@@ -355,11 +404,19 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     reporter = RichReporter(ui)
     engine = Engine(settings, store=store, llm_cache=llm_cache, reporter=reporter)
 
-    target = engine.resolve_target(allow_calls=args.command == "run")
-    ui.print(
-        f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
-        f"[bold]{target.cutoff.isoformat()}[/bold] [dim](from {escape(target.cutoff_source)})[/dim]"
-    )
+    if args.command == "scan" and args.model is None and settings.cutoff is not None:
+        # A date alone: there is no model to look up, name or guess (and no CLI to ask).
+        target = ModelTarget.cutoff_only(settings.cutoff)
+        ui.print(
+            f"[dim]•[/dim] Custom cutoff [bold]{target.cutoff.isoformat()}[/bold] "
+            "[dim](from --cutoff; no model given)[/dim]"
+        )
+    else:
+        target = engine.resolve_target(allow_calls=args.command == "run")
+        ui.print(
+            f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
+            f"[bold]{target.cutoff.isoformat()}[/bold] [dim](from {escape(target.cutoff_source)})[/dim]"
+        )
     scan: ScanResult = engine.scan(project, target)
     run: RunResult | None = None
     if args.command == "run" and scan.changed:
@@ -367,6 +424,9 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     reporter.done()
 
     md, _ = write_outputs(project.root / args.out, scan, run)
+    summary_md = getattr(args, "markdown", None)
+    if summary_md:
+        _write_markdown(summary_md, render_scan_markdown(scan, limit=args.limit))
     if json_mode:
         sys.stdout.write(json.dumps(to_json(scan, run), indent=2, default=str) + "\n")
         sys.stdout.flush()
@@ -392,6 +452,8 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         elif args.apply:
             ui.print("\n[dim]Nothing to apply: no failures needed a note.[/dim]")
     ui.print(f"[dim]Full report: {escape(str(md))}[/dim]")
+    if summary_md and summary_md != "-":
+        ui.print(f"[dim]Markdown summary: {escape(summary_md)}[/dim]")
 
     checked = [p for p in scan.packages if p.status != "skipped"]
     if not checked and scan.packages:
@@ -417,7 +479,22 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         ui.print(
             "[yellow]Some model calls failed; their probes are not counted (see the report).[/yellow]"
         )
+    if getattr(args, "fail_on_changes", False) and scan.changed:
+        return 3
     return 0
+
+
+def _write_markdown(target: str, text: str) -> None:
+    if target == "-":
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    path = Path(target)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise SinceCutoffError(f"cannot write the Markdown summary to {path}: {exc}") from exc
 
 
 def _target_file(root: Path, explicit: str | None) -> Path:
@@ -474,6 +551,14 @@ def _cmd_cache(args: argparse.Namespace) -> int:
     with contextlib.suppress(OSError):
         root.rmdir()  # only succeeds if the directory is now empty, i.e. it was ours alone
     sys.stdout.write(f"cleared {', '.join(removed) or 'nothing'} in {root}\n")
+    return 0
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    # stdout carries the protocol from here on: nothing else may print to it.
+    from since_cutoff.mcp_server import serve
+
+    serve(max_download_mb=args.max_download_mb, debug=args.debug)
     return 0
 
 

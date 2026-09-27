@@ -1,0 +1,123 @@
+<!doctype html>
+<!--
+  Source of docs/img/og.png (1200x630, GitHub Pages / link previews) and
+  docs/img/social-preview.png (1280x640, the repository's social preview in Settings).
+  Render with any headless Chromium, for example Microsoft Edge on Windows:
+
+    msedge --headless --hide-scrollbars --force-device-scale-factor=1 --window-size=1200,630 \
+      --screenshot=docs/img/og.png scripts/social-card.html
+    msedge --headless --hide-scrollbars --force-device-scale-factor=1 --window-size=1280,640 \
+      --screenshot=docs/img/social-preview.png scripts/social-card.html
+
+  The numbers are from the "A real run" section of the README; keep the sample size next to them.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>since-cutoff social card</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #30363d;
+    --text: #e6edf3;
+    --muted: #9da7b3;
+    --accent: #f0883e;
+    --red: #ff7b72;
+    --red-bg: rgba(248, 81, 73, 0.14);
+    --green: #56d364;
+    --green-bg: rgba(46, 160, 67, 0.16);
+    --sans: "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
+    --mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100vw; height: 100vh; overflow: hidden; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 56px 64px 44px;
+    border-top: 8px solid var(--accent);
+  }
+  .name {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 72px;
+    letter-spacing: -1px;
+    line-height: 1;
+  }
+  .name span { color: var(--accent); }
+  .pitch {
+    margin-top: 22px;
+    max-width: 1010px;
+    font-size: 36px;
+    line-height: 1.28;
+    font-weight: 600;
+  }
+  .pitch em { font-style: normal; color: var(--accent); }
+  .sub { margin-top: 14px; color: var(--muted); font-size: 24px; }
+  .row { display: flex; gap: 28px; align-items: stretch; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px 26px;
+  }
+  .stat { flex: 0 0 auto; }
+  .label { color: var(--muted); font-size: 21px; }
+  .numbers {
+    font-size: 60px;
+    font-weight: 700;
+    line-height: 1.1;
+    margin: 6px 0 2px;
+    white-space: nowrap;
+  }
+  .numbers .before { color: var(--red); }
+  .numbers .arrow { color: var(--muted); font-weight: 400; margin: 0 10px; }
+  .numbers .after { color: var(--green); }
+  .sample { margin-top: 8px; color: var(--text); font-size: 21px; font-weight: 600; }
+  .code { flex: 1 1 auto; font-family: var(--mono); font-size: 18px; min-width: 0; }
+  .code .label { font-family: var(--sans); margin-bottom: 12px; }
+  .code div.del, .code div.add { padding: 6px 12px; border-radius: 6px; white-space: nowrap; }
+  .code .del { background: var(--red-bg); color: var(--red); margin-bottom: 8px; }
+  .code .add { background: var(--green-bg); color: var(--green); }
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+    font-size: 22px;
+  }
+  .footer b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="name">since-cutoff<span>_</span></div>
+    <p class="pitch">Find which of your dependency APIs your coding model gets wrong &mdash; and fix it
+      with <em>verified</em> AGENTS.md notes</p>
+    <p class="sub">Scored by a type checker against your exact versions, not by another LLM.</p>
+  </header>
+
+  <main class="row">
+    <section class="card stat">
+      <div class="label">Claude Opus 4.6, held-out tasks correct</div>
+      <div class="numbers"><span class="before">5%</span><span class="arrow">&rarr;</span><span class="after">65%</span></div>
+      <div class="label">without &rarr; with the notes</div>
+      <div class="sample">20 paired tasks, one project</div>
+    </section>
+    <section class="card code">
+      <div class="label">What the model learned vs. the huggingface-hub 2.0 you pin</div>
+      <div class="del">- hf_hub_download(repo, fname, resume_download=True)</div>
+      <div class="add">+ hf_hub_download(repo, fname)</div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span><b>github.com/MohammadHijjawi97/since-cutoff</b></span>
+    <span>Python &middot; CLI, MCP server, GitHub Action &middot; MIT</span>
+  </footer>
+</body>
+</html>

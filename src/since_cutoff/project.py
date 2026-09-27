@@ -18,7 +18,7 @@ import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from packaging.markers import InvalidMarker, Marker
 from packaging.requirements import InvalidRequirement, Requirement
@@ -77,9 +77,27 @@ class Project:
     python_version: str | None = None
     imported_modules: set[str] = field(default_factory=set)
     identifiers: set[str] = field(default_factory=set)
+    # Every dotted module path the code imports, with the names of ``from`` imports appended
+    # (``from google import genai`` adds ``google`` and ``google.genai``).
+    import_paths: set[str] = field(default_factory=set)
 
     def direct(self) -> list[Dependency]:
         return [d for d in self.dependencies if d.direct]
+
+    def imports(self, import_names: Iterable[str]) -> bool:
+        """Whether the project's code imports any of a distribution's import names.
+
+        A name inside a namespace package (``google.cloud.storage``) counts only when that
+        package or a module in it is imported: ``from google import genai`` imports
+        google-genai, not google-cloud-storage.
+        """
+        for name in import_names:
+            if "." not in name:
+                if name in self.imported_modules:
+                    return True
+            elif any(p == name or p.startswith(name + ".") for p in self.import_paths):
+                return True
+        return False
 
 
 @dataclass
@@ -142,14 +160,15 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
             )
         )
 
-    modules, identifiers = scan_sources(root)
+    sources = scan_sources(root)
     return Project(
         root=root,
         dependencies=deps,
         version_source=version_source or ("requirements" if declared else "declared"),
         python_version=python_version(root),
-        imported_modules=modules,
-        identifiers=identifiers,
+        imported_modules=sources.modules,
+        identifiers=sources.identifiers,
+        import_paths=sources.import_paths,
     )
 
 
@@ -517,15 +536,21 @@ def iter_source_files(root: Path, *, max_files: int = 5000) -> Iterable[Path]:
                     return
 
 
-def scan_sources(root: Path) -> tuple[set[str], set[str]]:
+class SourceScan(NamedTuple):
+    modules: set[str]  # top-level modules the code imports
+    identifiers: set[str]  # attribute, keyword-argument and imported names the code uses
+    import_paths: set[str]  # dotted import paths, see Project.import_paths
+
+
+def scan_sources(root: Path) -> SourceScan:
     """Scan the project's own code once.
 
-    Returns ``(imported_top_level_modules, identifiers)`` where identifiers are the attribute
-    names, keyword-argument names and imported names the code uses. They are used to rank API
-    changes by how likely they are to matter for this project.
+    The identifiers are used to rank API changes by how likely they are to matter for this
+    project, and the imports to tell which dependencies its code uses at all.
     """
     modules: set[str] = set()
     identifiers: set[str] = set()
+    paths: set[str] = set()
     for path in iter_source_files(root):
         try:
             if path.stat().st_size > 1_000_000:
@@ -536,16 +561,19 @@ def scan_sources(root: Path) -> tuple[set[str], set[str]]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 modules.update(a.name.split(".")[0] for a in node.names)
+                paths.update(a.name for a in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 modules.add(node.module.split(".")[0])
                 identifiers.update(a.name for a in node.names)
+                paths.add(node.module)
+                paths.update(f"{node.module}.{a.name}" for a in node.names if a.name != "*")
             elif isinstance(node, ast.Attribute):
                 identifiers.add(node.attr)
             elif isinstance(node, ast.keyword) and node.arg:
                 identifiers.add(node.arg)
-    return modules, identifiers
+    return SourceScan(modules, identifiers, paths)
 
 
 def imported_modules(root: Path) -> set[str]:
     """Top-level module names imported anywhere in the project's own code."""
-    return scan_sources(root)[0]
+    return scan_sources(root).modules

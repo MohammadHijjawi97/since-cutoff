@@ -30,8 +30,9 @@ Two models were tested: **Claude Haiku 4.5** (training cutoff February 2025) and
 1. **What changed.** For each dependency, take the newest release published on or before the
    model's cutoff, and diff its public API against the pinned version, statically (griffe, no code
    imported). That finds removed and moved objects, removed or newly required parameters,
-   keyword/positional-only changes and new `@deprecated` markers. For this project, 7 of the 9
-   dependencies changed; the diff flags 712 changes, many of them internals.
+   keyword/positional-only changes and new deprecation markers. For this project, 7 of the 9
+   dependencies changed; the diff flags 491 breaking changes and 50 new deprecations, some
+   of them internals.
 2. **Tasks that need the change.** For the highest-ranked changes, a task writer produces short,
    realistic coding tasks that require the changed functionality but never name the changed
    identifier or its replacement. One task is the probe; two are held out.
@@ -122,5 +123,8 @@ uvx since-cutoff run --apply
 ```
 
 It works with Claude Code (as a plugin), Anthropic, OpenAI, OpenRouter, DeepSeek and Ollama.
-It is Python-only for now; TypeScript is next. Feedback on the method is very welcome in the
-[issues](https://github.com/MohammadHijjawi97/since-cutoff/issues).
+`since-cutoff mcp` lets any MCP client (Codex, Cursor, VS Code, Gemini CLI) look up a library's
+changes before writing code, and a
+[GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff#github-action) runs the scan on
+pull requests. It is Python-only for now; TypeScript is next. Feedback on the method is very
+welcome in the [issues](https://github.com/MohammadHijjawi97/since-cutoff/issues).

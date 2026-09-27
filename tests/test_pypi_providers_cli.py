@@ -181,6 +181,25 @@ def test_openai_compatible_provider_protocol(server, monkeypatch):
     }
 
 
+def test_openrouter_requests_carry_app_attribution(server, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    _Handler.reply = {"model": "qwen", "choices": [{"message": {"content": "ok"}}]}
+
+    make_provider("openrouter:qwen/qwen3-coder", base_url=server).complete("sys", "user")
+    _path, headers, body = _Handler.requests[0]
+    assert headers["authorization"] == "Bearer or-test"
+    assert headers["http-referer"] == "https://github.com/MohammadHijjawi97/since-cutoff"
+    assert headers["x-openrouter-title"] == headers["x-title"] == "since-cutoff"
+    assert body["model"] == "qwen/qwen3-coder"
+
+    # Only OpenRouter gets them.
+    make_provider("openai:gpt-x", base_url=server).complete("sys", "user")
+    _path, headers, _body = _Handler.requests[1]
+    assert not {"http-referer", "x-title", "x-openrouter-title"} & set(headers)
+
+
 def test_http_errors_become_provider_errors(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)

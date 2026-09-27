@@ -92,6 +92,33 @@ def test_private_and_test_modules_are_ignored(tmp_path: Path):
     assert diff_sources("pkg", "1", old, "2", new, ["pkg"]) == []
 
 
+def test_namespace_packages_report_signature_changes(tmp_path: Path):
+    # google-genai ships `google.genai` inside the `google` namespace: its objects must be
+    # looked up below `google.genai`, not below `google`.
+    old = write_tree(
+        tmp_path / "a",
+        {
+            "nspkg/alpha/__init__.py": "def send(message: str, temperature: float = 1.0) -> str:\n"
+            "    return message\n\n\nclass Client:\n    def get(self, url: str) -> str:\n"
+            "        return url\n"
+        },
+    )
+    new = write_tree(
+        tmp_path / "b",
+        {
+            "nspkg/alpha/__init__.py": "def send(message: str) -> str:\n    return message\n\n\n"
+            "class Client:\n    def get(self, url: str, *, timeout: float) -> str:\n"
+            "        return url\n"
+        },
+    )
+    raw = diff_sources("nspkg-alpha", "1", old, "2", new, ["nspkg.alpha"])
+    changes = [APIChange.from_dict(c) for c in raw]
+    assert {(c.kind, c.path, c.parameter) for c in changes} == {
+        (PARAM_REMOVED, "nspkg.alpha.send", "temperature"),
+        (PARAM_REQUIRED, "nspkg.alpha.Client.get", "timeout"),
+    }
+
+
 def test_same_named_method_elsewhere_is_not_a_move(tmp_path: Path):
     old = write_tree(
         tmp_path / "a",

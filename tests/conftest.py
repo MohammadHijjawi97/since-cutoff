@@ -113,6 +113,56 @@ TOYLIB_V2 = {
 }
 
 
+# A base class that becomes ``Base = Impl`` (transformers 5: ``PreTrainedTokenizer = PythonBackend``).
+# Only ``legacy_decode`` really goes away.
+ALIASLIB_V1 = {
+    "aliaslib/__init__.py": "",
+    "aliaslib/base.py": """
+        class Base:
+            \"\"\"Shared tokenizer behaviour.\"\"\"
+
+            @classmethod
+            def from_pretrained(cls, name: str) -> "Base":
+                return cls()
+
+            def encode(self, text: str) -> list[int]:
+                return []
+
+            def legacy_decode(self, ids: list[int]) -> str:
+                return ""
+    """,
+    "aliaslib/tok.py": """
+        from aliaslib.base import Base
+
+
+        class BertTok(Base):
+            pass
+
+
+        class GptTok(Base):
+            pass
+    """,
+}
+ALIASLIB_V2 = {
+    "aliaslib/__init__.py": "",
+    "aliaslib/base.py": """
+        class Impl:
+            \"\"\"Shared tokenizer behaviour.\"\"\"
+
+            @classmethod
+            def from_pretrained(cls, name: str) -> "Impl":
+                return cls()
+
+            def encode(self, text: str) -> list[int]:
+                return []
+
+
+        Base = Impl
+    """,
+    "aliaslib/tok.py": ALIASLIB_V1["aliaslib/tok.py"],
+}
+
+
 def write_tree(root: Path, files: dict[str, str]) -> Path:
     for rel, text in files.items():
         p = root / rel
@@ -128,6 +178,16 @@ def toylib(tmp_path: Path) -> tuple[SourceTree, SourceTree]:
     return (
         SourceTree("toylib", "1.0", v1, ("toylib",)),
         SourceTree("toylib", "2.0", v2, ("toylib",)),
+    )
+
+
+@pytest.fixture
+def aliaslib(tmp_path: Path) -> tuple[SourceTree, SourceTree]:
+    v1 = write_tree(tmp_path / "aliaslib-1.0", ALIASLIB_V1)
+    v2 = write_tree(tmp_path / "aliaslib-2.0", ALIASLIB_V2)
+    return (
+        SourceTree("aliaslib", "1.0", v1, ("aliaslib",)),
+        SourceTree("aliaslib", "2.0", v2, ("aliaslib",)),
     )
 
 

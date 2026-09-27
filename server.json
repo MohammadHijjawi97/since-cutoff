@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.MohammadHijjawi97/since-cutoff",
+  "title": "since-cutoff",
+  "description": "Which Python library APIs changed after your model's training cutoff (static diff, no model calls)",
+  "repository": {
+    "url": "https://github.com/MohammadHijjawi97/since-cutoff",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/MohammadHijjawi97/since-cutoff",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "since-cutoff",
+      "version": "0.2.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ]
+}

@@ -58,6 +58,51 @@ jobs:
           since-cutoff scan --cutoff 2025-07-31 --limit 3
           test -f .since-cutoff/results.json
 
+  action:
+    # The GitHub Action (action.yml) from this checkout, against the example project. Like the
+    # network job it talks to PyPI and models.dev; it never calls a model.
+    name: action (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan examples/agent-app
+        id: scan
+        uses: ./
+        with:
+          model: anthropic:claude-haiku-4-5
+          working-directory: examples/agent-app
+          since-cutoff-version: local
+      - name: Scan again with fail-on-changes (must fail)
+        id: strict
+        continue-on-error: true
+        uses: ./
+        with:
+          model: anthropic:claude-haiku-4-5
+          working-directory: examples/agent-app
+          only: huggingface-hub
+          fail-on-changes: "true"
+          step-summary: "false"
+          since-cutoff-version: local
+      - name: Check the outputs
+        shell: bash
+        env:
+          CHANGED: ${{ steps.scan.outputs.changed-packages }}
+          CHANGES: ${{ steps.scan.outputs.changes }}
+          MARKDOWN: ${{ steps.scan.outputs.markdown }}
+          REPORT: ${{ steps.scan.outputs.report }}
+          STRICT: ${{ steps.strict.outcome }}
+        run: |
+          set -euxo pipefail
+          [[ ",$CHANGED," == *",huggingface-hub,"* ]]
+          [ "$CHANGES" -gt 0 ]
+          grep -q "<b>huggingface-hub</b>" "$MARKDOWN"
+          test -f "$REPORT"
+          [ "$STRICT" = "failure" ]
+
   build:
     runs-on: ubuntu-latest
     steps:

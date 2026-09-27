@@ -1,0 +1,181 @@
+name: since-cutoff
+description: List the API changes in your pinned Python dependencies since your coding model's training cutoff. No API key needed.
+author: Mohammad Hijjawi
+
+branding:
+  icon: clock
+  color: orange
+
+inputs:
+  model:
+    description: >-
+      The coding model, as provider:model, for example anthropic:claude-sonnet-4-5,
+      openai:gpt-5.4 or claude-code:sonnet. Only its training cutoff is used: no model is called
+      and no API key is needed.
+    required: true
+  working-directory:
+    description: The project directory (with a lockfile, requirements*.txt or pyproject.toml).
+    required: false
+    default: "."
+  only:
+    description: Only check these dependencies (comma-separated PyPI names).
+    required: false
+    default: ""
+  exclude:
+    description: Skip these dependencies (comma-separated PyPI names).
+    required: false
+    default: ""
+  cutoff:
+    description: Override the model's training cutoff (YYYY-MM or YYYY-MM-DD).
+    required: false
+    default: ""
+  fail-on-changes:
+    description: Fail the step when any dependency changed its API after the cutoff.
+    required: false
+    default: "false"
+  step-summary:
+    description: Add the Markdown summary to the job summary.
+    required: false
+    default: "true"
+  cache:
+    description: >-
+      Cache PyPI metadata, package sources and API diffs between runs (saved also when
+      fail-on-changes fails the job).
+    required: false
+    default: "true"
+  args:
+    description: Extra arguments for `since-cutoff scan`, for example "--all-deps --limit 20".
+    required: false
+    default: ""
+  since-cutoff-version:
+    description: >-
+      The since-cutoff release to run: a version on PyPI, "latest", or "local" to build the
+      action's own source (this repository's CI tests its checkout that way).
+    required: false
+    default: "0.2.0"
+
+outputs:
+  changed-packages:
+    description: Comma-separated names of the dependencies whose API changed after the cutoff.
+    value: ${{ steps.scan.outputs.changed-packages }}
+  changes:
+    description: >-
+      Number of breaking API changes found by the static diff (a change reachable under
+      several import paths counts once).
+    value: ${{ steps.scan.outputs.changes }}
+  deprecations:
+    description: Number of new deprecations.
+    value: ${{ steps.scan.outputs.deprecations }}
+  markdown:
+    description: Path to the Markdown summary, for example to post as a pull request comment.
+    value: ${{ steps.scan.outputs.markdown }}
+  report:
+    description: Path to the full Markdown report (results.json is in the same directory).
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        enable-cache: "false"
+
+    # Restore and save are separate steps (not actions/cache, which saves only when the job
+    # succeeds), so that a run with fail-on-changes still keeps what it downloaded.
+    - name: Restore the since-cutoff cache
+      id: cache
+      if: inputs.cache == 'true'
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/since-cutoff-cache
+        key: since-cutoff-${{ runner.os }}-${{ inputs.since-cutoff-version }}-${{ hashFiles('**/uv.lock', '**/poetry.lock', '**/pdm.lock', '**/pylock*.toml', '**/Pipfile.lock', '**/requirements*.txt', '**/pyproject.toml') }}
+        restore-keys: |
+          since-cutoff-${{ runner.os }}-${{ inputs.since-cutoff-version }}-
+          since-cutoff-${{ runner.os }}-
+
+    - name: Scan the dependencies
+      id: scan
+      shell: bash
+      env:
+        SC_MODEL: ${{ inputs.model }}
+        SC_WORKDIR: ${{ inputs.working-directory }}
+        SC_ONLY: ${{ inputs.only }}
+        SC_EXCLUDE: ${{ inputs.exclude }}
+        SC_CUTOFF: ${{ inputs.cutoff }}
+        SC_FAIL: ${{ inputs.fail-on-changes }}
+        SC_STEP_SUMMARY: ${{ inputs.step-summary }}
+        SC_ARGS: ${{ inputs.args }}
+        SC_VERSION: ${{ inputs.since-cutoff-version }}
+        SC_ACTION_PATH: ${{ github.action_path }}
+        SINCE_CUTOFF_CACHE: ${{ runner.temp }}/since-cutoff-cache
+        COLUMNS: "160"
+      run: |
+        set -uo pipefail
+        out="$(mktemp -d "$RUNNER_TEMP/since-cutoff.XXXXXX")"
+        summary="$out/summary.md"
+        case "$SC_VERSION" in
+          local)
+            # A fresh wheel of the action's source; uv could reuse an older build of a directory.
+            uv build --quiet --wheel --out-dir "$out/dist" "$SC_ACTION_PATH" || exit 1
+            wheels=("$out"/dist/*.whl)
+            from=(--from "${wheels[0]}")
+            ;;
+          latest) from=(--from "since-cutoff@latest") ;;
+          *) from=(--from "since-cutoff==$SC_VERSION") ;;
+        esac
+
+        args=(scan "$SC_WORKDIR" --model "$SC_MODEL" --out "$out" --markdown "$summary")
+        if [ -n "$SC_ONLY" ]; then args+=(--only "$SC_ONLY"); fi
+        if [ -n "$SC_EXCLUDE" ]; then args+=(--exclude "$SC_EXCLUDE"); fi
+        if [ -n "$SC_CUTOFF" ]; then args+=(--cutoff "$SC_CUTOFF"); fi
+        if [ "$SC_FAIL" = "true" ]; then args+=(--fail-on-changes); fi
+        if [ -n "$SC_ARGS" ]; then read -ra extra <<< "$SC_ARGS"; args+=("${extra[@]}"); fi
+
+        status=0
+        uvx "${from[@]}" since-cutoff "${args[@]}" || status=$?
+        # This step succeeds so that the cache is saved; "Report the result" fails the job.
+        echo "exit-code=$status" >> "$GITHUB_OUTPUT"
+
+        if [ -f "$out/results.json" ]; then
+          outputs="$(uvx "${from[@]}" python - "$out/results.json" <<'PY'
+        import json
+        import sys
+
+        sys.stdout.reconfigure(newline="\n")  # no CRLF on Windows runners
+        with open(sys.argv[1], encoding="utf-8") as fh:
+            result = json.load(fh)
+        changed = [p["package"] for p in result["packages"] if p["status"] == "changed"]
+        print("changed-packages=" + ",".join(changed))
+        print(f"changes={result['breaking_changes']}")
+        print(f"deprecations={result['deprecations']}")
+        PY
+          )"
+          echo "$outputs" >> "$GITHUB_OUTPUT"
+          echo "report=$out/report.md" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -f "$summary" ]; then
+          echo "markdown=$summary" >> "$GITHUB_OUTPUT"
+          if [ "$SC_STEP_SUMMARY" = "true" ]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
+        fi
+        exit 0
+
+    - name: Save the since-cutoff cache
+      if: inputs.cache == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/since-cutoff-cache
+        key: ${{ steps.cache.outputs.cache-primary-key }}
+
+    - name: Report the result
+      if: ${{ !cancelled() && steps.scan.outputs.exit-code != '' && steps.scan.outputs.exit-code != '0' }}
+      shell: bash
+      env:
+        SC_STATUS: ${{ steps.scan.outputs.exit-code }}
+        SC_MODEL: ${{ inputs.model }}
+        SC_CHANGED: ${{ steps.scan.outputs.changed-packages }}
+      run: |
+        if [ "$SC_STATUS" = "3" ]; then
+          echo "::error title=since-cutoff::API changes since the training cutoff of $SC_MODEL in: ${SC_CHANGED//,/, }"
+        fi
+        exit "$SC_STATUS"

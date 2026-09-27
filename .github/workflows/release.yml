@@ -1,12 +1,18 @@
 name: Release
 
-# Publishes to PyPI with trusted publishing when a version tag (v0.1.0, ...) is pushed.
+# Publishes to PyPI with trusted publishing when a version tag (v0.2.0, ...) is pushed, then
+# lists that version in the official MCP Registry (registry.modelcontextprotocol.io) and creates
+# the GitHub release. The major tag (v0) that `uses: MohammadHijjawi97/since-cutoff@v0` resolves
+# to is moved by hand afterwards (see CONTRIBUTING.md).
 # One-time setup on pypi.org: add a "pending publisher" for project `since-cutoff`,
 # owner `MohammadHijjawi97`, repository `since-cutoff`, workflow `release.yml`, environment `pypi`.
+# The MCP Registry needs no setup: it trusts this repository's GitHub OIDC token for the
+# io.github.MohammadHijjawi97/* namespace.
 
 on:
   push:
-    tags: ["v*"]
+    # Full versions only: moving v0, or a tag such as v0.3.0rc1, never starts a release.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: read
@@ -19,6 +25,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check that every version field matches the tag
+        # The package, the action's default, server.json, the plugin and extension manifests,
+        # the MCP launcher pins, CITATION.cff, the changelog and the README pins.
+        run: python scripts/check_versions.py "$GITHUB_REF_NAME"
       - run: python -m pip install build
       - run: python -m build
       - uses: actions/upload-artifact@v4
@@ -38,3 +48,74 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    # The registry verifies ownership by finding "mcp-name: <server name>" in the README of the
+    # PyPI release named in server.json, so this runs after that release is on PyPI.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that server.json matches the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! jq -e --arg v "$version" '.version == $v and .packages[0].version == $v' server.json; then
+            echo "server.json must list version $version for tag $GITHUB_REF_NAME"
+            exit 1
+          fi
+      - name: Wait until PyPI serves the release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 1 30); do
+            curl -sf -o /dev/null "https://pypi.org/pypi/since-cutoff/$version/json" && exit 0
+            sleep 10
+          done
+          echo "since-cutoff $version is not on PyPI yet"
+          exit 1
+      - name: Install mcp-publisher
+        run: |
+          base="https://github.com/modelcontextprotocol/registry/releases/download"
+          curl -sSfL -o mcp-publisher.tar.gz \
+            "$base/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Log in with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish server.json
+        run: ./mcp-publisher publish
+
+  github-release:
+    # The GitHub release: the changelog entry and the built files (two files, so that
+    # `gemini extensions install` falls back to the source archive with gemini-extension.json).
+    # Runs after PyPI has the version, because the action installs that version from PyPI.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "The release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+              --title "since-cutoff $version" --notes-file notes.md
+          fi

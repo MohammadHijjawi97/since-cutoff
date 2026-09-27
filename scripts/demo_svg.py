@@ -37,10 +37,7 @@ def main() -> None:
         legacy_windows=False,
     )
     if mode == "scan":
-        settings = Settings(
-            model="anthropic:claude-sonnet-4-5",
-            include=["anthropic", "openai", "huggingface-hub", "langchain-core"],
-        )
+        settings = Settings(model="anthropic:claude-sonnet-4-5")
         engine = Engine(settings, store=store, llm_cache=store)
         scan = engine.scan(project, engine.resolve_target(allow_calls=False))
         console.print("[bold]$[/bold] since-cutoff scan --model anthropic:claude-sonnet-4-5")

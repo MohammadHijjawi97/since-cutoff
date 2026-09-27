@@ -14,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from since_cutoff import __version__
+from since_cutoff.apidiff import APIChange
 from since_cutoff.engine import (
     CHANGED,
     DEPRECATED,
@@ -31,8 +32,10 @@ from since_cutoff.engine import (
     RunResult,
     ScanResult,
 )
-from since_cutoff.selection import rank
+from since_cutoff.selection import uses_text
 from since_cutoff.stats import estimate_tokens, pct, wilson_interval
+
+REPO_URL = "https://github.com/MohammadHijjawi97/since-cutoff"
 
 STATUS_LABEL = {
     CHANGED: "API changed",
@@ -41,6 +44,8 @@ STATUS_LABEL = {
     NEW: "newer than the model",
     SKIPPED: "not checked",
 }
+# How every report counts: each change once, under its shortest public path.
+COUNTING_NOTE = "A change reachable under several import paths is counted once."
 
 
 # ------------------------------------------------------------------ summary
@@ -49,6 +54,7 @@ def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]
     for p in scan.packages:
         probes = [a for a in (run.probes if run else []) if a.change.package == p.name]
         valid = [a for a in probes if a.valid]
+        breaking, deprecations = p.counts
         rows.append(
             {
                 "package": p.name,
@@ -57,8 +63,8 @@ def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]
                 "cutoff_version": p.cutoff_version,
                 "cutoff_version_date": p.cutoff_version_date,
                 "status": p.status,
-                "breaking_changes": len(p.breaking),
-                "deprecations": len(p.deprecations),
+                "breaking_changes": breaking,
+                "deprecations": deprecations,
                 "probed": len(valid),
                 "stale": sum(a.outcome == STALE for a in valid),
                 "wrong": sum(a.outcome == WRONG for a in valid),
@@ -73,11 +79,12 @@ def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]
 
 def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
     checked = [p for p in scan.packages if p.status != SKIPPED]
+    packages = per_package(scan, run)
     out: dict[str, Any] = {
         "tool": f"since-cutoff {__version__}",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "model": scan.target.model_id,
-        "model_spec": scan.target.spec,
+        "model": scan.target.model_id or None,
+        "model_spec": scan.target.spec or None,
         "effort": scan.target.effort,
         "cutoff": scan.target.cutoff.isoformat(),
         "cutoff_source": scan.target.cutoff_source,
@@ -88,10 +95,10 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "dependencies_skipped": len(scan.packages) - len(checked),
         "dependencies_changed": len(scan.changed),
         "dependencies_newer_than_model": sum(p.status == NEW for p in scan.packages),
-        "breaking_changes": scan.total_changes,
-        "deprecations": sum(len(p.deprecations) for p in scan.packages),
+        "breaking_changes": sum(r["breaking_changes"] for r in packages),
+        "deprecations": sum(r["deprecations"] for r in packages),
         "warnings": list(scan.warnings),
-        "packages": per_package(scan, run),
+        "packages": packages,
     }
     if run is None:
         return out
@@ -129,8 +136,15 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ console
-def headline(scan: ScanResult, run: RunResult | None) -> list[Text]:
-    s = summary(scan, run)
+def headline(
+    scan: ScanResult, run: RunResult | None, s: dict[str, Any] | None = None
+) -> list[Text]:
+    """The summary lines at the top of every report. ``s`` is :func:`summary`, if at hand.
+
+    Each line is short and self-contained (no parenthesis that a wrap could separate from its
+    other half), because the terminal wraps it inside a panel.
+    """
+    s = s or summary(scan, run)
     lines: list[Text] = []
     if run is not None and run.probes:
         probed = s["probed_dependencies"]
@@ -155,14 +169,17 @@ def headline(scan: ScanResult, run: RunResult | None) -> list[Text]:
     lines.append(
         Text.assemble(
             (f"{s['dependencies_changed']} of {s['dependencies_checked']}", "bold yellow"),
-            " dependencies changed their API after the cutoff ",
-            (
-                f"({s['breaking_changes']} changes flagged by the static diff, "
-                f"{s['deprecations']} new deprecations)",
-                "dim",
-            ),
+            " dependencies changed their API after the cutoff",
         )
     )
+    if s["breaking_changes"] or s["deprecations"]:
+        lines.append(
+            Text(
+                f"Static diff: {_plural(s['breaking_changes'], 'breaking change')}, "
+                f"{_plural(s['deprecations'], 'new deprecation')}",
+                style="dim",
+            )
+        )
     if s["dependencies_newer_than_model"]:
         lines.append(
             Text(
@@ -175,7 +192,7 @@ def headline(scan: ScanResult, run: RunResult | None) -> list[Text]:
         lines.append(
             Text(
                 f"{s['dependencies_skipped']} of {s['dependencies_total']} dependencies could not "
-                "be checked" + (f" (e.g. {first[:110]})" if first else ""),
+                "be checked" + (f"; for example: {first[:110]}" if first else ""),
                 style="yellow",
             )
         )
@@ -244,14 +261,34 @@ def render_console(
     console: Console, scan: ScanResult, run: RunResult | None = None, *, verbose: bool = False
 ) -> None:
     s = summary(scan, run)
-    title = f"since-cutoff · {escape(s['model'])} · training cutoff {s['cutoff']}"
+    if s["model"]:
+        title = f"since-cutoff · {escape(s['model'])} · training cutoff {s['cutoff']}"
+    else:
+        title = f"since-cutoff · custom cutoff {s['cutoff']}"
     sub = (
         f"{escape(scan.project.root.name)} · {s['dependencies_total']} dependencies"
         + (f" ({s['dependencies_skipped']} not checked)" if s["dependencies_skipped"] else "")
         + f" · versions from {escape(s['version_source'])}"
     )
+    lines = headline(scan, run, s)
+    # rich fits a panel to its body and title but not to its subtitle, which it would cut: size
+    # it here (expand=True then means "exactly this wide").
+    width = 6 + max(
+        Text.from_markup(title).cell_len,
+        Text.from_markup(sub).cell_len,
+        *(t.cell_len for t in lines),
+    )
+    # The CLI's console does not wrap (soft_wrap), which would crop long lines inside the panel.
     console.print(
-        Panel(Group(*headline(scan, run)), title=title, subtitle=sub, expand=False, padding=(1, 2))
+        Panel(
+            Group(*lines),
+            title=title,
+            subtitle=sub,
+            expand=True,
+            width=min(width, console.width),
+            padding=(1, 2),
+        ),
+        soft_wrap=False,
     )
 
     table = Table(show_edge=False, header_style="bold", pad_edge=False)
@@ -321,23 +358,23 @@ _STYLE = {STALE: "red", WRONG: "magenta", DEPRECATED: "yellow", PASS: "green"}
 def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> None:
     limit = max(0, limit)
     for p in scan.changed:
+        breaking, deprecated = p.counts
         console.print()
         console.print(
             Text(
-                f"{p.name} {p.cutoff_version} -> {p.locked}  ({len(p.breaking)} flagged changes, "
-                f"{len(p.deprecations)} deprecated)",
+                f"{p.name} {p.cutoff_version} -> {p.locked}: {breaking} breaking, "
+                f"{deprecated} deprecated",
                 style="bold",
             )
         )
-        lines: list[str] = []
-        for c in rank(p.changes, scan.project.identifiers):
-            line = c.describe(short=True).replace("`", "")
-            if line not in lines:
-                lines.append(line)
-        for line in lines[:limit]:
-            console.print(Text("  - " + line))
-        if len(lines) > limit:
-            console.print(Text(f"  ... {len(lines) - limit} more in the report", style="dim"))
+        ranked, ids = scan.ranked(p), scan.uses(p)
+        for c in ranked[:limit]:
+            uses = uses_text(c, ids)
+            line = c.describe(short=True, versioned=False)
+            line += f" (your code uses {uses})" if uses else ""
+            console.print(Text("  - " + line.replace("`", "")))
+        if len(ranked) > limit:
+            console.print(Text(f"  ... {len(ranked) - limit} more in the report", style="dim"))
 
 
 # ----------------------------------------------------------------- markdown
@@ -350,15 +387,14 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
     out = [
         "# since-cutoff report",
         "",
-        f"- Model: `{s['model']}`, training cutoff **{s['cutoff']}** (source: {s['cutoff_source']})"
-        + (f", thinking effort `{s['effort']}`" if s["effort"] else ""),
+        f"- {_cutoff_md(s)}" + (f", thinking effort `{s['effort']}`" if s["effort"] else ""),
         f"- Project: `{scan.project.root.name}`, versions from `{s['version_source']}`",
         f"- Generated by since-cutoff {__version__} at {s['generated_at']}",
         "",
         "## Summary",
         "",
     ]
-    out += [f"- {t.plain}" for t in headline(scan, run)]
+    out += [f"- {t.plain}" for t in headline(scan, run, s)]
     out += [f"- Warning: {w}" for w in scan.warnings]
     out += [
         "",
@@ -405,16 +441,122 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
                 f"| {_cell(change)}{tag} | {_cell(task)} | {res.get(False, '-')} | {res.get(True, '-')} |"
             )
     if scan.changed:
-        out += ["", "## All changes found", ""]
+        out += [
+            "",
+            "## All changes found",
+            "",
+            f"{COUNTING_NOTE} results.json lists every path.",
+            "",
+        ]
         for p in scan.changed:
-            out += [f"### {p.name} {p.cutoff_version} -> {p.locked}", ""]
+            breaking, deprecated = p.counts
             out += [
-                f"- {c.describe()}"
-                + (f" (also: {c.occurrences - 1} similar)" if c.occurrences > 1 else "")
-                for c in p.changes
+                f"### {p.name} {p.cutoff_version} -> {p.locked}: {breaking} breaking, "
+                f"{deprecated} deprecated",
+                "",
             ]
+            ids = scan.uses(p)
+            out += [_md_change(c, ids, example=True) for c in scan.ranked(p)]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
+
+
+def _cutoff_md(s: dict[str, Any]) -> str:
+    if not s["model"]:
+        return f"Custom cutoff **{s['cutoff']}** (given with --cutoff, no model)"
+    return f"Model `{s['model']}`, training cutoff **{s['cutoff']}** (source: {s['cutoff_source']})"
+
+
+def _md_change(change: APIChange, ids: set[str], *, example: bool = False) -> str:
+    """One Markdown list item: the change, how many paths share it, and what the code uses."""
+    similar = ""
+    if change.occurrences > 1:
+        e_g = f", e.g. `{change.also[0]}`" if example and change.also else ""
+        similar = f" (also: {change.occurrences - 1} similar{e_g})"
+    uses = uses_text(change, ids)
+    mark = f" · **your code uses {uses}**" if uses else ""
+    return f"- {change.describe(versioned=False)}{similar}{mark}"
+
+
+def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
+    """A short GitHub-flavoured Markdown summary of a scan, for CI job summaries and PR comments.
+
+    One table row per flagged dependency, then the top ``limit`` changes of each changed one,
+    with changes to names the project's code uses first. The full list stays in report.md.
+    Every count is of distinct changes, as in the full report and the MCP tools.
+    """
+    s = summary(scan)
+    project = scan.project
+    out = [
+        "## since-cutoff scan",
+        "",
+        f"{_cutoff_md(s)} · project `{project.root.name}`, versions from `{s['version_source']}`",
+        "",
+    ]
+    out += [f"- {t.plain}" for t in headline(scan, None, s)]
+    out += [f"- Warning: {w}" for w in scan.warnings]
+
+    imported = {p.name for p in scan.changed if project.imports(p.import_names)}
+    changed = sorted(scan.changed, key=lambda p: (p.name not in imported, -p.counts[0], p.name))
+    flagged = [*changed, *(p for p in scan.packages if p.status in (NEW, SKIPPED))]
+    if flagged:
+        out += [
+            "",
+            "| package | at cutoff | you use | status | breaking | deprecated |",
+            "|---|---|---|---|---:|---:|",
+        ]
+    for p in flagged:
+        status = STATUS_LABEL.get(p.status, p.status)
+        if p.name in imported:
+            status += ", imported by your code"
+        elif p.reason:
+            status += f": {p.reason[:120]}"
+        counts = p.counts if p.status == CHANGED else ("", "")
+        out.append(
+            f"| {p.name} | {_version_cell(p.cutoff_version, p.cutoff_version_date)} "
+            f"| {_version_cell(p.locked, p.locked_date)} | {_cell(status)} "
+            f"| {counts[0]} | {counts[1]} |"
+        )
+    quiet = [p for p in scan.packages if p.status in (KNOWN, UNCHANGED)]
+    if quiet:
+        names = ", ".join(f"{p.name} {p.locked or ''}".strip() for p in quiet)
+        out += ["", f"Not flagged (released before the cutoff, or no breaking changes): {names}"]
+
+    limit = max(0, limit)
+    for p in changed:
+        ranked, ids = scan.ranked(p), scan.uses(p)
+        hits = sum(uses_text(c, ids) is not None for c in ranked)
+        breaking, deprecated = p.counts
+        detail = f"{breaking} breaking, {deprecated} deprecated" + (
+            f", {hits} touching names your code uses" if hits else ""
+        )
+        out += [
+            "",
+            f"<details{' open' if hits else ''}><summary><b>{p.name}</b> "
+            f"{p.cutoff_version} -> {p.locked}: {detail}</summary>",
+            "",
+        ]
+        out += [_md_change(c, ids) for c in ranked[:limit]]
+        if len(ranked) > limit:
+            out.append(f"- ... and {len(ranked) - limit} more in the full report")
+        out += ["", "</details>"]
+    out += [
+        "",
+        f"<sub>[since-cutoff]({REPO_URL}) {__version__}: static diff of the public API, "
+        f"no model calls. {COUNTING_NOTE} Behaviour changes behind an unchanged signature are "
+        "not shown.</sub>",
+    ]
+    return "\n".join(out) + "\n"
+
+
+def _version_cell(version: str | None, day: str | None) -> str:
+    if not version:
+        return "-"
+    return f"{version} ({day})" if day else version
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word if n == 1 else word + 's'}"
 
 
 def to_json(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:

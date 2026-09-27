@@ -1,7 +1,6 @@
 {
   "name": "since-cutoff",
-  "displayName": "since-cutoff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Find which of your exact dependency versions your coding model writes wrong, and fix it with a small, verified AGENTS.md note.",
   "author": {
     "name": "Mohammad Hijjawi",
@@ -10,5 +9,5 @@
   "homepage": "https://github.com/MohammadHijjawi97/since-cutoff",
   "repository": "https://github.com/MohammadHijjawi97/since-cutoff",
   "license": "MIT",
-  "keywords": ["dependencies", "knowledge-cutoff", "agents-md", "python"]
+  "keywords": ["dependencies", "knowledge-cutoff", "agents-md", "python", "mcp"]
 }

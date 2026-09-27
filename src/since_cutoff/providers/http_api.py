@@ -9,6 +9,14 @@ from since_cutoff import net
 from since_cutoff.errors import ProviderError
 from since_cutoff.providers.base import Completion
 
+# OpenRouter attributes requests to an app by these headers (its "app attribution"). They name
+# the tool, never the user or the project.
+OPENROUTER_HEADERS = {
+    "HTTP-Referer": "https://github.com/MohammadHijjawi97/since-cutoff",
+    "X-OpenRouter-Title": "since-cutoff",
+    "X-Title": "since-cutoff",  # the older name of X-OpenRouter-Title
+}
+
 
 class AnthropicProvider:
     provider_name = "anthropic"
@@ -90,6 +98,8 @@ class OpenAICompatibleProvider:
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        if self.provider_name == "openrouter":
+            headers.update(OPENROUTER_HEADERS)
         try:
             data = net.post_json(
                 f"{self.base_url}/chat/completions", payload, headers=headers, timeout=self.timeout

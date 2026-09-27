@@ -19,6 +19,8 @@ keywords = [
     "agents-md",
     "knowledge-cutoff",
     "api-changes",
+    "mcp",
+    "mcp-server",
     "static-analysis",
 ]
 classifiers = [
@@ -37,6 +39,7 @@ classifiers = [
 dependencies = [
     "basedpyright>=1.20",
     "griffe>=1.14",
+    "mcp>=2.0",
     "packaging>=23.0",
     "rich>=13.7",
     "tomli>=2.0; python_version < '3.11'",
@@ -74,6 +77,8 @@ markers = [
 line-length = 100
 target-version = "py310"
 src = ["src", "tests"]
+# The example project is scanned by since-cutoff, not linted: it keeps its imports as they are.
+extend-exclude = ["examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "C4"]

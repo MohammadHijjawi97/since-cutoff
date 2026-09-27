@@ -55,7 +55,7 @@ from since_cutoff.notes import Note, bullet_is_grounded, clean_bullet, render_bl
 from since_cutoff.project import Dependency, Project
 from since_cutoff.providers import Provider, check_spec, split_spec
 from since_cutoff.pypi import PyPI, SourceTree
-from since_cutoff.selection import select
+from since_cutoff.selection import collapse, project_rank, select
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -74,6 +74,7 @@ EXCLUDED_OUTCOMES = (UNTOUCHED, OFFTASK, INVALID, ERROR)
 CLAUDE_ALIASES = ("sonnet", "opus", "haiku", "fable", "default")
 DEPENDENCY_DEPTH = 2
 MAX_DEPENDENCIES = 40
+SOURCE_JOBS = 8  # parallel source downloads
 
 # Package status after the scan.
 CHANGED = "changed"
@@ -131,11 +132,16 @@ class Settings:
 @dataclass
 class ModelTarget:
     spec: str
-    model_id: str
+    model_id: str  # empty for a cutoff given without a model
     cutoff: date
     cutoff_source: str
     info: ModelInfo | None = None
     effort: str | None = None
+
+    @classmethod
+    def cutoff_only(cls, cutoff: date, source: str = "--cutoff") -> ModelTarget:
+        """A cutoff date with no model behind it (``scan --cutoff`` without ``--model``)."""
+        return cls("", "", cutoff, source)
 
 
 @dataclass
@@ -161,8 +167,28 @@ class PackageScan:
     def deprecations(self) -> list[APIChange]:
         return [c for c in self.changes if c.kind == CHANGE_DEPRECATED]
 
+    @property
+    def distinct(self) -> list[APIChange]:
+        """Each change once, under its shortest public path (:func:`selection.collapse`).
+
+        ``changes`` lists a change once per public path that leads to it; the reports count
+        and list these instead. Recomputed when ``changes`` is replaced or grows.
+        """
+        cached = self.__dict__.get("_distinct")
+        if cached is None or cached[0] is not self.changes or cached[1] != len(self.changes):
+            cached = (self.changes, len(self.changes), collapse(self.changes))
+            self.__dict__["_distinct"] = cached
+        return list(cached[2])
+
+    @property
+    def counts(self) -> tuple[int, int]:
+        """``(breaking, deprecated)``, counted as in :attr:`distinct`."""
+        distinct = self.distinct
+        deprecated = sum(c.kind == CHANGE_DEPRECATED for c in distinct)
+        return len(distinct) - deprecated, deprecated
+
     def to_dict(self) -> dict[str, Any]:
-        d = {k: v for k, v in self.__dict__.items() if k != "changes"}
+        d = {k: v for k, v in self.__dict__.items() if k != "changes" and not k.startswith("_")}
         d["changes"] = [c.to_dict() for c in self.changes]
         return d
 
@@ -184,10 +210,23 @@ class ScanResult:
 
     @property
     def total_changes(self) -> int:
-        return sum(len(p.breaking) for p in self.packages)
+        """Breaking changes over all packages, each counted once (see PackageScan.distinct)."""
+        return sum(p.counts[0] for p in self.packages)
 
     def package(self, name: str) -> PackageScan:
         return next(p for p in self.packages if p.name == name)
+
+    def uses(self, package: PackageScan) -> set[str]:
+        """The identifiers of the project's code, or none if its code never imports the package.
+
+        ``create`` in your code says nothing about a package you do not import.
+        """
+        return self.project.identifiers if self.project.imports(package.import_names) else set()
+
+    def ranked(self, package: PackageScan) -> list[APIChange]:
+        """The package's distinct changes, those the project's code uses first."""
+        ids = self.uses(package)
+        return sorted(package.distinct, key=lambda c: project_rank(c, ids))
 
 
 @dataclass
@@ -348,7 +387,12 @@ class Engine:
         return self._providers[spec]
 
     def _map(
-        self, fn: Callable[[Any], T], items: Iterable[Any], *, jobs: int | None = None
+        self,
+        fn: Callable[[Any], T],
+        items: Iterable[Any],
+        *,
+        jobs: int | None = None,
+        progress: bool = True,
     ) -> list[T]:
         """Run ``fn`` over items in a thread pool, preserving order and advancing progress.
 
@@ -363,7 +407,8 @@ class Engine:
             }
             for fut in as_completed(futures):
                 results[futures[fut]] = fut.result()
-                self.reporter.advance()
+                if progress:
+                    self.reporter.advance()
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
@@ -375,6 +420,25 @@ class Engine:
         if key not in self._sources:
             self._sources[key] = self.pypi.source(name, version)
         return self._sources[key]
+
+    def _fetch_sources(
+        self, wanted: Iterable[tuple[str, str]]
+    ) -> dict[tuple[str, str], SourceTree | PackageIndexError]:
+        """Download and extract several ``(name, version)`` sources at once.
+
+        Downloads dominate a cold scan, so they run in parallel (PyPI.source locks per
+        version). A version that cannot be fetched maps to its error.
+        """
+
+        def fetch(key: tuple[str, str]) -> SourceTree | PackageIndexError:
+            try:
+                return self.source(*key)
+            except PackageIndexError as exc:
+                return exc
+
+        keys = list(dict.fromkeys(wanted))
+        trees = self._map(fetch, keys, jobs=SOURCE_JOBS, progress=False)
+        return dict(zip(keys, trees, strict=True))
 
     # --------------------------------------------------------------- model
     def resolve_target(self, *, allow_calls: bool = True) -> ModelTarget:
@@ -451,15 +515,17 @@ class Engine:
         for w in warnings:
             self.reporter.warn(w)
 
-        self.reporter.stage(f"Checking {len(deps)} dependencies on PyPI", len(deps))
+        deps_text = f"{len(deps)} dependenc{'y' if len(deps) == 1 else 'ies'}"
+        self.reporter.stage(f"Checking {deps_text} on PyPI", len(deps))
         scans = self._map(lambda d: self._scan_versions(d, target.cutoff, project), deps, jobs=8)
 
         to_diff = [s for s in scans if s.status == CHANGED]
         if to_diff:
-            self.reporter.stage(f"Diffing the API of {len(to_diff)} changed packages", len(to_diff))
+            what = f"{len(to_diff)} changed package{'' if len(to_diff) == 1 else 's'}"
+            self.reporter.stage(f"Diffing the API of {what}", len(to_diff))
             self._diff_all(to_diff)
         self.reporter.done()
-        scans.sort(key=lambda s: (s.status != CHANGED, -len(s.changes), s.name))
+        scans.sort(key=lambda s: (s.status != CHANGED, -len(s.distinct), s.name))
         return ScanResult(project, target, scans, warnings)
 
     def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
@@ -488,22 +554,40 @@ class Engine:
             scan.status, scan.reason = SKIPPED, str(exc)
         return scan
 
+    def diff_package(self, scan: PackageScan) -> PackageScan:
+        """Diff ``scan.cutoff_version`` against ``scan.locked`` outside a project scan (cached).
+
+        Sets ``import_names``, ``changes`` and ``status`` (CHANGED, UNCHANGED, or SKIPPED with
+        a ``reason``) exactly as :meth:`scan` does for each changed dependency.
+        """
+        self._diff_all([scan])
+        return scan
+
     def _diff_all(self, scans: list[PackageScan]) -> None:
+        cached: dict[int, list[dict[str, Any]]] = {}
+        wanted: list[tuple[str, str]] = []
+        for s in scans:
+            assert s.cutoff_version and s.locked
+            result = self.store.get("diffs", self._diff_key(s))
+            if result is not None:
+                cached[id(s)] = result
+            wanted.append((s.name, s.locked))  # a cached diff still needs the import names
+            if result is None:
+                wanted.append((s.name, s.cutoff_version))
+        trees = self._fetch_sources(wanted)
+
         pending: list[tuple[PackageScan, SourceTree, SourceTree, list[str]]] = []
         for s in scans:
             assert s.cutoff_version and s.locked
-            key = stable_hash("diff", DIFF_SCHEMA, s.name, s.cutoff_version, s.locked)
-            try:
-                new = self.source(s.name, s.locked)
-                old = self.source(s.name, s.cutoff_version)
-            except PackageIndexError as exc:
-                s.status, s.reason = SKIPPED, str(exc)
+            new = trees[(s.name, s.locked)]
+            old = new if id(s) in cached else trees[(s.name, s.cutoff_version)]
+            if isinstance(new, PackageIndexError) or isinstance(old, PackageIndexError):
+                s.status, s.reason = SKIPPED, str(new if isinstance(new, Exception) else old)
                 self.reporter.advance()
                 continue
             s.import_names = list(new.import_names)
-            cached = self.store.get("diffs", key)
-            if cached is not None:
-                self._finish(s, cached, key, store=False)
+            if id(s) in cached:
+                self._finish(s, cached[id(s)], self._diff_key(s), store=False)
                 continue
             names = sorted(set(old.import_names) | set(new.import_names))
             pending.append((s, old, new, names))
@@ -544,13 +628,18 @@ class Engine:
         if store:
             self.store.set("diffs", key, result)
         s.changes = [APIChange.from_dict(c) for c in result]
-        s.status = CHANGED if s.changes else UNCHANGED
+        # Module metadata alone (``__version__``) is not an API change worth flagging.
+        s.status = CHANGED if s.distinct else UNCHANGED
         self.reporter.advance()
 
     # ---------------------------------------------------------------- run
     def run(self, scan: ScanResult, *, fix: bool = True) -> RunResult:
         result = RunResult(scan)
-        changes_by_pkg = {p.name: p.changes for p in scan.changed}
+        # Deprecations marked by a library's own decorator are invisible to the type checker,
+        # so a probe could never show whether the model avoids them.
+        changes_by_pkg = {
+            p.name: [c for c in p.changes if not c.deprecated_by] for p in scan.changed
+        }
         if not changes_by_pkg:
             return result
         budget = max(0, self.settings.max_probes)
@@ -746,7 +835,7 @@ class Engine:
                     log.debug("dependency %s==%s unavailable: %s", item[0], item[1], exc)
                     return None
 
-            with ThreadPoolExecutor(max_workers=8) as pool:
+            with ThreadPoolExecutor(max_workers=SOURCE_JOBS) as pool:
                 trees = [t for t in pool.map(fetch, wanted) if t is not None]
             roots.extend(t.root for t in trees)
             frontier = trees

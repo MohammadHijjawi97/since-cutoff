@@ -201,6 +201,27 @@ def test_scan_sources_skips_virtualenvs(tmp_path):
     assert scan_sources(tmp_path)[0] == {"os"}
 
 
+def test_imports_of_namespace_packages_match_the_distribution(tmp_path):
+    write(tmp_path, "requirements.txt", "google-genai\ngoogle-cloud-storage\nrequests\n")
+    write(
+        tmp_path,
+        "app.py",
+        """
+        from google import genai
+        import azure.identity.aio as aio
+        import requests.adapters
+        from . import local
+        """,
+    )
+    project = load_project(tmp_path)
+    assert project.imported_modules == {"google", "azure", "requests"}
+    # Only the namespace members the code imports count, not every google-* distribution.
+    assert project.imports(["google.genai"])
+    assert not project.imports(["google.cloud.storage"])
+    assert project.imports(["azure.identity"]) and not project.imports(["azure.storage.blob"])
+    assert project.imports(["requests"]) and not project.imports(["httpx", "local"])
+
+
 def test_unknown_lockfile_content_is_reported(tmp_path):
     write(tmp_path, "uv.lock", "this is = = not toml")
     with pytest.raises(ProjectError, match=r"could not parse uv\.lock"):

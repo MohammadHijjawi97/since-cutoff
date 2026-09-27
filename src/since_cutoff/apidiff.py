@@ -2,17 +2,25 @@
 
 The diff answers one question: *which code that was correct for the old version is wrong for
 the new one?* So it reports removed objects and parameters, parameters that became required
-or keyword-only, objects that changed kind, and objects newly marked ``@deprecated``
-(PEP 702). Cosmetic changes (defaults, attribute values, return annotations) are ignored.
+or keyword-only, objects that changed kind, and objects newly marked deprecated (PEP 702
+``@deprecated``, or a library's own decorator whose name contains "deprecat"). Cosmetic changes
+(defaults, attribute values, return annotations) are ignored.
+
+Only the public API is compared. Besides ``_private`` names, test suites, benchmarks and
+examples shipped inside a package are skipped (``pkg.testing`` and ``pkg.test`` directly under
+the top-level package stay, since libraries such as pandas and numpy document them).
 
 Packages are loaded statically (``allow_inspection=False``): no package code is imported.
 """
 
 from __future__ import annotations
 
+import builtins
 import logging
 import re
+import warnings
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -21,7 +29,11 @@ from since_cutoff.cache import stable_hash
 
 log = logging.getLogger(__name__)
 
-DIFF_SCHEMA = 7
+DIFF_SCHEMA = 9
+
+# Above this many removals in one package the release is a rewrite. Looking for similarly
+# named replacements (difflib over every owner's members) then costs minutes and adds little.
+FUZZY_LIMIT = 2000
 
 REMOVED = "removed"
 MOVED = "moved"
@@ -61,8 +73,19 @@ _SKIP_SEGMENTS = {
     "extern",
     "conftest",
 }
+# Modules that are never API. Only module segments are checked (``FieldInfo.examples`` is API).
+_NON_API_MODULES = {"benchmark", "benchmarks", "example", "examples"}
+# Test helpers are API only directly under the top-level package (``pandas.testing``).
+_TEST_MODULES = {"test", "testing"}
 _OWNER_NORMALIZE = re.compile(r"^(Async)|(With(Raw|Streaming)Response)$")
 _PEP702 = ("typing_extensions.deprecated", "warnings.deprecated", "typing.deprecated")
+# Name parts of decorators that deprecate a parameter rather than the whole function
+# (``deprecate_renamed_parameter``, ``deprecate_kwarg``, ``deprecate_nonkeyword_arguments``).
+_PARAMETER_WORDS = {"param", "params", "parameter", "parameters", "arg", "args", "kwarg"}
+_PARAMETER_WORDS |= {"kwargs", "argument", "arguments", "keyword", "nonkeyword", "positional"}
+_VERSION = re.compile(r"v?\d+(\.\d+)*\w*")
+_OLD_NAME_KEYS = ("old_name", "old_arg_name", "old_param", "old")
+_NEW_NAME_KEYS = ("new_name", "new_arg_name", "new_param", "new")
 
 
 @dataclass
@@ -85,6 +108,15 @@ class APIChange:
     suggestions: list[str] = field(default_factory=list)
     occurrences: int = 1
     also: list[str] = field(default_factory=list)
+    # KIND_CHANGED: griffe kinds ("class", "function", "attribute", "type alias", "module"),
+    # with "property" for attribute-like functions.
+    old_kind: str | None = None
+    new_kind: str | None = None
+    # REMOVED: public path of an unrelated object that has the same name in the new version.
+    namesake: str | None = None
+    # DEPRECATED: the library's own decorator that marks it (not PEP 702, so type checkers
+    # do not report uses of it).
+    deprecated_by: str | None = None
 
     @property
     def id(self) -> str:
@@ -115,7 +147,13 @@ class APIChange:
     @property
     def display(self) -> str:
         target = f"{self.owner}.{self.name}" if self.owner else self.path
-        if self.kind in (PARAM_REMOVED, PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY):
+        if self.parameter and self.kind in (
+            PARAM_REMOVED,
+            PARAM_REQUIRED,
+            PARAM_KEYWORD_ONLY,
+            PARAM_POSITIONAL_ONLY,
+            DEPRECATED,
+        ):
             return f"{target}({self.parameter}=...)"
         return target
 
@@ -123,30 +161,39 @@ class APIChange:
     def short_path(self) -> str:
         return f"{self.owner}.{self.name}" if self.owner else self.path
 
-    def describe(self, *, short: bool = False) -> str:
-        """One human sentence describing the change."""
-        pkg = f"{self.package} {self.to_version}"
+    def describe(self, *, short: bool = False, versioned: bool = True) -> str:
+        """One human sentence describing the change (``versioned=False`` drops "(pkg 1.2)")."""
+        pkg = f" ({self.package} {self.to_version})" if versioned else ""
         path = self.short_path if short else self.path
         call = f"{path}({self.parameter}=...)" if self.parameter else path
         if self.kind == MOVED:
-            return f"`{path}` moved to `{self.moved_to}` ({pkg})"
+            return f"`{path}` moved to `{self.moved_to}`{pkg}"
         if self.kind == REMOVED:
-            return f"`{path}` was removed ({pkg})"
+            other = (
+                f"; a different `{self.name}` now exists at `{self.namesake}`"
+                if self.namesake
+                else ""
+            )
+            return f"`{path}` was removed{pkg}{other}"
         if self.kind == PARAM_REMOVED:
-            return f"`{call}`: parameter `{self.parameter}` was removed ({pkg})"
+            return f"`{call}`: parameter `{self.parameter}` was removed{pkg}"
         if self.kind == PARAM_REQUIRED:
-            return f"`{call}`: parameter `{self.parameter}` is now required ({pkg})"
+            return f"`{call}`: parameter `{self.parameter}` is now required{pkg}"
         if self.kind == PARAM_KEYWORD_ONLY:
-            return f"`{call}`: `{self.parameter}` is now keyword-only ({pkg})"
+            return f"`{call}`: `{self.parameter}` is now keyword-only{pkg}"
         if self.kind == PARAM_POSITIONAL_ONLY:
-            return f"`{path}`: `{self.parameter}` is now positional-only ({pkg})"
+            return f"`{path}`: `{self.parameter}` is now positional-only{pkg}"
         if self.kind == KIND_CHANGED:
-            return f"`{path}` changed kind ({pkg})"
+            if self.old_kind and self.new_kind and self.old_kind != self.new_kind:
+                return f"`{path}` changed from {self.old_kind} to {self.new_kind}{pkg}"
+            return f"`{path}` changed kind{pkg}"
         if self.kind == DEPRECATED:
             meaningful = self.deprecation and self.deprecation.strip(" .").lower() != "deprecated"
             extra = f": {self.deprecation}" if meaningful else ""
-            return f"`{path}` is deprecated ({pkg}){extra}"
-        return f"`{path}` changed ({pkg})"
+            if self.parameter:
+                return f"`{call}`: parameter `{self.parameter}` is deprecated{pkg}{extra}"
+            return f"`{path}` is deprecated{pkg}{extra}"
+        return f"`{path}` changed{pkg}"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -167,17 +214,69 @@ def load_api(import_name: str, root: Path) -> Any:
     logging.getLogger("griffe").setLevel(logging.CRITICAL + 1)
 
     stubs = import_name.endswith("-stubs")
-    module = griffe.load(
-        import_name[: -len("-stubs")] if stubs else import_name,
-        search_paths=[str(root)],
-        try_relative_path=False,
-        allow_inspection=False,
-        resolve_aliases=False,
-        store_source=True,
-        find_stubs_package=stubs,
-    )
+    with _quiet():
+        module = griffe.load(
+            import_name[: -len("-stubs")] if stubs else import_name,
+            search_paths=[str(root)],
+            try_relative_path=False,
+            allow_inspection=False,
+            resolve_aliases=False,
+            store_source=True,
+            find_stubs_package=stubs,
+        )
+    _alias_class_assignments(module)
     _mark_reexports(module)
     return module
+
+
+@contextmanager
+def _quiet() -> Iterator[None]:
+    """Silence what parsing old sources makes Python say ("invalid escape sequence").
+
+    Those warnings are about the analysed package, not about this run, and would otherwise
+    land on the user's terminal.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        warnings.simplefilter("ignore", DeprecationWarning)
+        yield
+
+
+def _alias_class_assignments(root: Any) -> None:
+    """Turn module-level ``Name = OtherClass`` assignments into griffe aliases.
+
+    griffe models ``PreTrainedTokenizer = PythonBackend`` as an attribute, so every class that
+    inherits from ``PreTrainedTokenizer`` gets an empty MRO and all its inherited members look
+    removed. As an alias, the base resolves to the class it names.
+    """
+    import griffe
+
+    for _ in range(3):  # ``A = B`` after ``B = C`` resolves on the next pass
+        changed = False
+        for module in _walk_modules(root):
+            for name, member in list(module.members.items()):
+                if getattr(member, "is_alias", False) or not getattr(member, "is_attribute", False):
+                    continue
+                value = getattr(member, "value", None)
+                if not isinstance(value, (griffe.ExprName, griffe.ExprAttribute)):
+                    continue
+                try:
+                    target = module.modules_collection.get_member(value.canonical_path)
+                    if getattr(target, "is_alias", False):
+                        target = target.final_target
+                    public = member.is_public
+                except Exception:
+                    continue
+                if not getattr(target, "is_class", False) or target.path == member.path:
+                    continue
+                alias = griffe.Alias(
+                    name, target, lineno=member.lineno, endlineno=member.endlineno, parent=module
+                )
+                alias.public = public
+                module.set_member(name, alias)
+                changed = True
+        if not changed:
+            return
 
 
 def _mark_reexports(root: Any) -> None:
@@ -221,6 +320,19 @@ def diff_sources(
     Never raises for problems in the analysed package: griffe can fail on unusual code, and one
     bad top-level module must not hide the changes found in the others.
     """
+    with _quiet():
+        changes = _diff_imports(package, old_version, old_root, new_version, new_root, import_names)
+    return [c.to_dict() for c in _group(changes)]
+
+
+def _diff_imports(
+    package: str,
+    old_version: str,
+    old_root: Path,
+    new_version: str,
+    new_root: Path,
+    import_names: list[str],
+) -> list[APIChange]:
     changes: list[APIChange] = []
     for import_name in import_names:
         try:
@@ -251,7 +363,7 @@ def diff_sources(
             changes.extend(_Differ(package, old_version, new_version, old, new).run())
         except Exception as exc:
             log.debug("diff of %s failed: %s", import_name, exc)
-    return [c.to_dict() for c in _group(changes)]
+    return changes
 
 
 class _Differ:
@@ -265,10 +377,23 @@ class _Differ:
         self.new = new
         self._public_map: dict[str, str] | None = None
         self._new_index: dict[str, list[str]] | None = None
+        self._lost_bases: dict[str, bool] = {}
+        # Removed inherited members, by the member they were inherited from.
+        self._inherited: dict[str, list[Any]] = {}
+        self.fuzzy = True
 
     def run(self) -> list[APIChange]:
         out: list[APIChange] = []
-        for b in self._breakages():
+        breakages = self._breakages()
+        removals = sum(
+            1
+            for b in breakages
+            if b.kind.name == "OBJECT_REMOVED" and not getattr(b.obj, "inherited", False)
+        )
+        self.fuzzy = removals <= FUZZY_LIMIT
+        if not self.fuzzy:
+            log.debug("%s: %d removals, skipping similar-name suggestions", self.package, removals)
+        for b in breakages:
             try:
                 change = self._from_breakage(b)
             except Exception as exc:
@@ -276,6 +401,7 @@ class _Differ:
                 continue
             if change is not None:
                 out.append(change)
+        out.extend(self._fold_inherited(out))
         try:
             out.extend(self._deprecations())
         except Exception as exc:
@@ -335,10 +461,8 @@ class _Differ:
     def _from_breakage(self, b: Any) -> APIChange | None:
         kind = b.kind.name
         obj = b.obj
-        if not self.is_public(obj.path):
+        if not self.is_public(obj.path, module=_kind_of(obj) == "module"):
             return None
-        # For parameter and kind breakages griffe reports the NEW object; look up the old one.
-        old_obj = _get(self.old, _rel(obj.path)) or obj
         if kind == "OBJECT_REMOVED":
             parent = getattr(obj, "parent", None)
             if (
@@ -347,25 +471,28 @@ class _Differ:
                 and self.new_object(parent.path) is not None
             ):
                 return None  # the class is still constructible (inherited or synthesized __init__)
-            moved_to = self.find_moved(obj)
-            return self._change(
-                MOVED if moved_to else REMOVED,
-                obj,
-                moved_to=moved_to,
-                hint=deprecation_hint(obj),
-                suggestions=[] if moved_to else self.similar_names(obj),
-                old_signature=signature_of(obj),
-                old_doc=doc_summary(obj),
-                new_doc=doc_summary(self.new_object(moved_to)) if moved_to else None,
-                new_signature=signature_of(self.new_object(moved_to)) if moved_to else None,
-            )
+            if getattr(obj, "inherited", False) and parent is not None:
+                if not self.lost_bases(parent.path):
+                    # Folded with the other classes that inherited it (see _fold_inherited).
+                    self._inherited.setdefault(_origin(obj), []).append(obj)
+                return None  # when the new bases cannot be followed, it may well still be there
+            return self._removal(obj)
+        # For parameter and kind breakages griffe reports the NEW object; look up the old one.
+        old_obj = _get(self.old, _rel(obj.path, self.old.path)) or obj
         if kind == "OBJECT_CHANGED_KIND":
+            before = str(getattr(b.old_value, "value", b.old_value))
+            if _kind_of(old_obj) != before:
+                # Reported through an alias: griffe gives the target's path, not the name that
+                # changed, so the old object cannot be located reliably.
+                return None
             new_obj = self.new_object(obj.path)
             if _compatible_kind_change(old_obj, new_obj, self):
                 return None
             return self._change(
                 KIND_CHANGED,
                 old_obj,
+                old_kind=_kind_label(old_obj),
+                new_kind=_kind_label(new_obj) or str(getattr(b.new_value, "value", b.new_value)),
                 old_signature=signature_of(old_obj),
                 old_doc=doc_summary(old_obj),
                 new_signature=signature_of(new_obj),
@@ -385,6 +512,8 @@ class _Differ:
         param = param_obj.name
         if param in ("self", "cls") or param.startswith("_"):
             return None
+        if kind == "PARAMETER_REMOVED" and param in deprecated_parameters(new_fn):
+            return None  # still accepted under its old name, with a warning: a deprecation
         overloads = list(getattr(new_fn, "overloads", None) or [])
         if overloads:
             # Overloads describe the real call signatures (every SDK ``create`` is overloaded on
@@ -429,25 +558,93 @@ class _Differ:
             new_doc=doc_summary(new_fn),
         )
 
+    def _removal(self, obj: Any) -> APIChange:
+        moved_to, namesake = self.find_moved(obj)
+        return self._change(
+            MOVED if moved_to else REMOVED,
+            obj,
+            moved_to=moved_to,
+            namesake=namesake,
+            hint=deprecation_hint(obj),
+            suggestions=[] if moved_to or not self.fuzzy else self.similar_names(obj),
+            old_signature=signature_of(obj),
+            old_doc=doc_summary(obj),
+            new_doc=doc_summary(self.new_object(moved_to)) if moved_to else None,
+            new_signature=signature_of(self.new_object(moved_to)) if moved_to else None,
+        )
+
+    def _fold_inherited(self, changes: list[APIChange]) -> list[APIChange]:
+        """One change per removed base-class member, not one per class that inherited it.
+
+        A method dropped from a base class disappears from every subclass (1,600 model classes
+        in transformers). It is reported once, on the public base class that defined it when
+        that class lost it too, otherwise on the shortest subclass path, with the other classes
+        counted as similar occurrences.
+        """
+        own = {c.path: c for c in changes if c.kind in (REMOVED, MOVED)}
+        extra: list[APIChange] = []
+        for origin, objs in self._inherited.items():
+            by_path = {self.public_path(o.path) or o.path: o for o in objs}
+            paths = sorted(by_path, key=lambda p: (len(p), p))
+            rep = own.get(self.public_path(origin) or origin)
+            if rep is None:
+                base_member = self._removed_from_base(origin)
+                rep = self._removal(base_member if base_member is not None else by_path[paths[0]])
+                extra.append(rep)
+            rest = [p for p in paths if p != rep.path]
+            rep.occurrences += len(rest)
+            rep.also = [*rep.also, *rest][:5]
+        return extra
+
+    def _removed_from_base(self, origin: str) -> Any:
+        """The old member at ``origin`` if its (public) class still exists but lost it."""
+        member = _get(self.old, _rel(origin, self.old.path))
+        parent = getattr(member, "parent", None)
+        if parent is None or not parent.is_class or not self.is_public(origin):
+            return None
+        new_parent = self.new_object(parent.path)
+        try:
+            if not getattr(new_parent, "is_class", False) or member.name in new_parent.all_members:
+                return None
+        except Exception:
+            return None
+        return member
+
     def _deprecations(self) -> Iterator[APIChange]:
         for obj, _public in iter_public_objects(self.new):
             if not (getattr(obj, "is_function", False) or getattr(obj, "is_class", False)):
                 continue
             message = pep702_message(obj)
+            marks: list[tuple[str | None, str, str | None]] = []
             if message is None:
+                marks.extend(decorator_deprecations(obj))
+            if message is None and not marks:
                 continue
-            old_obj = _get(self.old, _rel(obj.path))
-            if old_obj is None or pep702_message(old_obj) is not None:
-                continue  # new object (model cannot know it anyway) or already deprecated
-            yield self._change(
-                DEPRECATED,
-                obj,
-                deprecation=message or None,
-                old_signature=signature_of(old_obj),
-                new_signature=signature_of(obj),
-                old_doc=doc_summary(old_obj),
-                new_doc=doc_summary(obj),
-            )
+            old_obj = _get(self.old, _rel(obj.path, self.old.path))
+            if old_obj is None:
+                continue  # a new object: the model cannot know it anyway
+            old_marks = decorator_deprecations(old_obj)
+            if pep702_message(old_obj) is not None or any(m[0] is None for m in old_marks):
+                continue  # already deprecated
+            if message is not None:
+                marks = [(None, message, None)]
+            old_params = _parameter_names(old_obj)
+            for parameter, text, decorator in marks:
+                if parameter is not None and (
+                    parameter in {m[0] for m in old_marks} or parameter not in old_params
+                ):
+                    continue  # deprecated before, or never accepted by the old version
+                yield self._change(
+                    DEPRECATED,
+                    obj,
+                    parameter=parameter,
+                    deprecation=text or None,
+                    deprecated_by=decorator,
+                    old_signature=signature_of(old_obj),
+                    new_signature=signature_of(obj),
+                    old_doc=doc_summary(old_obj),
+                    new_doc=doc_summary(obj),
+                )
 
     # ------------------------------------------------------- public-ness
     def public_map(self) -> dict[str, str]:
@@ -482,14 +679,15 @@ class _Differ:
                 return ".".join([mapping[prefix], *rest])
         return None
 
-    def is_public(self, path: str) -> bool:
+    def is_public(self, path: str, *, module: bool = False) -> bool:
         if any(_skipped_segment(p) for p in path.split(".")):
             return False
-        return self.public_path(path) is not None
+        public = self.public_path(path)
+        return public is not None and not _non_api_path(public, module=module)
 
     # ------------------------------------------------------------- lookups
     def new_object(self, path: str | None) -> Any:
-        return _get(self.new, _rel(path)) if path else None
+        return _get(self.new, _rel(path, self.new.path)) if path else None
 
     def similar_names(self, obj: Any) -> list[str]:
         """Public names in the same (new) owner that look like replacements for ``obj``."""
@@ -503,8 +701,23 @@ class _Differ:
             return []
         return _close(names, obj.name)
 
-    def find_moved(self, obj: Any) -> str | None:
-        """If a removed module-level object reappears elsewhere in the public API, report it."""
+    def lost_bases(self, class_path: str) -> bool:
+        """Does the new version of this class have bases that cannot be followed to a class?"""
+        if class_path not in self._lost_bases:
+            new_cls = self.new_object(class_path)
+            lost = False
+            if getattr(new_cls, "is_class", False):
+                lost = _unresolved_ancestry(new_cls, self.new.path.split(".")[0], frozenset())
+            self._lost_bases[class_path] = lost
+        return self._lost_bases[class_path]
+
+    def find_moved(self, obj: Any) -> tuple[str | None, str | None]:
+        """If a removed module-level object reappears elsewhere in the public API, report it.
+
+        Returns ``(moved_to, namesake)``. A class counts as moved only when the candidate keeps
+        at least half of its public members; otherwise the candidate is only a namesake (an
+        unrelated class that happens to have the same name).
+        """
         if self._new_index is None:
             index: dict[str, list[str]] = {}
             for o, public in iter_public_objects(self.new):
@@ -512,10 +725,10 @@ class _Differ:
             self._new_index = index
         name = obj.name
         if name.startswith("_") or name in _PRIVATE_EXEMPT:
-            return None
+            return None, None
         parent = getattr(obj, "parent", None)
         if parent is None or not getattr(parent, "is_module", False):
-            return None  # class members: a same-named method elsewhere is almost never a move
+            return None, None  # class members: a same-named method elsewhere is almost never a move
         old_kind = _kind_of(obj)
 
         def plausible(p: str) -> bool:
@@ -525,12 +738,12 @@ class _Differ:
             if not getattr(getattr(target, "parent", None), "is_module", False):
                 return False
             # A different object that already existed under that path is not a move.
-            previous = _get(self.old, _rel(p))
+            previous = _get(self.old, _rel(p, self.old.path))
             return previous is None or previous.path == obj.path
 
         candidates = [p for p in self._new_index.get(name, []) if plausible(p)]
         if not candidates:
-            return None
+            return None, None
         old_parts = obj.path.split(".")
 
         def score(p: str) -> tuple[int, int]:
@@ -542,11 +755,34 @@ class _Differ:
                 common += 1
             return (-common, len(parts))
 
-        return sorted(candidates, key=score)[0]
+        candidates.sort(key=score)
+        if old_kind != "class":
+            return candidates[0], None
+        for p in candidates:
+            if _same_class(obj, self.new_object(p)):
+                return p, None
+        return None, candidates[0]
 
 
-def _rel(path: str | None) -> str:
-    return path.split(".", 1)[1] if path and "." in path else ""
+def _origin(obj: Any) -> str:
+    """Canonical path of the member an inherited alias stands for."""
+    try:
+        return str(obj.final_target.path)
+    except Exception:
+        return str(obj.path)
+
+
+def _rel(path: str | None, root: str) -> str:
+    """``path`` relative to the loaded module ``root``.
+
+    ``root`` is usually the top-level package, but for a namespace distribution it is deeper
+    (``google.genai``): stripping only the first segment would miss every object in it.
+    """
+    if not path or path == root:
+        return ""
+    if path.startswith(root + "."):
+        return path[len(root) + 1 :]
+    return path.split(".", 1)[1] if "." in path else ""
 
 
 def _pkind(param: Any) -> str:
@@ -565,15 +801,21 @@ def _positional_rename(fn: Any, other: Any, param: str) -> bool:
 
 
 def _is_attribute_like(obj: Any) -> bool:
-    """Plain attributes and ``@property``/``@cached_property`` functions are read the same way."""
+    """Plain attributes and property-like functions are read the same way.
+
+    Any decorator whose name ends in "property" counts: ``property``, ``cached_property``,
+    and descriptors such as pydantic's ``deprecated_instance_property`` that make a
+    classmethod readable as an attribute.
+    """
     if getattr(obj, "is_attribute", False):
         return True
     if "property" in (getattr(obj, "labels", None) or set()):
         return True
     for dec in getattr(obj, "decorators", None) or []:
-        path = str(getattr(dec, "callable_path", "") or dec.value)
-        if path.split(".")[-1] in ("property", "cached_property"):
-            return True
+        # The written name counts too: ``property = sphinx_accessor`` (polars) resolves elsewhere.
+        for path in (str(getattr(dec, "callable_path", "") or ""), str(dec.value)):
+            if path.split("(")[0].split(".")[-1].lower().endswith("property"):
+                return True
     return False
 
 
@@ -608,6 +850,19 @@ def _skipped_segment(segment: str) -> bool:
     return segment in _SKIP_SEGMENTS or segment.startswith("test_") or segment.endswith("_test")
 
 
+def _non_api_path(path: str, *, module: bool = False) -> bool:
+    """Is this inside (or, with ``module``, is it) a test suite, benchmark or example module?
+
+    Only module segments are checked, so a member named ``examples`` stays API. ``test`` and
+    ``testing`` directly under the top-level package (``pandas.testing``) stay API too.
+    """
+    parts = path.split(".")
+    for i, part in enumerate(parts if module else parts[:-1]):
+        if (part in _NON_API_MODULES and i > 0) or (part in _TEST_MODULES and i > 1):
+            return True
+    return False
+
+
 def _has_private_segment(path: str) -> bool:
     return any(_private(p) for p in path.split(".")[1:])
 
@@ -621,11 +876,86 @@ def _kind_of(obj: Any) -> str | None:
         return None
 
 
+def _kind_label(obj: Any) -> str | None:
+    """griffe's kind, with "property" for functions that are read like attributes."""
+    kind = _kind_of(obj)
+    return "property" if kind == "function" and _is_attribute_like(obj) else kind
+
+
+_BUILTIN_NAMES = frozenset(dir(builtins))
+
+
+def _unresolved_ancestry(cls: Any, package: str, seen: frozenset[str]) -> bool:
+    """True if a base class from this package, at any depth, cannot be followed to a class.
+
+    griffe leaves such bases out of the MRO, so everything inherited through them looks
+    removed. Bases from other packages are never loaded and do not count.
+    """
+    if cls.path in seen:
+        return False
+    seen = seen | {cls.path}
+    for base in getattr(cls, "bases", None) or []:
+        path = str(base if isinstance(base, str) else getattr(base, "canonical_path", "") or "")
+        if "." not in path:
+            if path in _BUILTIN_NAMES:
+                continue
+            return True  # a name griffe could not resolve (star import, computed base)
+        if path.split(".", 1)[0] != package:
+            continue
+        try:
+            target = cls.modules_collection.get_member(path)
+            if getattr(target, "is_alias", False):
+                target = target.final_target
+        except Exception:
+            return True
+        if not getattr(target, "is_class", False) or _unresolved_ancestry(target, package, seen):
+            return True
+    return False
+
+
+def _public_names(cls: Any, *, inherited: bool) -> set[str]:
+    try:
+        members = cls.all_members if inherited else cls.members
+        return {n for n in members if not n.startswith("_")}
+    except Exception:
+        return set()
+
+
+def _same_class(old: Any, new: Any) -> bool:
+    """Could ``new`` be ``old`` moved elsewhere? It must keep half of old's public members."""
+    if not getattr(new, "is_class", False):
+        return False
+    names = _public_names(old, inherited=False) or _public_names(old, inherited=True)
+    if not names:
+        return True  # nothing to compare (``class Error(Base): pass``)
+    kept = names & _public_names(new, inherited=True)
+    return 2 * len(kept) >= len(names)
+
+
+def _parameter_names(obj: Any) -> set[str]:
+    """Parameter names of a function, or of a class's own ``__init__``."""
+    try:
+        fn = obj.members.get("__init__") if getattr(obj, "is_class", False) else obj
+        return {p.name for p in fn.parameters} if fn is not None else set()
+    except Exception:
+        return set()
+
+
 def _get(root: Any, rel: str) -> Any:
+    """Object at ``rel`` below ``root`` (aliases followed), or None.
+
+    Declared members are tried first: computing a class's inherited members builds the MRO
+    and wraps every inherited member, which is slow on large class hierarchies.
+    """
     if not rel:
         return root
+    obj = root
     try:
-        obj = root[rel]
+        for part in rel.split("."):
+            if getattr(obj, "is_alias", False):
+                obj = obj.final_target
+            member = obj.members.get(part)
+            obj = member if member is not None else obj.all_members[part]
         if getattr(obj, "is_alias", False):
             obj = obj.final_target
         return obj
@@ -676,8 +1006,10 @@ def iter_public_objects(root: Any) -> Iterator[tuple[Any, str]]:
                     continue
             if target.path in seen:
                 continue
-            seen.add(target.path)
             path = f"{public}.{member.name}"
+            if getattr(target, "is_module", False) and _non_api_path(path, module=True):
+                continue
+            seen.add(target.path)
             yield target, path
             if getattr(target, "is_module", False) or getattr(target, "is_class", False):
                 stack.append((target, path))
@@ -698,9 +1030,136 @@ def _close(names: list[str], name: str) -> list[str]:
     return [n for n in difflib.get_close_matches(name, names, n=3, cutoff=0.7) if n != name]
 
 
-_DEPRECATION_KW = re.compile(
-    r"\b(alternative|alternative_import|message|reason|instead|removal|since)\s*=\s*[\"']([^\"']+)[\"']"
-)
+def _decorator_call(dec: Any) -> tuple[list[Any], dict[str, Any]]:
+    """Literal positional and keyword arguments of a decorator call (None where not literal)."""
+    import ast
+
+    try:
+        call = ast.parse(str(dec.value), mode="eval").body
+    except SyntaxError:
+        return [], {}
+    if not isinstance(call, ast.Call):
+        return [], {}
+
+    def literal(node: ast.expr) -> Any:
+        try:
+            return ast.literal_eval(node)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return None
+
+    return (
+        [literal(a) for a in call.args],
+        {k.arg: literal(k.value) for k in call.keywords if k.arg},
+    )
+
+
+def _text(value: Any) -> str | None:
+    return " ".join(value.split()) if isinstance(value, str) and value.strip() else None
+
+
+def _decorator_message(name: str, args: list[Any], kwargs: dict[str, Any]) -> str:
+    """The advice in a deprecation decorator's arguments, or ''."""
+    alternative = _text(kwargs.get("alternative")) or _text(kwargs.get("alternative_import"))
+    if alternative:
+        return alternative if " " in alternative else f"use {alternative} instead"
+    for key in ("message", "reason", "msg"):
+        if _text(kwargs.get(key)):
+            return _text(kwargs.get(key)) or ""
+    first = _text(args[0]) if args else None
+    if not first or _VERSION.fullmatch(first):
+        return ""  # nothing, or only the version it was deprecated in
+    if re.search(r"renamed|moved", name, re.IGNORECASE) and re.fullmatch(r"[A-Za-z_][\w.]*", first):
+        return f"use `{first}` instead"  # deprecate_renamed_function("new_name")
+    return first
+
+
+def decorator_deprecations(obj: Any) -> list[tuple[str | None, str, str]]:
+    """Deprecations declared by a library's own decorators rather than PEP 702 ``@deprecated``.
+
+    Every decorator whose name contains "deprecat" counts. Returns ``(parameter, message,
+    decorator name)`` tuples: ``parameter`` is None when the function or class itself is
+    deprecated, or the old parameter name for decorators such as polars'
+    ``@deprecate_renamed_parameter("old", "new")`` or pandas' ``@deprecate_kwarg``. A parameter
+    decorator whose parameter cannot be read is ignored rather than reported as deprecating
+    the whole function.
+    """
+    try:
+        if getattr(obj, "is_alias", False):
+            obj = obj.final_target
+        decorators = list(getattr(obj, "decorators", None) or [])
+    except Exception:
+        return []
+    out: list[tuple[str | None, str, str]] = []
+    for dec in decorators:
+        path = str(getattr(dec, "callable_path", "") or "")
+        # The resolved name, or the written one when resolution led elsewhere.
+        names = (path.rsplit(".", 1)[-1], str(dec.value).split("(")[0].rsplit(".", 1)[-1])
+        name = next((n for n in names if "deprecat" in n.lower()), "")
+        if not name or path in _PEP702 or _resolves_to_pep702(obj, path):
+            continue
+        if "property" in name.lower():
+            continue  # a descriptor such as deprecated_instance_property: only some access is
+        args, kwargs = _decorator_call(dec)
+        if not _is_parameter_decorator(name):
+            out.append((None, _decorator_message(name, args, kwargs), name))
+            continue
+        strings = [a if isinstance(a, str) else None for a in args]
+        old = next((kwargs[k] for k in _OLD_NAME_KEYS if isinstance(kwargs.get(k), str)), None)
+        new = next((kwargs[k] for k in _NEW_NAME_KEYS if isinstance(kwargs.get(k), str)), None)
+        old = old or (strings[0] if strings else None)
+        new = new or (strings[1] if len(strings) > 1 else None)
+        if old and old.isidentifier():
+            # transformers' deprecate_kwarg("old", "4.50") passes a version second, not a name.
+            is_name = new and new.isidentifier() and not _VERSION.fullmatch(new)
+            renamed = f"renamed to `{new}`" if is_name else ""
+            out.append((old, renamed, name))
+    return out
+
+
+def _is_parameter_decorator(name: str) -> bool:
+    return any(word in _PARAMETER_WORDS for word in name.lower().split("_"))
+
+
+def deprecated_parameters(fn: Any) -> set[str]:
+    """Parameters that a deprecation decorator still accepts under an old name."""
+    return {p for p, _, _ in decorator_deprecations(fn) if p}
+
+
+_PARAM_HEAD = re.compile(r"^\s*\**[A-Za-z_]\w*\**\s*(\([^)]*\))?\s*:(\s|$)")
+_PARAM_SECTIONS = {
+    "args", "arguments", "parameters", "params", "keyword args", "keyword arguments",
+    "other parameters", "attributes",
+}  # fmt: skip
+_OTHER_SECTIONS = {
+    "returns", "return", "yields", "raises", "examples", "example", "notes", "note",
+    "see also", "warnings", "warning", "references",
+}  # fmt: skip
+_NOT_PARAMS = _PARAM_SECTIONS | _OTHER_SECTIONS | {"deprecated", "todo", "usage", "tip"}
+
+
+def _is_param_head(line: str) -> bool:
+    """``"proxies (dict, *optional*):"`` starts a parameter entry; ``"Deprecated: use X"`` doesn't."""
+    if not _PARAM_HEAD.match(line):
+        return False
+    word = line.strip().lstrip("*").split("(")[0].split(":")[0].strip("* ").lower()
+    return word not in _NOT_PARAMS
+
+
+def _doc_section(lines: list[str], i: int) -> bool | None:
+    """If ``lines[i]`` starts a docstring section: whether it lists parameters; else None.
+
+    Handles Google style (``Args:``) and numpydoc (``Parameters`` over a ``----`` line).
+    """
+    text = lines[i].strip().rstrip(":").lower()
+    google = lines[i].strip().endswith(":")
+    numpy = i + 1 < len(lines) and set(lines[i + 1].strip()) == {"-"}
+    if not (google or numpy):
+        return None
+    if text in _PARAM_SECTIONS:
+        return True
+    if text in _OTHER_SECTIONS:
+        return False
+    return None
 
 
 def deprecation_hint(obj: Any, param: str | None = None) -> str | None:
@@ -718,37 +1177,42 @@ def deprecation_hint(obj: Any, param: str | None = None) -> str | None:
     parts: list[str] = []
     if param is None:
         for dec in getattr(obj, "decorators", None) or []:
-            path = getattr(dec, "callable_path", "") or ""
-            if "deprecat" not in path.lower():
-                continue
-            found = dict(_DEPRECATION_KW.findall(str(dec.value)))
-            alternative = found.get("alternative") or found.get("alternative_import")
-            if alternative:
-                alternative = alternative.strip()
-                parts.append(alternative if " " in alternative else f"use {alternative} instead")
-            elif found.get("message") or found.get("reason"):
-                parts.append(found.get("message") or found.get("reason") or "")
-            else:
-                first = _first_string_argument(dec.value)
-                if first and not re.fullmatch(r"v?\d+(\.\d+)*\w*", first.strip()):
-                    parts.append(first)
+            path = str(getattr(dec, "callable_path", "") or "")
+            name = path.rsplit(".", 1)[-1]
+            if "deprecat" not in path.lower() or _is_parameter_decorator(name):
+                continue  # parameter decorators say nothing about the object itself
+            if "property" in name.lower():
+                continue  # descriptors deprecate a way of reading it, not the object
+            args, kwargs = _decorator_call(dec)
+            parts.append(_decorator_message(name, args, kwargs))
     try:
         doc = obj.docstring.value if obj.docstring else ""
     except Exception:
         doc = ""
     lines = (doc or "").splitlines()
+    in_params = False
     for i, line in enumerate(lines):
+        header = _doc_section(lines, i)
+        if header is not None:
+            in_params = header
+            continue
         if "deprecat" not in line.lower():
             continue
+        if param is None and (in_params or _is_param_head(line)):
+            continue  # a parameter's deprecation, not the object's
         if param is not None and not re.search(rf"(?<![\w.]){re.escape(param)}(?!\w)", line):
             continue
-        # Keep continuation lines (".. deprecated:: 1.0" is usually followed by the advice).
+        # Keep the rest of the sentence: ".. deprecated:: 1.0" is usually followed by the
+        # advice, and docstrings wrap long sentences over several lines.
         chunk = [line.strip()]
-        for follow in lines[i + 1 : i + 3]:
-            if not follow.strip() or not follow[:1].isspace():
+        for j, follow in enumerate(lines[i + 1 : i + 4], start=i + 1):
+            if not follow.strip() or _is_param_head(follow) or _doc_section(lines, j) is not None:
                 break
             chunk.append(follow.strip())
-        parts.append(" ".join(" ".join(chunk).split()))
+        text = " ".join(" ".join(chunk).split())
+        if text.endswith(":"):
+            continue  # cut off before what it announces
+        parts.append(text)
         break
     text = "; ".join(p.strip() for p in parts if p and p.strip())
     return text[:300] or None
@@ -863,8 +1327,9 @@ def _group(changes: list[APIChange]) -> list[APIChange]:
     for members in groups.values():
         members.sort(key=lambda c: (_is_secondary(c), len(c.path), c.path))
         rep = members[0]
-        rep.occurrences = len(members)
-        rep.also = [m.path for m in members[1:6]]
+        rep.occurrences = sum(m.occurrences for m in members)
+        others = [m.path for m in members[1:]] + [a for m in members for a in m.also]
+        rep.also = list(dict.fromkeys(others))[:5]
         out.append(rep)
     out.sort(key=lambda c: (KIND_PRIORITY.get(c.kind, 9), c.path, c.parameter or ""))
     return out

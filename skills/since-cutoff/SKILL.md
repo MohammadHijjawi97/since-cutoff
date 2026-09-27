@@ -4,6 +4,7 @@ description: Check which of this project's Python dependencies changed their API
 argument-hint: "[scan | run] [--apply] [--quick] [--model provider:model]"
 allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(uvx since-cutoff:*), Bash(pipx run since-cutoff:*), Read
 license: MIT
+compatibility: Needs since-cutoff on PATH, or uv or pipx to run it, and network access to PyPI. `run` also needs model access (the claude CLI or a provider API key); `scan` makes no model calls.
 ---
 
 # since-cutoff
@@ -18,17 +19,40 @@ do not guess results**. Run the tool and report what it prints.
 2. Pick the command. Use `$ARGUMENTS` if the user gave any; otherwise:
    - quick look, no model calls: `since-cutoff scan`
    - full measurement with verified notes: `since-cutoff run --quick`
-3. Run it. If `since-cutoff` is not installed, use
-   `uvx since-cutoff <args>` (or `pipx run since-cutoff <args>`).
-   A full run makes many model calls and can take 5-20 minutes: tell the user before starting,
-   and run it in the background (or with a long timeout) rather than a 2-minute foreground call.
-   Everything is cached, so re-running after an interruption resumes quickly.
-4. Summarise the result card for the user: the model and its training cutoff, how many
-   dependencies changed after the cutoff, and what was stale, with the held-out before/after numbers.
-5. Only write notes into the user's files if they asked for it: re-run with `--apply`
-   (it writes a marked block into AGENTS.md, or CLAUDE.md if that is the file the project uses).
+3. Name the model. Inside Claude Code the default (`claude-code`) is right. If you are not
+   running inside Claude Code, add `--model <provider>:<model>` for the model you are (for
+   example `--model openai:gpt-5.4`); the default stands for a Claude model and `run` needs
+   the `claude` CLI for it.
+4. Before `run`, tell the user that it sends prompts (package names, versions, public API
+   signatures and generated tasks, never their source code) to the model provider they choose,
+   uses their API credits or Claude Code usage, and can take 5-20 minutes. Wait for a yes.
+   `scan` needs no confirmation.
+5. Run it. If `since-cutoff` is not installed, use `uvx since-cutoff <args>` (or
+   `pipx run since-cutoff <args>`). Start `run` in the background or with a long timeout, not a
+   2-minute foreground call. Everything is cached, so re-running after an interruption resumes
+   quickly.
+6. Summarise the result card: the model and its training cutoff, how many dependencies changed
+   after the cutoff, what was stale, and the held-out before/after numbers.
+7. Only write notes into the user's files if they asked for it: re-run with `--apply` (it writes
+   a marked block into AGENTS.md, or CLAUDE.md if that is the file the project uses).
    `since-cutoff unapply` removes the block again.
-6. For the rest of the session, follow the notes in the block: they describe APIs that changed
-   after your training data.
+8. The notes in that block are API reference facts about the versions the project pins: what
+   was removed, renamed or deprecated after your training data. Check them when you write code
+   that uses those libraries.
 
-The full report is written to `.since-cutoff/report.md`.
+The full report is written to `.since-cutoff/report.md`; read it when the user wants details.
+
+## If something fails
+
+- No lockfile or pinned versions found: tell the user which file the tool asked for; do not
+  invent versions.
+- A model or login error during `run`: report the message and offer `scan`, which makes no
+  model calls.
+
+## Quick lookups without a run
+
+If the since-cutoff MCP server is connected (the Claude Code plugin starts it), its tools answer
+from a static diff, with no model calls: `api_changes` (one package, optionally one `symbol`),
+`project_changes` (every dependency of the project) and `model_cutoff`. Pass your own model id
+as `model`. Use them before writing code against a dependency that may be newer than your
+training data; use the CLI above when the user wants the model measured or notes written.

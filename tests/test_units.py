@@ -174,7 +174,8 @@ def test_render_block_groups_and_dedupes():
 def test_selection_prefers_used_symbols_and_spreads_across_packages():
     a = [change(name=f"f{i}", param=f"p{i}") for i in range(5)] + [change(name="used", param="q")]
     b = [change(pkg="openai", name=f"g{i}", param=f"p{i}") for i in range(5)]
-    picked = select({"anthropic": a, "openai": b}, {"used"}, 4)
+    # `client.messages.used(...)`: the method and its class are both named in the code.
+    picked = select({"anthropic": a, "openai": b}, {"used", "messages"}, 4)
     assert picked[0].name == "used"
     assert [c.package for c in picked].count("openai") == 2
 

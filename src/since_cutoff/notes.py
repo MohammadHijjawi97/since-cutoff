@@ -93,7 +93,12 @@ def template_bullet(change: APIChange) -> str:
         module, _, name = change.moved_to.rpartition(".")
         return f"`{change.path}` moved: use `from {module} import {name}` ({pkg})."
     if change.kind == REMOVED:
-        return f"`{change.display}` no longer exists in {pkg}{hint}. Do not use it."
+        other = (
+            f" The `{change.name}` at `{change.namesake}` is a different object."
+            if change.namesake
+            else ""
+        )
+        return f"`{change.display}` no longer exists in {pkg}{hint}. Do not use it.{other}"
     if change.kind == PARAM_REMOVED:
         return (
             f"`{change.display}`: `{change.parameter}` was removed in {pkg}{hint}. Do not pass it."
@@ -109,9 +114,19 @@ def template_bullet(change: APIChange) -> str:
         msg = (
             f": {text}" if text and text.lower() not in ("deprecated", "deprecated method") else ""
         )
+        if change.parameter:
+            return (
+                f"`{change.display}`: `{change.parameter}` is deprecated in {pkg}{msg}. "
+                "Avoid it in new code."
+            )
         return f"`{change.path}` is deprecated in {pkg}{msg}. Avoid it in new code."
     if change.kind == KIND_CHANGED:
-        return f"`{change.path}` changed kind in {pkg}; check its new signature before use."
+        kinds = (
+            f"changed from {change.old_kind} to {change.new_kind}"
+            if change.old_kind and change.new_kind
+            else "changed kind"
+        )
+        return f"`{change.path}` {kinds} in {pkg}; check its new signature before use."
     return change.describe()
 
 

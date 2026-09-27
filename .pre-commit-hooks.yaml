@@ -1,0 +1,12 @@
+# since-cutoff for pre-commit (https://pre-commit.com). Runs when a lockfile, requirements file
+# or pyproject.toml changes. Pass the model in `args`, e.g. [--model=anthropic:claude-sonnet-4-5];
+# add --fail-on-changes to block the commit when a dependency changed its API after the cutoff.
+# It needs network access to PyPI, so skip it on pre-commit.ci.
+- id: since-cutoff-scan
+  name: since-cutoff scan
+  description: List API changes in your pinned dependencies since your coding model's training cutoff (no model calls). Needs --model in args.
+  entry: since-cutoff scan
+  language: python
+  pass_filenames: false
+  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|pyproject\.toml)$'
+  verbose: true
