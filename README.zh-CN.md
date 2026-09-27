@@ -284,7 +284,7 @@ jobs:
 | `step-summary` | `true` | 把 Markdown 摘要加到任务摘要（job summary）中 |
 | `cache` | `true` | 在多次运行之间保留 PyPI 元数据、包源码和 API 对比结果（`fail-on-changes` 让任务失败时也会保留） |
 | `args` | | 额外的 `since-cutoff scan` 参数，例如 `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.3.0` | 要运行的 since-cutoff 版本，或 `latest` |
+| `since-cutoff-version` | `0.3.1` | 要运行的 since-cutoff 版本，或 `latest` |
 
 输出：`changed-packages`（逗号分隔）、`changes`（破坏性变更数）、`deprecations`、`markdown`（摘要文件的路径，例如可用来把摘要发成 pull request 评论）和 `report`（完整报告的路径）。能通过多个导入路径访问的同一个变更只计一次。
 
@@ -294,7 +294,7 @@ jobs:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.3.0
+    rev: v0.3.1
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # 加上 --fail-on-changes 可以阻止提交

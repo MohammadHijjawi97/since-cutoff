@@ -404,7 +404,7 @@ jobs:
 | `step-summary` | `true` | ajoute le résumé Markdown au résumé du job |
 | `cache` | `true` | conserve entre les exécutions les métadonnées PyPI, les sources des paquets et les diffs d'API (y compris quand `fail-on-changes` fait échouer le job) |
 | `args` | | arguments supplémentaires pour `since-cutoff scan`, par exemple `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.3.0` | la version de since-cutoff à exécuter, ou `latest` |
+| `since-cutoff-version` | `0.3.1` | la version de since-cutoff à exécuter, ou `latest` |
 
 Sorties : `changed-packages` (liste séparée par des virgules), `changes` (changements incompatibles),
 `deprecations`, `markdown` (le chemin du résumé, par exemple pour le publier en commentaire de
@@ -417,7 +417,7 @@ plusieurs chemins d'import n'est compté qu'une fois.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.3.0
+    rev: v0.3.1
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # ajoutez --fail-on-changes pour bloquer le commit

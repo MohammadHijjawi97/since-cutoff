@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "since-cutoff",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Find which of your exact Python dependency versions your coding model writes wrong, and fix it with a small AGENTS.md note verified by a type checker.",
   "author": {
     "name": "Mohammad Hijjawi",

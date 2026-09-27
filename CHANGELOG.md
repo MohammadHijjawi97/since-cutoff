@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 - 2026-09-27
 
 - The CLI no longer crashes on its own output. On Windows, stdout or stderr sent to NUL (`> NUL`,
   or Git Bash's `> /dev/null`) crashed every scan with a UnicodeEncodeError on the progress
