@@ -154,9 +154,9 @@ class Tools:
 
         Args:
             model: a model id, e.g. "claude-haiku-4-5", "claude-sonnet-4-5",
-                "claude-opus-4-6[1m]", "gpt-5.4", "anthropic/claude-haiku-4.5" or
-                "openai:gpt-5.4". Pass your own id. The aliases "sonnet", "opus" and "haiku"
-                mean the newest model of that family.
+                "claude-opus-4-6[1m]", "gpt-5.4", "gemini-2.5-pro",
+                "anthropic/claude-haiku-4.5" or "openai:gpt-5.4". Pass your own id. The
+                aliases "sonnet", "opus" and "haiku" mean the newest model of that family.
 
         Returns one short paragraph of plain text: "<id> (<provider>, <name>): training cutoff
         YYYY-MM-DD. Released YYYY-MM-DD. Source: models.dev", then the api_changes and
@@ -421,15 +421,20 @@ class Tools:
         )
 
     def _resolve_model(self, model: str) -> tuple[ModelInfo, str]:
-        """Find a model the way the CLI does: ids, ``provider:id`` specs and Claude aliases."""
+        """Find a model the way the CLI does: ids, ``provider:id`` specs and Claude aliases.
+
+        The provider can be any the registry knows (``google:gemini-2.5-pro``,
+        ``github-copilot:gpt-5.4``), not only one since-cutoff can call.
+        """
         spec = model.strip()
         if not spec:
             raise ModelLookupError("`model` is empty: pass a model id such as 'claude-sonnet-4-5'")
         prefix, _, rest = spec.partition(":")
+        prefix = prefix.strip().lower()
         provider: str | None = None
         model_id = spec
-        if rest and prefix.strip().lower() in _PROVIDER_PREFIXES:
-            provider, model_id = prefix.strip().lower(), rest.strip()
+        if rest and (prefix in _PROVIDER_PREFIXES or prefix in self.registry.data()):
+            provider, model_id = prefix, rest.strip()
         note = ""
         family = model_id.lower()
         if family in _CLAUDE_FAMILIES and provider in (None, "claude-code", "claude", "anthropic"):

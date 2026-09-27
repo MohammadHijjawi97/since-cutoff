@@ -13,12 +13,16 @@
    explained by a change; **untouched** when the answer never exercises the changed API.
 5. **Fix.** For each failure a short AGENTS.md note is written and verified with the checker.
 6. **Verify.** Held-out tasks are answered again with and without the notes and compared as
-   pairs, and a sample of previously-correct APIs checks that the notes do not hurt.
+   pairs, and a sample of previously-correct APIs checks that the notes do not hurt. A change
+   counts as fixed when more than half of its counted pairs are wrong without the notes and
+   right with them (:meth:`RunResult.pairing`, :attr:`ChangePairs.outcome`). With
+   ``--compare``, every held-out task is also answered with each baseline block
+   (:mod:`since_cutoff.baselines`), and the blocks are compared on the same pairs: those every
+   block could count (``RunResult.pairing(..., common=True)``).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -33,7 +37,7 @@ from packaging.markers import InvalidMarker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from since_cutoff import prompts
+from since_cutoff import __version__, hosts, prompts
 from since_cutoff.apidiff import (
     DEPRECATED as CHANGE_DEPRECATED,
 )
@@ -46,16 +50,25 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     APIChange,
     diff_sources,
+    load_api,
+)
+from since_cutoff.baselines import (
+    ARM_SIGNATURES,
+    ARM_TEMPLATE,
+    ARM_VERIFIED,
+    signature_notes,
+    template_notes,
 )
 from since_cutoff.cache import DiskCache, stable_hash
 from since_cutoff.checker import Checker, CheckResult, Diagnostic, extract_code
 from since_cutoff.errors import CheckerError, PackageIndexError, ProviderError
-from since_cutoff.models import ModelInfo, ModelRegistry
+from since_cutoff.models import PROVIDER_ALIASES, ModelInfo, ModelRegistry
 from since_cutoff.notes import Note, bullet_is_grounded, clean_bullet, render_block, template_bullet
 from since_cutoff.project import Dependency, Project
-from since_cutoff.providers import Provider, check_spec, split_spec
+from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
 from since_cutoff.pypi import PyPI, SourceTree
 from since_cutoff.selection import collapse, project_rank, select
+from since_cutoff.taskfile import TaskFile
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -71,7 +84,8 @@ ERROR = "error"
 VALID_OUTCOMES = (PASS, STALE, WRONG, DEPRECATED)
 EXCLUDED_OUTCOMES = (UNTOUCHED, OFFTASK, INVALID, ERROR)
 
-CLAUDE_ALIASES = ("sonnet", "opus", "haiku", "fable", "default")
+CLAUDE_FAMILIES = ("sonnet", "opus", "haiku", "fable")
+CLAUDE_ALIASES = (*CLAUDE_FAMILIES, "default", "opusplan")
 DEPENDENCY_DEPTH = 2
 MAX_DEPENDENCIES = 40
 SOURCE_JOBS = 8  # parallel source downloads
@@ -86,12 +100,7 @@ SKIPPED = "skipped"
 
 def _claude_settings_model() -> str | None:
     """The model configured in ~/.claude/settings.json, if any."""
-    path = Path.home() / ".claude" / "settings.json"
-    try:
-        value = json.loads(path.read_text(encoding="utf-8")).get("model")
-    except (OSError, ValueError, AttributeError):
-        return None
-    return str(value).split("[", 1)[0] if value else None
+    return hosts.claude_settings_model(hosts.user_home() / ".claude" / "settings.json")
 
 
 # ----------------------------------------------------------------- reporting
@@ -113,6 +122,9 @@ class Reporter:
 @dataclass
 class Settings:
     model: str = "claude-code"
+    # Where ``model`` came from when --model was not given: a setting of the user's coding
+    # agent (:func:`since_cutoff.hosts.detect_model`) or ``hosts.DEFAULT_SOURCE``.
+    model_source: str | None = None
     cutoff: date | None = None
     task_model: str | None = None
     max_probes: int = 30
@@ -127,6 +139,10 @@ class Settings:
     base_url: str | None = None
     effort: str | None = "low"
     today: date = field(default_factory=date.today)
+    # Tasks to use instead of calling the task writer (``run --tasks-from``).
+    tasks_from: TaskFile | None = None
+    # Baseline notes blocks verified next to the verified notes (``run --compare``).
+    compare: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -241,6 +257,8 @@ class Attempt:
     errors: list[str] = field(default_factory=list)
     error: str | None = None
     cached: bool = False
+    # The notes block a with-notes answer saw: the verified notes, or a --compare baseline.
+    arm: str = ARM_VERIFIED
 
     @property
     def valid(self) -> bool:
@@ -262,21 +280,127 @@ class Attempt:
         }
 
 
+# What the notes did to one API change on its held-out tasks (ChangePairs.outcome).
+CHANGE_FIXED = "fixed"
+CHANGE_BROKEN = "broken"
+CHANGE_NEITHER = "neither"
+# Exclusion reason of a pair that lacks one of its two answers (only in hand-made results).
+MISSING = "missing"
+# Exclusion reason, when notes blocks are compared on the same pairs (``--compare``), of a pair
+# this block could count but another block could not (its answer with the notes errored).
+ANOTHER_BLOCK_ERROR = "error with another block"
+
+
+@dataclass
+class ChangePairs:
+    """The counted held-out pairs of one API change (see :meth:`RunResult.pairing`)."""
+
+    change_id: str
+    change: str  # APIChange.describe()
+    n: int = 0
+    before: int = 0  # correct without the notes
+    after: int = 0  # correct with the notes
+    fixed: int = 0  # wrong without, correct with
+    broken: int = 0  # correct without, wrong with
+
+    def add(self, before: bool, after: bool) -> None:
+        self.n += 1
+        self.before += before
+        self.after += after
+        self.fixed += (not before) and after
+        self.broken += before and not after
+
+    @property
+    def outcome(self) -> str:
+        """CHANGE_FIXED when more than half of its pairs went from wrong to correct.
+
+        That is: a strict majority of the change's counted held-out answers pass with the notes
+        *and* did not pass without them. CHANGE_BROKEN is the mirror image (correct without,
+        wrong with); anything else is CHANGE_NEITHER. The rule is the same for any number of
+        held-out tasks; with one (``--quick``) or two (the default) it means all of them.
+        """
+        if self.fixed * 2 > self.n:
+            return CHANGE_FIXED
+        if self.broken * 2 > self.n:
+            return CHANGE_BROKEN
+        return CHANGE_NEITHER
+
+    @property
+    def still_correct(self) -> bool:
+        """More than half of the counted pairs are correct with the notes: what the regression
+        check asks of a change the model already got right (fixing it is not the question)."""
+        return self.after * 2 > self.n
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.__dict__, "outcome": self.outcome}
+
+
 @dataclass
 class Pairing:
-    """Held-out answers compared task by task, without vs with the notes."""
+    """Held-out answers compared task by task, without vs with the notes, grouped by change."""
 
-    n: int = 0
-    before: int = 0
-    after: int = 0
-    fixed: int = 0
-    broken: int = 0
-    excluded: int = 0
-    changes: int = 0
-    changes_fixed: int = 0
+    per_change: list[ChangePairs] = field(default_factory=list)
+    # Pairs left out, by the outcome that left them out (see RunResult.pairing).
+    excluded_reasons: dict[str, int] = field(
+        default_factory=lambda: dict.fromkeys(EXCLUDED_OUTCOMES, 0)
+    )
 
-    def to_dict(self) -> dict[str, int]:
-        return dict(self.__dict__)
+    @property
+    def n(self) -> int:
+        """Counted pairs (held-out tasks answered both ways)."""
+        return sum(c.n for c in self.per_change)
+
+    @property
+    def before(self) -> int:
+        return sum(c.before for c in self.per_change)
+
+    @property
+    def after(self) -> int:
+        return sum(c.after for c in self.per_change)
+
+    @property
+    def fixed(self) -> int:
+        return sum(c.fixed for c in self.per_change)
+
+    @property
+    def broken(self) -> int:
+        return sum(c.broken for c in self.per_change)
+
+    @property
+    def excluded(self) -> int:
+        return sum(self.excluded_reasons.values())
+
+    @property
+    def changes(self) -> int:
+        """API changes with at least one counted pair."""
+        return len(self.per_change)
+
+    @property
+    def changes_fixed(self) -> int:
+        return sum(c.outcome == CHANGE_FIXED for c in self.per_change)
+
+    @property
+    def changes_broken(self) -> int:
+        return sum(c.outcome == CHANGE_BROKEN for c in self.per_change)
+
+    @property
+    def changes_still_correct(self) -> int:
+        return sum(c.still_correct for c in self.per_change)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "n": self.n,
+            "before": self.before,
+            "after": self.after,
+            "fixed": self.fixed,
+            "broken": self.broken,
+            "excluded": self.excluded,
+            "excluded_reasons": dict(self.excluded_reasons),
+            "changes": self.changes,
+            "changes_fixed": self.changes_fixed,
+            "changes_broken": self.changes_broken,
+            "per_change": [c.to_dict() for c in self.per_change],
+        }
 
 
 # Prefix of the skip reason when the task writer's model call fails (rate limit, auth, ...).
@@ -292,6 +416,11 @@ class RunResult:
     block: str | None = None
     skipped_changes: list[tuple[APIChange, str]] = field(default_factory=list)
     tasks: dict[str, list[str]] = field(default_factory=dict)
+    # What produced these results (versions, models, budgets): see Engine.run_settings.
+    settings: dict[str, Any] = field(default_factory=dict)
+    # The notes block of each arm, the verified notes first; empty unless ``--compare`` gave
+    # baselines and some probe failed.
+    arms: dict[str, str] = field(default_factory=dict)
 
     def probe_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -302,46 +431,76 @@ class RunResult:
     def failing(self) -> list[Attempt]:
         return [a for a in self.probes if a.outcome in (STALE, WRONG, DEPRECATED)]
 
+    def used_tasks(self) -> list[tuple[APIChange, list[str]]]:
+        """Each probed change with the tasks it used (probe first), for ``--tasks-out``."""
+        return [(a.change, self.tasks[a.change.id]) for a in self.probes]
+
     @property
     def all_errored(self) -> bool:
         return bool(self.probes) and all(a.outcome == ERROR for a in self.probes)
 
-    def pairing(self, role: str) -> Pairing:
-        """Pair each held-out task's two answers.
+    def pairing(self, role: str, arm: str = ARM_VERIFIED, *, common: bool = False) -> Pairing:
+        """Pair each held-out task's two answers, and group the pairs by API change.
 
-        A pair counts only when the answer *without* notes is scorable; the with-notes answer is
-        then counted as correct or not (off-task/untouched with notes counts as not correct, so
-        notes cannot "win" by making the model avoid the package).
+        The answer with notes is the one that saw ``arm``'s block (the verified notes unless
+        asked otherwise); every arm is paired against the same answer without notes.
+
+        A pair counts only when the answer *without* notes is scorable (pass, stale, wrong or
+        deprecated) and the answer *with* notes is not an error; otherwise it is excluded under
+        the outcome that left it out (untouched, off-task, invalid, error). A counted with-notes
+        answer is correct only when it passes: off-task, untouched or invalid with notes counts
+        as wrong, so notes cannot "win" by making the model avoid the package.
+
+        With ``common``, a pair counts only when it counts for every notes block that answered
+        this role's tasks: an error with one block leaves the pair out for all of them (under
+        ``error`` for that block and :data:`ANOTHER_BLOCK_ERROR` for the others). That is how
+        ``--compare`` compares blocks, on the same pairs; otherwise an error on a task one block
+        did not fix could hand another block a win. Without it, each block keeps every pair it
+        can count, as in a run without ``--compare``.
+
+        A change counts as fixed when more than half of its counted pairs went from wrong
+        without the notes to correct with them (see :attr:`ChangePairs.outcome`).
         """
-        pairs: dict[tuple[str, str], dict[bool, Attempt]] = {}
+        answers: dict[tuple[str, str], dict[str | None, Attempt]] = {}
+        blocks: set[str] = set()
         for a in self.heldout:
             if a.role == role:
-                pairs.setdefault((a.change.id, a.task), {})[a.with_notes] = a
+                answers.setdefault((a.change.id, a.task), {})[a.arm if a.with_notes else None] = a
+                if a.with_notes:
+                    blocks.add(a.arm)
         p = Pairing()
-        per_change: dict[str, list[bool]] = {}
-        for (change_id, _task), arms in pairs.items():
-            without, with_notes = arms.get(False), arms.get(True)
+        per_change: dict[str, ChangePairs] = {}
+        for (change_id, _task), by_block in answers.items():
+            without, with_notes = by_block.get(None), by_block.get(arm)
+            if without is None and with_notes is None:
+                continue  # another block's answer alone: nothing of this block's to pair
+            reason = _excluded_because(without, with_notes)
             if (
-                without is None
-                or with_notes is None
-                or not without.valid
-                or with_notes.outcome == ERROR
+                reason is None
+                and common
+                and any(_excluded_because(without, by_block.get(other)) for other in blocks)
             ):
-                p.excluded += 1
+                reason = ANOTHER_BLOCK_ERROR
+            if reason is not None:
+                p.excluded_reasons[reason] = p.excluded_reasons.get(reason, 0) + 1
                 continue
-            before = without.outcome == PASS
-            after = with_notes.outcome == PASS
-            p.n += 1
-            p.before += before
-            p.after += after
-            p.fixed += (not before) and after
-            p.broken += before and not after
-            per_change.setdefault(change_id, []).append(after)
-        p.changes = len(per_change)
-        p.changes_fixed = sum(
-            1 for results in per_change.values() if sum(results) * 2 > len(results)
-        )
+            assert without is not None and with_notes is not None
+            if change_id not in per_change:
+                per_change[change_id] = ChangePairs(change_id, without.change.describe())
+            per_change[change_id].add(without.outcome == PASS, with_notes.outcome == PASS)
+        p.per_change = list(per_change.values())
         return p
+
+
+def _excluded_because(without: Attempt | None, with_notes: Attempt | None) -> str | None:
+    """Why a held-out pair is not counted (an outcome label), or None when it is."""
+    if without is None or with_notes is None:
+        return MISSING
+    if not without.valid:
+        return without.outcome
+    if with_notes.outcome == ERROR:
+        return ERROR
+    return None
 
 
 # ------------------------------------------------------------------ engine
@@ -370,6 +529,7 @@ class Engine:
         self._sources: dict[tuple[str, str], SourceTree] = {}
         self._dep_roots: dict[tuple[str, str, date | None], list[Path]] = {}
         self._vocabs: dict[tuple[str, str, date | None], frozenset[str]] = {}
+        self._apis: dict[tuple[str, str, str], Any] = {}
 
     # -------------------------------------------------------------- helpers
     @property
@@ -450,10 +610,15 @@ class Engine:
 
         Claude Code aliases (``sonnet``, the CLI default, ...) move over time, so when calls are
         allowed the CLI is asked which model actually answers. Without calls (``scan``) the
-        alias is mapped to the newest model of that family, and the guess is reported.
+        alias is mapped to the newest model of that family, and the guess is reported. The
+        Anthropic API takes no aliases, so there a family name (Aider's ``model: sonnet``)
+        always means the newest model of that family, reported the same way.
+
+        When calls are allowed, the tested model is set up here, so that a missing API key or
+        ``claude`` CLI fails before the scan rather than minutes into the run.
         """
         if self._provider_factory is None:
-            check_spec(self.settings.model)
+            self._check_spec(allow_calls)
         spec = self.settings.model
         provider_name, model = split_spec(spec)
         model_id = model or ""
@@ -464,6 +629,14 @@ class Engine:
                 self.settings.model = spec = f"claude-code:{model_id}"
             else:
                 model_id, source_note = self._guess_claude_code_model(model)
+        elif provider_name == "anthropic" and model in CLAUDE_FAMILIES:
+            model_id, source_note = self._guess_claude_code_model(model)
+            if allow_calls:
+                self.settings.model = spec = f"anthropic:{model_id}"
+        if allow_calls:
+            self.provider(spec)
+        if self.settings.model_source:
+            source_note = f", model from {self.settings.model_source}{source_note}"
         effort = self.settings.effort if provider_name in ("claude-code", "claude") else None
         if self.settings.cutoff is not None:
             return ModelTarget(
@@ -476,6 +649,15 @@ class Engine:
         info = self.registry.require(model_id, provider_name)
         assert info.knowledge is not None
         return ModelTarget(spec, info.id, info.knowledge, "models.dev" + source_note, info, effort)
+
+    def _check_spec(self, allow_calls: bool) -> None:
+        """:func:`check_spec` for the tested model, with the vendors the registry knows (read
+        only for a ``provider:model`` spec whose provider since-cutoff cannot call)."""
+        provider, model = split_spec(self.settings.model)
+        vendors: set[str] = set()
+        if model and provider not in KNOWN_PROVIDERS:
+            vendors = {*PROVIDER_ALIASES, *self.registry.data()}
+        check_spec(self.settings.model, vendors=vendors, calls=allow_calls)
 
     def _discover_claude_code_model(self, spec: str) -> str:
         self.reporter.info("Asking Claude Code which model it runs ...")
@@ -493,7 +675,10 @@ class Engine:
             alias = _claude_settings_model() or "sonnet"
         if alias not in CLAUDE_ALIASES:
             return alias, ""
-        info = self.registry.latest_in_family("anthropic", alias, self.settings.today)
+        # ``opusplan`` writes code with Sonnet (it plans with Opus); what ``default`` means
+        # depends on the account, and Sonnet is the usual one.
+        family = alias if alias in CLAUDE_FAMILIES else "sonnet"
+        info = self.registry.latest_in_family("anthropic", family, self.settings.today)
         if info is None:
             raise ProviderError(
                 f"cannot map the Claude Code alias '{alias}' to a model; pass --cutoff"
@@ -637,8 +822,42 @@ class Engine:
         self.reporter.advance()
 
     # ---------------------------------------------------------------- run
+    def run_settings(self, scan: ScanResult) -> dict[str, Any]:
+        """Everything besides the model's answers that a run's numbers depend on.
+
+        Recorded in results.json and report.md, so that a run can be repeated (with the same
+        tasks: ``--tasks-out`` / ``--tasks-from``) and two runs compared knowingly.
+        """
+        s = self.settings
+        task_model = s.task_model or s.model
+        claude = any(
+            split_spec(spec)[0] in ("claude-code", "claude") for spec in (s.model, task_model)
+        )
+        return {
+            "tool_version": __version__,
+            "model": scan.target.spec or s.model,
+            # Only without --model: the agent setting the model was read from.
+            **({"model_source": s.model_source} if s.model_source else {}),
+            "task_model": task_model,
+            # Only Claude Code takes an effort; None there means the CLI's own default.
+            "effort": (s.effort or "default") if claude else None,
+            "prompt_version": prompts.PROMPT_VERSION,
+            "diff_schema": DIFF_SCHEMA,
+            "max_probes": s.max_probes,
+            "heldout": s.heldout,
+            "regression": s.regression,
+            "python_version": s.python_version,
+            "tasks_from": s.tasks_from.source if s.tasks_from else None,
+            # Only with --tasks-from: who wrote those tasks, as the file says. ``task_model``
+            # above then writes the notes only.
+            **({"tasks_written_by": s.tasks_from.provenance()} if s.tasks_from else {}),
+            "date": s.today.isoformat(),
+            # Only when given, so that a run without --compare records what it always did.
+            **({"compare": list(s.compare)} if s.compare else {}),
+        }
+
     def run(self, scan: ScanResult, *, fix: bool = True) -> RunResult:
-        result = RunResult(scan)
+        result = RunResult(scan, settings=self.run_settings(scan))
         # Deprecations marked by a library's own decorator are invisible to the type checker,
         # so a probe could never show whether the model avoids them.
         changes_by_pkg = {
@@ -652,16 +871,15 @@ class Engine:
         # Tasks -------------------------------------------------------------
         task_spec = self.settings.task_model or self.settings.model
         n_tasks = 1 + max(0, self.settings.heldout)
-        self.reporter.stage(
-            f"Writing test tasks for {len(candidates)} API changes", len(candidates)
-        )
-        task_lists = self._map(lambda c: self._tasks(task_spec, c, n_tasks, scan), candidates)
+        task_lists = self._all_tasks(task_spec, candidates, n_tasks, scan)
+        from_file = self.settings.tasks_from is not None
         chosen: list[APIChange] = []
         for change, (tasks, reason) in zip(candidates, task_lists, strict=True):
             if tasks and len(chosen) < budget:
                 chosen.append(change)
                 result.tasks[change.id] = tasks
-            elif not tasks:
+            elif not tasks and not (from_file and len(chosen) >= budget):
+                # From a file, a change past the full budget would not have been probed anyway.
                 result.skipped_changes.append((change, reason or "no task"))
 
         # Probe -------------------------------------------------------------
@@ -683,7 +901,7 @@ class Engine:
             f"Writing and verifying notes for {len(failing)} failures", len(failing)
         )
         result.notes = self._map(lambda a: self._note(task_spec, a, scan), failing)
-        result.block = render_block(
+        result.block = block = render_block(
             result.notes,
             model=scan.target.model_id,
             cutoff=scan.target.cutoff,
@@ -692,34 +910,111 @@ class Engine:
 
         # Verify on held-out tasks --------------------------------------------
         if self.settings.heldout > 0:
-            attempts: list[Attempt] = []
-            for a in failing:
-                for task in result.tasks[a.change.id][1:]:
-                    attempts += [
-                        Attempt(a.change, task, "heldout", False),
-                        Attempt(a.change, task, "heldout", True),
-                    ]
+            blocks = {ARM_VERIFIED: block}
+            compare = list(dict.fromkeys(self.settings.compare))
+            if compare:
+                self.reporter.stage(f"Building the baseline notes to compare: {', '.join(compare)}")
+            for arm in compare:
+                blocks[arm] = self._baseline_block(arm, [a.change for a in failing], scan)
+            if len(blocks) > 1:
+                result.arms = blocks
             # A stable pseudo-random sample, so the check is not biased towards the top ranks.
             passing = sorted(
                 (a for a in result.probes if a.outcome == PASS),
                 key=lambda a: stable_hash("regression", a.change.id),
             )[: max(0, self.settings.regression)]
-            for a in passing:
-                for task in result.tasks[a.change.id][1:2]:
-                    attempts += [
-                        Attempt(a.change, task, "regression", False),
-                        Attempt(a.change, task, "regression", True),
-                    ]
+            attempts = [
+                *_verify_attempts(failing, result.tasks, "heldout", None, blocks),
+                *_verify_attempts(passing, result.tasks, "regression", 1, blocks),
+            ]
+            used = [len(result.tasks[a.change.id]) - 1 for a in failing]
+            if min(used) < self.settings.heldout:
+                # What "held-out tasks per failure" really was, next to what was asked for.
+                result.settings["heldout_used"] = {"fewest": min(used), "most": max(used)}
+                self._warn_fewer_heldout(used)
+            baselines = len(blocks) - 1
+            also = f" and {baselines} baseline{'' if baselines == 1 else 's'}" if baselines else ""
             self.reporter.stage(
-                f"Verifying the notes on {len(attempts)} held-out answers", len(attempts)
+                f"Verifying the notes{also} on {len(attempts)} held-out answers", len(attempts)
             )
-            self._answer_all(attempts, notes=result.block)
+            self._answer_all(attempts, blocks=blocks)
             self._score(attempts, scan)
             result.heldout = attempts
         self.reporter.done()
         return result
 
+    def _warn_fewer_heldout(self, used: list[int]) -> None:
+        """Say so when failing changes have fewer held-out tasks than ``--heldout`` asks for.
+
+        ``used`` is the number of held-out tasks of each failing change. They are verified on
+        the held-out tasks they have (from a tasks file written with a smaller ``--heldout``, or
+        from a task writer some of whose tasks were repeats), so "changes fixed" rests on fewer
+        tasks there. The run records the numbers it used (``heldout_used`` in the settings).
+        """
+        wanted = max(0, self.settings.heldout)
+        short = [h for h in used if h < wanted]
+        if not short:
+            return
+        source = self.settings.tasks_from
+        who = f"{source.source} has" if source is not None else "The task writer gave"
+        advice = f"; write it with --heldout {wanted} to use {wanted}" if source is not None else ""
+        self.reporter.warn(
+            f"{who} fewer than {wanted} held-out tasks for {len(short)} of {len(used)} failing "
+            f"API changes (as few as {min(short)}); those are verified on the ones there "
+            f"are{advice}"
+        )
+
+    def _baseline_block(self, arm: str, changes: list[APIChange], scan: ScanResult) -> str:
+        """The notes block of a ``--compare`` baseline for the failing changes (no model call)."""
+        if arm == ARM_TEMPLATE:
+            notes = template_notes(changes)
+        elif arm == ARM_SIGNATURES:
+            notes = signature_notes(changes, lambda c: self._new_api(c, scan))
+        else:
+            raise ValueError(f"unknown notes arm: {arm}")
+        return render_block(
+            notes,
+            model=scan.target.model_id,
+            cutoff=scan.target.cutoff,
+            version_source=scan.project.version_source,
+        )
+
+    def _new_api(self, change: APIChange, scan: ScanResult) -> Any:
+        """The locked version's API (griffe, loaded statically) of the import package holding
+        ``change``, or None when it cannot be loaded. Each is loaded once per engine."""
+        ps = scan.package(change.package)
+        names = sorted(ps.import_names, key=len, reverse=True)
+        name = next((n for n in names if change.path == n or change.path.startswith(n + ".")), None)
+        if name is None or not ps.locked:
+            return None
+        key = (ps.name, ps.locked, name)
+        if key not in self._apis:
+            try:
+                self._apis[key] = load_api(name, self.source(ps.name, ps.locked).root)
+            except Exception as exc:  # griffe fails in many ways on unusual code
+                log.debug("cannot load %s %s for the signatures baseline: %s", *key[:2], exc)
+                self._apis[key] = None
+        return self._apis[key]
+
     # --------------------------------------------------------------- tasks
+    def _all_tasks(
+        self, spec: str, candidates: list[APIChange], n: int, scan: ScanResult
+    ) -> list[tuple[list[str], str | None]]:
+        """Tasks for each candidate change: from ``--tasks-from`` if given, else the writer."""
+        source = self.settings.tasks_from
+        if source is None:
+            self.reporter.stage(
+                f"Writing test tasks for {len(candidates)} API changes", len(candidates)
+            )
+            return self._map(lambda c: self._tasks(spec, c, n, scan), candidates)
+        self.reporter.info(f"Using the test tasks in {source.source} (--tasks-from)")
+        if source.prompt_version not in (None, prompts.PROMPT_VERSION):
+            self.reporter.warn(
+                f"{source.source} was written with task prompt version {source.prompt_version}; "
+                f"this since-cutoff uses version {prompts.PROMPT_VERSION}"
+            )
+        return [source.tasks_for(c, n) for c in candidates]
+
     def _tasks(
         self, spec: str, change: APIChange, n: int, scan: ScanResult
     ) -> tuple[list[str], str | None]:
@@ -742,12 +1037,7 @@ class Engine:
         except ProviderError as exc:
             return [], f"{TASK_WRITER_FAILED}: {exc}"
         tasks, reason = prompts.parse_tasks(text, change)
-        # Held-out tasks must differ from the probe task (and from each other).
-        unique: list[str] = []
-        for t in tasks:
-            if _normalize_task(t) not in {_normalize_task(u) for u in unique}:
-                unique.append(t)
-        tasks = unique[:n]
+        tasks = prompts.distinct_tasks(tasks)[:n]  # held-out tasks must differ from the probe
         usable = prompts.parse_json_object(text) is not None
         if len(tasks) < n and not reason:
             reason = f"task writer returned {len(tasks)} usable tasks of {n}"
@@ -758,13 +1048,13 @@ class Engine:
         return tasks, reason
 
     # ------------------------------------------------------------- answers
-    def _answer_all(self, attempts: list[Attempt], *, notes: str | None = None) -> None:
+    def _answer_all(self, attempts: list[Attempt], *, blocks: dict[str, str] | None = None) -> None:
+        """Answer each task; a with-notes attempt sees the block of its arm in ``blocks``."""
         provider = self.provider(self.settings.model)
 
         def answer(a: Attempt) -> None:
-            system = prompts.solver_system(
-                a.change.package, a.change.to_version, notes if a.with_notes else None
-            )
+            notes = (blocks or {})[a.arm] if a.with_notes else None
+            system = prompts.solver_system(a.change.package, a.change.to_version, notes)
             key = stable_hash("answer", prompts.PROMPT_VERSION, provider.key, system, a.task)
             cached = self.llm_cache.get("answers", key)
             if cached is not None:
@@ -936,8 +1226,21 @@ class Engine:
         return Note(change, template_bullet(change), None, False, "template")
 
 
-def _normalize_task(text: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
+def _verify_attempts(
+    probes: Iterable[Attempt],
+    tasks: dict[str, list[str]],
+    role: str,
+    limit: int | None,
+    blocks: dict[str, str],
+) -> list[Attempt]:
+    """For each probed change, its held-out tasks (at most ``limit``) answered once without
+    notes and once with each arm's block, in that order."""
+    out: list[Attempt] = []
+    for probe in probes:
+        for task in tasks[probe.change.id][1:][:limit]:
+            out.append(Attempt(probe.change, task, role, False))
+            out += [Attempt(probe.change, task, role, True, arm=arm) for arm in blocks]
+    return out
 
 
 # ----------------------------------------------------------- classification

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -28,7 +29,15 @@ from since_cutoff.notes import (
     template_bullet,
 )
 from since_cutoff.selection import select
-from since_cutoff.stats import estimate_tokens, pct, wilson_interval
+from since_cutoff.stats import (
+    cluster_bootstrap_interval,
+    estimate_tokens,
+    format_p,
+    pct,
+    points,
+    sign_test,
+    wilson_interval,
+)
 
 
 def change(
@@ -192,6 +201,72 @@ def test_wilson_interval_bounds():
     lo, hi = wilson_interval(10, 10)
     assert hi == 1.0 and 0.65 < lo < 0.8
     assert wilson_interval(0, 0) == (0.0, 1.0)
+
+
+def test_wilson_interval_known_value():
+    # 6 of 10: the textbook Wilson score interval is 0.3127-0.8318.
+    lo, hi = wilson_interval(6, 10)
+    assert (round(lo, 4), round(hi, 4)) == (0.3127, 0.8318)
+
+
+@pytest.mark.parametrize(
+    ("positive", "negative", "p"),
+    [
+        (4, 0, 0.125),
+        (0, 4, 0.125),
+        (6, 0, 0.03125),
+        (10, 2, 0.03857421875),  # R: binom.test(10, 12)$p.value
+        (5, 5, 1.0),
+        (1, 0, 1.0),
+        (0, 0, 1.0),
+    ],
+)
+def test_sign_test_known_values(positive, negative, p):
+    assert sign_test(positive, negative) == pytest.approx(p, abs=1e-12)
+
+
+def test_sign_test_matches_the_definition_of_a_two_sided_exact_p_value():
+    # Sum the probabilities of every outcome no more likely than the one observed.
+    for n in range(1, 16):
+        probs = [math.comb(n, k) / 2**n for k in range(n + 1)]
+        for k in range(n + 1):
+            expected = sum(q for q in probs if q <= probs[k] * (1 + 1e-9))
+            assert sign_test(k, n - k) == pytest.approx(min(1.0, expected))
+    with pytest.raises(ValueError):
+        sign_test(-1, 3)
+
+
+def test_cluster_bootstrap_resamples_whole_clusters():
+    # Two changes of ten pairs each, one all fixed and one all broken. Resampling pairs would
+    # give a narrow interval around 0; resampling changes can draw the same change twice.
+    assert cluster_bootstrap_interval([(10, 10), (10, -10)]) == (-1.0, 1.0)
+    assert cluster_bootstrap_interval([(1, 1), (1, 0)]) == (0.0, 1.0)
+    # Every change moved alike: every resample gives the same pooled difference.
+    assert cluster_bootstrap_interval([(2, 1), (4, 2), (6, 3)]) == (0.5, 0.5)
+    # Nothing to resample.
+    assert cluster_bootstrap_interval([]) is None
+    assert cluster_bootstrap_interval([(3, 2)]) is None
+    assert cluster_bootstrap_interval([(3, 2), (0, 0)]) is None
+
+
+def test_cluster_bootstrap_is_seeded_and_the_same_on_every_python():
+    clusters = [(2, 2)] * 6 + [(2, 0)] * 4  # 6 of 10 changes fixed on both of their tasks
+    lo, hi = cluster_bootstrap_interval(clusters)
+    assert (lo, hi) == (0.3, 0.9)  # pinned: a different Python must not move it
+    assert cluster_bootstrap_interval(clusters) == (lo, hi)
+    assert lo <= 12 / 20 <= hi
+    lo2, hi2 = cluster_bootstrap_interval([(3, 1), (2, 2), (1, 0), (2, -1), (4, 3)])
+    assert (round(lo2, 4), round(hi2, 4)) == (-0.1111, 0.7692)
+    other_lo, other_hi = cluster_bootstrap_interval(clusters, seed=1, resamples=2000)
+    assert other_lo <= 12 / 20 <= other_hi
+
+
+def test_p_values_and_points_are_formatted_for_reading():
+    assert format_p(0.125) == "p=0.125"
+    assert format_p(0.03125) == "p=0.031"
+    assert format_p(1.0) == "p=1"
+    assert format_p(0.0004) == "p<0.001"
+    assert (points(0.6), points(-0.05), points(-0.001), points(0.0)) == ("+60", "-5", "+0", "+0")
 
 
 def test_pct_and_tokens():

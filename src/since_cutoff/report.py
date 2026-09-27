@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,11 @@ from rich.table import Table
 from rich.text import Text
 
 from since_cutoff import __version__
-from since_cutoff.apidiff import APIChange
+from since_cutoff.apidiff import DIFF_SCHEMA, APIChange
+from since_cutoff.baselines import ARM_SIGNATURES, ARM_TEMPLATE, ARM_VERIFIED
 from since_cutoff.engine import (
+    CHANGE_BROKEN,
+    CHANGE_FIXED,
     CHANGED,
     DEPRECATED,
     ERROR,
@@ -29,11 +33,24 @@ from since_cutoff.engine import (
     UNCHANGED,
     UNTOUCHED,
     WRONG,
+    Attempt,
+    Pairing,
     RunResult,
     ScanResult,
 )
 from since_cutoff.selection import uses_text
-from since_cutoff.stats import estimate_tokens, pct, wilson_interval
+from since_cutoff.stats import (
+    BOOTSTRAP_RESAMPLES,
+    BOOTSTRAP_SEED,
+    cluster_bootstrap_interval,
+    estimate_tokens,
+    format_p,
+    pct,
+    points,
+    points_between,
+    sign_test,
+    wilson_interval,
+)
 
 REPO_URL = "https://github.com/MohammadHijjawi97/since-cutoff"
 
@@ -46,6 +63,43 @@ STATUS_LABEL = {
 }
 # How every report counts: each change once, under its shortest public path.
 COUNTING_NOTE = "A change reachable under several import paths is counted once."
+# How held-out answers are counted (RunResult.pairing, ChangePairs.outcome).
+PAIRING_RULE = (
+    "A held-out task counts as a pair when its answer without the notes is scorable and its "
+    "answer with the notes is not an error; with the notes, only a passing answer is correct "
+    "(an answer that avoids the package counts as wrong). An API change is fixed when more than "
+    "half of its counted pairs are wrong without the notes and correct with them (with one or "
+    "two held-out tasks per change: all of them), and broken in the mirror case."
+)
+STATS_NOTE = (
+    "The difference is with minus without, in percentage points over all counted pairs; its 95% "
+    "CI is a percentile bootstrap that resamples API changes with all their pairs "
+    f"({BOOTSTRAP_RESAMPLES} resamples, seed {BOOTSTRAP_SEED}). The interval for changes fixed is "
+    "a Wilson score interval. The sign test is exact and two-sided, over changes fixed vs "
+    "changes broken (changes that are neither are left out). The regression check covers changes "
+    "the model already got right, so it counts the changes still correct with the notes (more "
+    "than half of their pairs), with a Wilson interval, instead. With few API changes (under about "
+    "ten) the bootstrap interval tends to be too narrow; the sign test is exact at any size."
+)
+# Report names of the notes arms (``run --compare``), and what the baselines are.
+ARM_TITLES = {
+    ARM_VERIFIED: "verified notes",
+    ARM_TEMPLATE: "template baseline",
+    ARM_SIGNATURES: "signatures baseline",
+}
+ARMS_NOTE = (
+    "Every held-out task and regression check was also answered with each baseline block in "
+    "place of the verified notes. The blocks share their header, are paired against the same "
+    "answers without notes, are counted by the same rules and are compared on the same pairs: "
+    "a pair counts for every block only when its answer without notes is scorable and no "
+    "block's answer with notes is an error (for the other blocks, such a pair is not counted "
+    'under "error with another block"). So the verified notes\' row can count fewer pairs than '
+    "their result above, which keeps every pair they can count. The template baseline states each "
+    "change in one sentence from the API diff; the signatures baseline gives the new signature "
+    "and first docstring paragraph of each changed API, or of the replacement its library names. "
+    "Neither calls a model. The last column counts the API changes that only the verified notes "
+    "fixed and those that only the baseline fixed, with an exact two-sided sign test."
+)
 
 
 # ------------------------------------------------------------------ summary
@@ -80,9 +134,10 @@ def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]
 def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
     checked = [p for p in scan.packages if p.status != SKIPPED]
     packages = per_package(scan, run)
+    now = datetime.now(timezone.utc)
     out: dict[str, Any] = {
         "tool": f"since-cutoff {__version__}",
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": now.isoformat(timespec="seconds"),
         "model": scan.target.model_id or None,
         "model_spec": scan.target.spec or None,
         "effort": scan.target.effort,
@@ -98,6 +153,12 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "breaking_changes": sum(r["breaking_changes"] for r in packages),
         "deprecations": sum(r["deprecations"] for r in packages),
         "warnings": list(scan.warnings),
+        "settings": {
+            "tool_version": __version__,
+            "diff_schema": DIFF_SCHEMA,
+            "date": now.date().isoformat(),
+            **(run.settings if run is not None else {}),
+        },
         "packages": packages,
     }
     if run is None:
@@ -129,10 +190,89 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
             p = run.pairing(role)
             if p.n == 0 and p.excluded == 0:
                 continue
-            entry: dict[str, Any] = p.to_dict()
-            entry["ci95_changes_fixed"] = wilson_interval(p.changes_fixed, p.changes)
-            out["heldout"][role] = entry
+            out["heldout"][role] = pairing_summary(p, role)
+        if run.arms:
+            out["arms"] = arms_summary(run)
     return out
+
+
+def arms_summary(run: RunResult) -> dict[str, dict[str, Any]]:
+    """Each notes arm of a ``--compare`` run, the verified notes first.
+
+    Per arm: the size of its block, its held-out and regression pairings with their statistics
+    (:func:`pairing_summary`), and for a baseline, how it did against the verified notes
+    (:func:`head_to_head`). Every arm is paired on the same pairs (``RunResult.pairing(...,
+    common=True)``): a pair counts only when its answer without notes is scorable and no
+    block's answer with notes is an error. So the verified notes' row here can count fewer
+    pairs than their own result (``summary()["heldout"]``), which keeps every pair they can
+    count, as in a run without ``--compare``.
+    """
+    verified = run.pairing("heldout", common=True)
+    out: dict[str, dict[str, Any]] = {}
+    for arm, block in run.arms.items():
+        heldout = run.pairing("heldout", arm, common=True)
+        regression = run.pairing("regression", arm, common=True)
+        out[arm] = {
+            "tokens": estimate_tokens(block),
+            "bullets": sum(line.startswith("- ") for line in block.splitlines()),
+            "heldout": pairing_summary(heldout),
+            "regression": pairing_summary(regression, "regression"),
+            "versus_verified": None if arm == ARM_VERIFIED else head_to_head(verified, heldout),
+        }
+    return out
+
+
+def head_to_head(verified: Pairing, baseline: Pairing) -> dict[str, Any]:
+    """The API changes one arm fixed and the other did not, with the exact sign test.
+
+    Both pairings must count the same pairs (``RunResult.pairing(..., common=True)``), so that
+    each change's outcome rests on the same tasks in both arms, answered the same way without
+    notes: then what differs is the notes alone. (Paired separately, an error on the one task a
+    baseline did not fix would drop that task from the baseline alone and hand it a "fix".)
+    Only changes counted in both arms are compared.
+    """
+    both = {c.change_id for c in verified.per_change} & {c.change_id for c in baseline.per_change}
+    fixed_verified = {c.change_id for c in verified.per_change if c.outcome == CHANGE_FIXED}
+    fixed_baseline = {c.change_id for c in baseline.per_change if c.outcome == CHANGE_FIXED}
+    only_verified = len((fixed_verified - fixed_baseline) & both)
+    only_baseline = len((fixed_baseline - fixed_verified) & both)
+    return {
+        "changes": len(both),
+        "fixed_by_verified_only": only_verified,
+        "fixed_by_this_only": only_baseline,
+        "sign_test_p": sign_test(only_verified, only_baseline),
+    }
+
+
+def pairing_summary(p: Pairing, role: str = "heldout") -> dict[str, Any]:
+    """A pairing's counts with its statistics (see PAIRING_RULE and STATS_NOTE).
+
+    ``difference`` is the task-level after - before rate and ``ci95_difference`` its cluster
+    bootstrap interval (None with fewer than two changes); ``ci95_changes_fixed`` is the Wilson
+    interval of ``changes_fixed`` of ``changes`` and nothing else; ``sign_test_p`` compares
+    changes fixed with changes broken.
+
+    The regression check asks something else of changes the model already got right: that
+    they stay right. Its entry adds ``changes_still_correct`` (more than half of a change's
+    pairs correct with the notes) with its Wilson interval ``ci95_changes_still_correct``;
+    ``changes_fixed`` there counts wrong -> right, like everywhere, and is about 0.
+    """
+    entry = p.to_dict()
+    if role == "regression":
+        entry["changes_still_correct"] = p.changes_still_correct
+        entry["ci95_changes_still_correct"] = wilson_interval(p.changes_still_correct, p.changes)
+    entry["difference"] = (p.after - p.before) / p.n if p.n else None
+    entry["ci95_difference"] = cluster_bootstrap_interval(
+        [(c.n, c.after - c.before) for c in p.per_change]
+    )
+    entry["bootstrap"] = {
+        "unit": "change",
+        "resamples": BOOTSTRAP_RESAMPLES,
+        "seed": BOOTSTRAP_SEED,
+    }
+    entry["ci95_changes_fixed"] = wilson_interval(p.changes_fixed, p.changes)
+    entry["sign_test_p"] = sign_test(p.changes_fixed, p.changes_broken)
+    return entry
 
 
 # ------------------------------------------------------------------ console
@@ -224,21 +364,7 @@ def headline(
         )
         lines.append(Text(f"Fix: {n['count']} notes{detail}, about {n['tokens']} tokens"))
     if run is not None and "heldout" in s.get("heldout", {}):
-        h = s["heldout"]["heldout"]
-        lo, hi = h["ci95_changes_fixed"]
-        lines.append(
-            Text.assemble(
-                "Held-out tasks correct without -> with notes: ",
-                (pct(h["before"], h["n"]), "red"),
-                " -> ",
-                (pct(h["after"], h["n"]), "bold green"),
-                (
-                    f"  ({h['n']} paired tasks; {h['changes_fixed']} of {h['changes']} changes "
-                    f"fixed, 95% CI {100 * lo:.0f}-{100 * hi:.0f}%)",
-                    "dim",
-                ),
-            )
-        )
+        lines += _heldout_lines(s["heldout"]["heldout"])
         reg = s["heldout"].get("regression")
         if reg and reg["n"]:
             lines.append(
@@ -254,7 +380,122 @@ def headline(
                     "No previously-correct APIs were available for a regression check", style="dim"
                 )
             )
+    if run is not None and "arms" in s:
+        lines += _baseline_lines(s["arms"], s.get("heldout", {}).get("heldout"))
     return lines
+
+
+def _baseline_lines(
+    arms: dict[str, dict[str, Any]], verified_alone: dict[str, Any] | None = None
+) -> list[Text]:
+    """One line per ``--compare`` baseline, in the terms of the verified notes' lines.
+
+    The baselines are counted on the pairs every block could count (:func:`arms_summary`).
+    When an error left out pairs the verified notes' own line counts, a last line gives the
+    verified notes' rates on those same pairs, so the lines compare like with like.
+    """
+    lines = []
+    for arm, a in arms.items():
+        if arm == ARM_VERIFIED:
+            continue
+        h = a["heldout"]
+        text = (
+            f"Baseline {arm}, about {a['tokens']} tokens: held-out "
+            f"{pct(h['before'], h['n'])} -> {pct(h['after'], h['n'])}"
+        )
+        if h["changes"]:
+            lo, hi = h["ci95_changes_fixed"]
+            text += (
+                f"; changes fixed {h['changes_fixed']} of {h['changes']}, 95% CI "
+                f"{100 * lo:.0f}-{100 * hi:.0f}%; {h['changes_broken']} broken"
+            )
+        lines.append(Text(text, style="dim"))
+    shared = arms.get(ARM_VERIFIED, {}).get("heldout")
+    if lines and shared and verified_alone and shared["n"] != verified_alone["n"]:
+        lines.append(
+            Text(
+                f"Blocks compared on the {_plural(shared['n'], 'held-out pair')} all could count; "
+                f"verified notes on them: {pct(shared['before'], shared['n'])} -> "
+                f"{pct(shared['after'], shared['n'])}; not counted: {_excluded_text(shared)}",
+                style="dim",
+            )
+        )
+    return lines
+
+
+def _heldout_lines(h: dict[str, Any]) -> list[Text]:
+    """The held-out result: task-level rates, their difference, then the change-level counts.
+
+    Each interval sits next to the number it belongs to: the bootstrap interval next to the
+    difference of the task-level rates, the Wilson interval next to "changes fixed".
+    """
+    lines = [
+        Text.assemble(
+            "Held-out tasks correct without -> with notes: ",
+            (pct(h["before"], h["n"]), "red"),
+            " -> ",
+            (pct(h["after"], h["n"]), "bold green"),
+            (
+                f", {_plural(h['n'], 'paired task')} from {_plural(h['changes'], 'API change')}",
+                "dim",
+            ),
+        )
+    ]
+    if h["n"]:
+        lines.append(Text(_difference_text(h), style="dim"))
+        lo, hi = h["ci95_changes_fixed"]
+        lines.append(
+            Text(
+                f"Changes fixed by the notes: {h['changes_fixed']} of {h['changes']}, 95% CI "
+                f"{100 * lo:.0f}-{100 * hi:.0f}%; {h['changes_broken']} broken; "
+                f"sign test {format_p(h['sign_test_p'])}",
+                style="dim",
+            )
+        )
+    if h["excluded"]:
+        lines.append(Text(f"Held-out pairs not counted: {_excluded_text(h)}", style="dim"))
+    return lines
+
+
+def _shown_difference(h: dict[str, Any]) -> str:
+    """The difference of the two rates as printed next to it (``12%`` -> ``75%`` is ``+63``),
+    so that readers can check it; results.json keeps the exact ``difference``."""
+    return points_between(h["before"], h["after"], h["n"])
+
+
+def _difference_text(h: dict[str, Any]) -> str:
+    text = f"Difference: {_shown_difference(h)} percentage points, "
+    bounds = _bootstrap_bounds(h)
+    if bounds is None:
+        return text + _no_interval(h)
+    return text + f"95% CI {bounds}, bootstrap over API changes"
+
+
+def _bootstrap_bounds(h: dict[str, Any]) -> str | None:
+    """``+40 to +80``, or None when there is no informative bootstrap interval.
+
+    With fewer than two API changes there is nothing to resample; when every change has the
+    same difference, every resample does too and the "interval" is a single point.
+    """
+    ci = h["ci95_difference"]
+    if ci is None or len(_change_differences(h)) == 1:
+        return None
+    return f"{points(ci[0])} to {points(ci[1])}"
+
+
+def _no_interval(h: dict[str, Any]) -> str:
+    if h["ci95_difference"] is None:
+        return "too few API changes for an interval"
+    return f"the same in all {h['changes']} API changes, so no interval"
+
+
+def _change_differences(h: dict[str, Any]) -> set[Fraction]:
+    return {Fraction(c["after"] - c["before"], c["n"]) for c in h["per_change"]}
+
+
+def _excluded_text(h: dict[str, Any]) -> str:
+    reasons = [f"{n} {reason}" for reason, n in h["excluded_reasons"].items() if n]
+    return ", ".join(reasons) or "none"
 
 
 def render_console(
@@ -396,6 +637,7 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
     ]
     out += [f"- {t.plain}" for t in headline(scan, run, s)]
     out += [f"- Warning: {w}" for w in scan.warnings]
+    out += _settings_md(s["settings"])
     out += [
         "",
         "## Dependencies",
@@ -430,16 +672,10 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
         out += ["", "## Changes without usable tasks", ""]
         out += [f"- {c.describe()}: {r}" for c, r in run.skipped_changes]
     if run is not None and run.heldout:
-        out += ["", "## Held-out verification", ""]
-        out += ["| change | task | without notes | with notes |", "|---|---|---|---|"]
-        pairs: dict[tuple[str, str, str], dict[bool, str]] = {}
-        for a in run.heldout:
-            pairs.setdefault((a.role, a.change.describe(), a.task), {})[a.with_notes] = a.outcome
-        for (role, change, task), res in pairs.items():
-            tag = " (regression check)" if role == "regression" else ""
-            out.append(
-                f"| {_cell(change)}{tag} | {_cell(task)} | {res.get(False, '-')} | {res.get(True, '-')} |"
-            )
+        out += _heldout_md(s.get("heldout", {}))
+        if "arms" in s:
+            out += _arms_md(s["arms"], run.arms)
+        out += _pairs_md(run)
     if scan.changed:
         out += [
             "",
@@ -459,6 +695,213 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
             out += [_md_change(c, ids, example=True) for c in scan.ranked(p)]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
+
+
+def _pairs_md(run: RunResult) -> list[str]:
+    """Every held-out task's outcomes: without notes, then with each arm's block."""
+    arms = list(run.arms) or [ARM_VERIFIED]
+    heads = [ARM_TITLES.get(arm, arm) for arm in arms] if run.arms else ["with notes"]
+    out = ["", "### Pairs", ""]
+    out += [
+        "| change | task | without notes | " + " | ".join(heads) + " |",
+        "|---|---|---|" + "---|" * len(heads),
+    ]
+    pairs: dict[tuple[str, str, str], dict[str | None, str]] = {}
+    for a in run.heldout:
+        key = (a.role, a.change.describe(), a.task)
+        pairs.setdefault(key, {})[a.arm if a.with_notes else None] = a.outcome
+    for (role, change, task), res in pairs.items():
+        tag = " (regression check)" if role == "regression" else ""
+        cells = [res.get(None, "-"), *(res.get(arm, "-") for arm in arms)]
+        out.append(f"| {_cell(change)}{tag} | {_cell(task)} | " + " | ".join(cells) + " |")
+    return out
+
+
+def _arms_md(arms: dict[str, dict[str, Any]], blocks: dict[str, str]) -> list[str]:
+    """The ``--compare`` table: one row per notes arm, the verified notes first; then each
+    baseline's block, folded (the verified block is under "Notes written for AGENTS.md")."""
+    out = ["", "### Compared with baseline notes", "", ARMS_NOTE, ""]
+    out += [
+        "| notes | tokens | held-out correct without -> with | held-out pairs not counted "
+        "| changes fixed, 95% CI | changes broken | regression checks still correct "
+        "| fixed only by the verified notes / only by this, sign test |",
+        "|---|---:|---|---|---|---:|---|---|",
+    ]
+    for arm, a in arms.items():
+        h, reg, versus = a["heldout"], a["regression"], a["versus_verified"]
+        heldout = f"{pct(h['before'], h['n'])} -> {pct(h['after'], h['n'])} of {h['n']}"
+        lo, hi = h["ci95_changes_fixed"]
+        fixed = f"{h['changes_fixed']} of {h['changes']}, {100 * lo:.0f}-{100 * hi:.0f}%"
+        regression = f"{reg['after']} of {reg['n']}" + (
+            f", {reg['broken']} broken" if reg["broken"] else ""
+        )
+        head = "-"
+        if versus is not None:
+            head = (
+                f"{versus['fixed_by_verified_only']} / {versus['fixed_by_this_only']}, "
+                f"{format_p(versus['sign_test_p'])}"
+            )
+        cells = [
+            ARM_TITLES.get(arm, arm),
+            str(a["tokens"]),
+            heldout if h["n"] else "n/a",
+            _excluded_text(h),
+            fixed if h["changes"] else "n/a",
+            str(h["changes_broken"]),
+            regression if reg["n"] else "none",
+            head,
+        ]
+        out.append("| " + " | ".join(cells) + " |")
+    for arm, block in blocks.items():
+        if arm != ARM_VERIFIED:
+            out += ["", f"<details><summary>{ARM_TITLES.get(arm, arm)} block</summary>", ""]
+            out += ["```markdown", block.strip(), "```", "", "</details>"]
+    return out
+
+
+# Run settings in the order report.md lists them (Engine.run_settings, summary()["settings"]).
+SETTING_LABELS = (
+    ("tool_version", "since-cutoff version"),
+    ("model", "model under test"),
+    ("model_source", "model taken from"),
+    ("task_model", "task and note writer"),
+    ("effort", "Claude Code thinking effort"),
+    ("prompt_version", "prompt version"),
+    ("diff_schema", "API diff schema"),
+    ("max_probes", "API changes probed, at most"),
+    ("heldout", "held-out tasks per failure"),
+    ("regression", "regression checks, at most"),
+    ("python_version", "Python for type checking"),
+    ("tasks_from", "tasks"),
+    ("tasks_written_by", "tasks written by"),
+    ("compare", "baseline notes compared"),
+    ("date", "date"),
+)
+
+
+def _settings_md(settings: dict[str, Any]) -> list[str]:
+    """What the numbers depend on besides the model's answers, as a table."""
+    out = ["", "## Run settings", "", "| setting | value |", "|---|---|"]
+    for key, label in SETTING_LABELS:
+        if key not in settings:
+            continue
+        value = settings[key]
+        if key == "task_model" and "tasks_written_by" in settings:
+            label = "note writer"  # the tasks came from a file, written by another run
+        if key == "tasks_from":
+            text = f"from `{value}` (--tasks-from)" if value else "written for this run"
+        elif key == "tasks_written_by":
+            text = _written_by(value, settings.get("prompt_version"))
+        elif key == "heldout" and settings.get("heldout_used"):
+            used = settings["heldout_used"]
+            fewest, most = used["fewest"], used["most"]
+            text = f"{value} asked, {fewest if fewest == most else f'{fewest} to {most}'} used"
+        elif key == "compare":
+            text = ", ".join(value) + " (--compare)"
+        elif key in ("model", "task_model") and value:
+            text = f"`{value}`"
+        else:
+            text = "-" if value is None else str(value)
+        out.append(f"| {label} | {_cell(text)} |")
+    return out
+
+
+def _written_by(provenance: dict[str, Any], prompt_version: object) -> str:
+    """Who wrote the tasks of a ``--tasks-from`` file, as the file says, and whether its task
+    prompt differs from this run's."""
+    model = provenance.get("task_model")
+    version = provenance.get("prompt_version")
+    parts = [f"`{model}`" if model else "unknown model"]
+    if version is None:
+        parts.append("prompt version unknown")
+    else:
+        parts.append(f"prompt version {version}")
+        if version != prompt_version:
+            parts[-1] += f" (this run's prompts are version {prompt_version})"
+    if provenance.get("tool"):
+        parts.append(str(provenance["tool"]))
+    return ", ".join(parts)
+
+
+_ROLE_TITLES = {
+    "heldout": "held-out tasks of failing changes",
+    "regression": "regression check on correct changes",
+}
+
+
+def _heldout_md(heldout: dict[str, dict[str, Any]]) -> list[str]:
+    """The held-out statistics, one column per role, then the counts of each API change."""
+    out = ["", "## Held-out verification", "", PAIRING_RULE]
+    roles = [(role, heldout[role]) for role in _ROLE_TITLES if role in heldout]
+    if not roles:
+        return out
+    columns = [_heldout_cells(h, role) for role, h in roles]
+    out += ["", "| measure | " + " | ".join(_ROLE_TITLES[r] for r, _ in roles) + " |"]
+    out.append("|---|" + "---:|" * len(roles))
+    for i, (label, _) in enumerate(columns[0]):
+        values = [col[i][1] for col in columns]
+        if any(v is not None for v in values):  # a row that applies to no role is left out
+            out.append(f"| {label} | " + " | ".join(v or "-" for v in values) + " |")
+    out += ["", STATS_NOTE, "", "### By API change", ""]
+    out += [
+        "| change | pairs | correct without | correct with | result |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for role, h in roles:
+        tag = " (regression check)" if role == "regression" else ""
+        for c in h["per_change"]:
+            out.append(
+                f"| {_cell(c['change'])}{tag} | {c['n']} | {c['before']} | {c['after']} "
+                f"| {_change_result(c, role)} |"
+            )
+    return out
+
+
+def _change_result(c: dict[str, Any], role: str) -> str:
+    """What the notes did to one API change: fixed / broken / neither for a failing change;
+    for the regression check (a change the model got right), still correct or broken."""
+    if role != "regression" or c["outcome"] == CHANGE_BROKEN:
+        return str(c["outcome"])
+    return "still correct" if c["after"] * 2 > c["n"] else "wrong with the notes"
+
+
+def _heldout_cells(h: dict[str, Any], role: str = "heldout") -> list[tuple[str, str | None]]:
+    """(label, value) rows for one role of the held-out statistics table; None where a row
+    does not apply to the role.
+
+    The regression check covers changes the model already got right, so "changes fixed" (wrong
+    without the notes, right with them) and its sign test say nothing there; it shows how many
+    changes are still correct instead.
+    """
+    n = h["n"]
+    regression = role == "regression"
+    lo, hi = h["ci95_changes_fixed"]
+    fixed = f"{h['changes_fixed']} of {h['changes']}, {100 * lo:.0f}-{100 * hi:.0f}%"
+    still = None
+    if regression:
+        s_lo, s_hi = h["ci95_changes_still_correct"]
+        still = (
+            f"{h['changes_still_correct']} of {h['changes']}, {100 * s_lo:.0f}-{100 * s_hi:.0f}%"
+        )
+    difference = "n/a"
+    if h["difference"] is not None:
+        bounds = _bootstrap_bounds(h)
+        difference = f"{_shown_difference(h)} points, {bounds or _no_interval(h)}"
+    return [
+        ("counted pairs", f"{n} from {_plural(h['changes'], 'API change')}"),
+        ("correct without notes", f"{h['before']} ({pct(h['before'], n)})"),
+        ("correct with notes", f"{h['after']} ({pct(h['after'], n)})"),
+        ("difference with - without, 95% CI", difference),
+        ("pairs fixed / broken", f"{h['fixed']} / {h['broken']}"),
+        ("changes fixed, 95% CI", None if regression else fixed if h["changes"] else "n/a"),
+        (
+            "changes still correct, 95% CI",
+            (still if h["changes"] else "n/a") if regression else None,
+        ),
+        ("changes broken", str(h["changes_broken"])),
+        ("sign test, changes fixed vs broken", None if regression else format_p(h["sign_test_p"])),
+        ("pairs not counted", _excluded_text(h)),
+    ]
 
 
 def _cutoff_md(s: dict[str, Any]) -> str:
@@ -563,12 +1006,23 @@ def to_json(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
     data = summary(scan, run)
     data["scan"] = [p.to_dict() for p in scan.packages]
     if run is not None:
-        data["attempts"] = [a.to_dict() for a in run.probes + run.heldout]
+        data["attempts"] = [_attempt_json(run, a) for a in run.probes + run.heldout]
         data["notes_detail"] = [n.to_dict() for n in run.notes]
         data["block"] = run.block
+        for arm, entry in data.get("arms", {}).items():
+            entry["block"] = run.arms[arm]
         data["skipped_changes"] = [
             {"change": c.describe(), "reason": r} for c, r in run.skipped_changes
         ]
+    return data
+
+
+def _attempt_json(run: RunResult, attempt: Attempt) -> dict[str, Any]:
+    """An attempt for results.json; in a ``--compare`` run, with the arm whose notes it saw
+    (None for an answer without notes)."""
+    data = attempt.to_dict()
+    if run.arms:
+        data["arm"] = attempt.arm if attempt.with_notes else None
     return data
 
 

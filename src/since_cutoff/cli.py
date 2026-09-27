@@ -26,6 +26,7 @@ from rich.progress import (
 from rich.table import Table
 
 from since_cutoff import __version__
+from since_cutoff.baselines import BASELINE_ARMS
 from since_cutoff.cache import DiskCache, default_cache_dir
 from since_cutoff.engine import (
     ERROR,
@@ -39,6 +40,7 @@ from since_cutoff.engine import (
     Settings,
 )
 from since_cutoff.errors import SinceCutoffError
+from since_cutoff.hosts import DEFAULT_SOURCE, detect_model, not_found_hint
 from since_cutoff.models import ModelRegistry, parse_cutoff
 from since_cutoff.notes import apply_block, remove_block
 from since_cutoff.project import load_project
@@ -49,6 +51,7 @@ from since_cutoff.report import (
     to_json,
     write_outputs,
 )
+from since_cutoff.taskfile import read_tasks, tasks_document, write_tasks
 
 COMMANDS = ("run", "scan", "models", "cache", "unapply", "mcp")
 CACHE_NAMESPACES = (
@@ -63,12 +66,13 @@ CACHE_NAMESPACES = (
     "models",
 )
 EXAMPLES = """examples:
-  since-cutoff                          probe your Claude Code model on this project
+  since-cutoff                          probe your coding agent's model on this project
   since-cutoff scan                     list API changes since the model's cutoff (no model calls)
   since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown - >> "$GITHUB_STEP_SUMMARY"
   since-cutoff scan --cutoff 2025-03   list API changes since a date, with no model involved
   since-cutoff run --apply              probe, then write verified notes into AGENTS.md
   since-cutoff run --quick --model openai:gpt-5.4
+  since-cutoff run --compare template   compare the notes with a baseline built without a model
   since-cutoff run --model openai-compatible:my-model --base-url http://localhost:8000/v1
   since-cutoff models sonnet            show known models and their training cutoffs
   since-cutoff mcp                      serve the read-only tools to coding agents over MCP (stdio)
@@ -124,6 +128,20 @@ def _csv(value: str) -> list[str]:
     return [x.strip() for x in value.split(",") if x.strip()]
 
 
+def _arms(value: str) -> list[str]:
+    """``--compare``: baseline arms, comma-separated; ``none`` for no baseline."""
+    arms = list(dict.fromkeys(_csv(value)))
+    choices = (*BASELINE_ARMS, "none")
+    unknown = [a for a in arms if a not in choices]
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unknown baseline '{unknown[0]}' (choose from {', '.join(choices)})"
+        )
+    if "none" in arms and len(arms) > 1:
+        raise argparse.ArgumentTypeError("'none' cannot be combined with a baseline")
+    return [a for a in arms if a != "none"]
+
+
 def _positive(value: str) -> int:
     try:
         n = int(value)
@@ -140,8 +158,10 @@ def _common(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--model",
-        help="model to test, as provider:model (default: claude-code, your Claude Code model; "
-        "scan with --cutoff alone uses no model). "
+        help="model to test, as provider:model (default: the model your coding agent is set up "
+        "with: SINCE_CUTOFF_MODEL; inside Claude Code, Claude Code's model; elsewhere the "
+        "Claude Code, Codex, OpenCode and Aider settings, the project's before the user's; else "
+        "claude-code, Claude Code's default; scan with --cutoff alone uses no model). "
         "Providers: claude-code, anthropic, openai, openrouter, deepseek, ollama, openai-compatible",
     )
     p.add_argument(
@@ -254,6 +274,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="exit with code 3 if any stale API use is found (for CI)",
     )
+    run.add_argument(
+        "--tasks-out",
+        metavar="FILE",
+        help="save the tasks this run used as JSON, to repeat it with --tasks-from "
+        "(relative to the current directory)",
+    )
+    run.add_argument(
+        "--tasks-from",
+        metavar="FILE",
+        help="use the tasks in FILE (from --tasks-out) instead of asking the task writer; API "
+        "changes it does not cover are skipped",
+    )
+    run.add_argument(
+        "--compare",
+        type=_arms,
+        default=[],
+        metavar="ARM[,ARM]",
+        help="also answer the held-out tasks with baseline notes built without a model and "
+        "compare them with the verified notes: template (each change stated from the API "
+        "diff), signatures (the new signature and docstring of each changed or replacement "
+        "API), none (default)",
+    )
 
     scan = sub.add_parser("scan", help="list API changes since the model's cutoff (no model calls)")
     _common(scan)
@@ -346,6 +388,10 @@ def main(argv: list[str] | None = None) -> int:
     if json_mode and markdown == "-":
         err.print("[red]error:[/red] --json and --markdown - cannot both write to stdout")
         return 2
+    problem = _compare_problem(args)
+    if problem:
+        err.print(f"[red]error:[/red] {escape(problem)}")
+        return 2
     out = Console(highlight=False, soft_wrap=True, emoji=False)
     ui = err if json_mode or markdown == "-" else out
     try:
@@ -364,6 +410,18 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         err.print("[yellow]interrupted[/yellow]")
         return 130
+
+
+def _compare_problem(args: argparse.Namespace) -> str | None:
+    """Why ``--compare`` cannot work with the other options, if it cannot: the baselines are
+    measured on held-out tasks, which ``--no-fix`` and ``--heldout 0`` leave out."""
+    if not getattr(args, "compare", None):
+        return None
+    if args.no_fix:
+        return "--compare measures notes on held-out tasks, which --no-fix skips"
+    if args.heldout == 0:
+        return "--compare measures notes on held-out tasks; --heldout 0 leaves none"
+    return None
 
 
 def _settings(args: argparse.Namespace) -> Settings:
@@ -389,11 +447,32 @@ def _settings(args: argparse.Namespace) -> Settings:
         s.regression = args.regression
         s.jobs = max(1, args.jobs)
         s.effort = None if args.effort == "default" else args.effort
+        s.compare = list(args.compare)
+        if args.tasks_from:
+            s.tasks_from = read_tasks(Path(args.tasks_from))
+        if args.tasks_out:
+            _check_tasks_out(Path(args.tasks_out), args.tasks_from)
         if args.quick:
             s.max_probes = min(s.max_probes, 12)
             s.heldout = min(s.heldout, 1)
             s.regression = min(s.regression, 3)
     return s
+
+
+def _check_tasks_out(path: Path, tasks_from: str | None) -> None:
+    """Refuse a ``--tasks-out`` path that cannot be written, before any model call: after the
+    run, a failed write would come too late to keep the result from being lost."""
+    if path.is_dir():
+        raise SinceCutoffError(f"--tasks-out {path} is a folder; give a file name")
+    folder = next((p for p in path.absolute().parents if p.exists()), None)
+    if folder is not None and not folder.is_dir():
+        raise SinceCutoffError(f"cannot write the tasks to {path}: {folder} is a file")
+    if tasks_from and path.exists() and path.samefile(tasks_from):
+        # The run only keeps the changes it probed, with --heldout tasks each: writing them
+        # over the file would drop the rest of it.
+        raise SinceCutoffError(
+            f"--tasks-out {path} is the --tasks-from file; write the tasks to another file"
+        )
 
 
 def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
@@ -404,6 +483,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     store = DiskCache()
     llm_cache = DiskCache(store.root, enabled=not getattr(args, "fresh", False))
     reporter = RichReporter(ui)
+    _choose_model(args, settings, project.root, reporter)
     engine = Engine(settings, store=store, llm_cache=llm_cache, reporter=reporter)
 
     if args.command == "scan" and args.model is None and settings.cutoff is not None:
@@ -414,7 +494,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
             "[dim](from --cutoff; no model given)[/dim]"
         )
     else:
-        target = engine.resolve_target(allow_calls=args.command == "run")
+        target = _resolve_target(engine, allow_calls=args.command == "run")
         ui.print(
             f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
             f"[bold]{target.cutoff.isoformat()}[/bold] [dim](from {escape(target.cutoff_source)})[/dim]"
@@ -426,6 +506,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     reporter.done()
 
     md, _ = write_outputs(project.root / args.out, scan, run)
+    tasks_out = getattr(args, "tasks_out", None)
     summary_md = getattr(args, "markdown", None)
     if summary_md:
         _write_markdown(summary_md, render_scan_markdown(scan, limit=args.limit))
@@ -454,6 +535,10 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         elif args.apply:
             ui.print("\n[dim]Nothing to apply: no failures needed a note.[/dim]")
     ui.print(f"[dim]Full report: {escape(str(md))}[/dim]")
+    if tasks_out:
+        # Last, so that a failed write cannot cost the result card, the JSON or --apply.
+        _write_tasks_out(Path(tasks_out), run, settings)
+        ui.print(f"[dim]Tasks: {escape(tasks_out)} (repeat this run with --tasks-from)[/dim]")
     if summary_md and summary_md != "-":
         ui.print(f"[dim]Markdown summary: {escape(summary_md)}[/dim]")
 
@@ -503,6 +588,56 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     if getattr(args, "fail_on_changes", False) and scan.changed:
         return 3
     return 0
+
+
+def _write_tasks_out(path: Path, run: RunResult | None, settings: Settings) -> None:
+    """``--tasks-out``: the tasks this run used, credited to whoever wrote them: this run's task
+    writer, or the writer, prompt version and tool a ``--tasks-from`` file names."""
+    used = run.used_tasks() if run is not None else []
+    source = settings.tasks_from
+    if source is None:
+        document = tasks_document(used, task_model=settings.task_model or settings.model)
+    else:
+        document = tasks_document(
+            used,
+            task_model=source.task_model,
+            prompt_version=source.prompt_version,
+            tool=source.tool,
+        )
+    write_tasks(path, document)
+
+
+def _choose_model(
+    args: argparse.Namespace, settings: Settings, root: Path, reporter: Reporter
+) -> None:
+    """Without --model, test the model the user's coding agent is set up with
+    (:func:`since_cutoff.hosts.detect_model`); when no setting names one, say that the default
+    is a guess and how to choose."""
+    if args.model is not None or (args.command == "scan" and settings.cutoff is not None):
+        return  # a date alone needs no model
+    found = detect_model(root)
+    if found is None:
+        settings.model_source = DEFAULT_SOURCE
+        reporter.warn(not_found_hint())
+        return
+    if found.problem:
+        raise SinceCutoffError(found.problem)
+    settings.model, settings.model_source = found.spec, found.source
+
+
+def _resolve_target(engine: Engine, *, allow_calls: bool) -> ModelTarget:
+    """The engine's target; an error about a model read from a setting names that setting."""
+    settings = engine.settings
+    spec, source = settings.model, settings.model_source
+    try:
+        return engine.resolve_target(allow_calls=allow_calls)
+    except SinceCutoffError as exc:
+        if not source or source == DEFAULT_SOURCE:
+            raise
+        raise type(exc)(
+            f"{exc} (the model '{spec}' is set in {source}; pass --model provider:model to "
+            "test another)"
+        ) from exc
 
 
 def _write_markdown(target: str, text: str) -> None:

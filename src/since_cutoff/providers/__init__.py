@@ -16,6 +16,8 @@ Model specs on the command line look like ``provider:model``:
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from since_cutoff.errors import ProviderError
 from since_cutoff.providers.base import Completion, Provider
 from since_cutoff.providers.claude_code import ClaudeCodeProvider
@@ -34,20 +36,40 @@ KNOWN_PROVIDERS = ("claude-code", "claude", "anthropic", *OPENAI_COMPATIBLE, "op
 _CLAUDE_ALIASES = ("sonnet", "opus", "haiku", "fable")
 
 
-def check_spec(spec: str) -> None:
-    """Fail early, with a helpful hint, on model specs such as ``sonnet`` or ``gpt-5.4``."""
-    provider, _model = split_spec(spec)
+def check_spec(spec: str, *, vendors: Collection[str] = (), calls: bool = True) -> None:
+    """Fail early, with a helpful hint, on model specs such as ``sonnet`` or ``gpt-5.4``.
+
+    ``vendors`` are the model makers and resellers the model registry knows (``google``,
+    ``github-copilot``, ...). since-cutoff cannot call them, but without ``calls`` (``scan``
+    only looks up the training cutoff) ``vendor:model`` is accepted.
+    """
+    provider, model = split_spec(spec)
     if provider in KNOWN_PROVIDERS:
         return
+    if model and provider in vendors:
+        if not calls:
+            return
+        raise ProviderError(
+            f"since-cutoff cannot call {provider} models itself (providers: "
+            f"{', '.join(p for p in KNOWN_PROVIDERS if p != 'claude')}). `scan` works with "
+            f"'{spec}', as it only looks up the training cutoff; to run, reach the model "
+            "through openrouter:<maker>/<model>, or openai-compatible:<model> with --base-url"
+        )
     if provider in _CLAUDE_ALIASES or provider.startswith("claude-"):
-        hint = f"claude-code:{spec}"
+        hint = f"'claude-code:{spec}'"
     elif provider.startswith(("gpt-", "o1", "o3", "o4")):
-        hint = f"openai:{spec}"
+        hint = f"'openai:{spec}'"
+    elif model:
+        # ``lmstudio:qwen3-coder`` (a local or custom provider) or ``qwen3:32b`` (a model tag).
+        hint = (
+            f"'<provider>:{spec}', or, if '{provider}' is a local or custom server (LM Studio, "
+            f"vLLM, ...), 'openai-compatible:{model}' with --base-url"
+        )
     else:
-        hint = f"<provider>:{spec}"
+        hint = f"'<provider>:{spec}'"
     raise ProviderError(
         f"--model must look like provider:model; '{spec}' has no known provider. Did you mean "
-        f"'{hint}'? Providers: {', '.join(p for p in KNOWN_PROVIDERS if p != 'claude')}"
+        f"{hint}? Providers: {', '.join(p for p in KNOWN_PROVIDERS if p != 'claude')}"
     )
 
 

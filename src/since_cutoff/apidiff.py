@@ -963,6 +963,17 @@ def _get(root: Any, rel: str) -> Any:
         return None
 
 
+def find_object(root: Any, path: str) -> Any:
+    """The object at the dotted ``path`` in a package loaded with :func:`load_api`, or None.
+
+    Re-exports are followed, so ``pkg.Client`` finds ``pkg._client.Client``. A path outside
+    ``root`` (another package, a sibling namespace package) is None.
+    """
+    if path != root.path and not path.startswith(root.path + "."):
+        return None
+    return _get(root, _rel(path, root.path))
+
+
 def _walk_modules(root: Any) -> Iterator[Any]:
     stack = [root]
     seen: set[str] = set()

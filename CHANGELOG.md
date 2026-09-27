@@ -5,6 +5,99 @@
 - `run` now exits with code 1 when no API change could be probed (for example because every
   task-writer call hit a rate limit) or when the task writer failed for at least half of the
   changes. Before, such a run exited 0, so `--fail-on-stale` passed a run that measured nothing.
+- The held-out result keeps every interval next to the number it belongs to. Before, the 95% CI
+  of "changes fixed" was printed next to the task-level before -> after rates, where it read as
+  an interval for those rates. Now the summary shows the task-level rates with the number of
+  paired tasks and API changes behind them; their difference with a 95% cluster-bootstrap
+  interval (resampling API changes with all their tasks, 4000 resamples, fixed seed); "changes
+  fixed: X of Y" with its own Wilson 95% CI, the number of changes broken and an exact two-sided
+  sign test (changes fixed vs broken); and the held-out pairs that were not counted, by reason
+  (untouched, off-task, invalid, error). report.md adds a statistics table (held-out tasks and
+  the regression check side by side) and a table per API change; results.json adds
+  `difference`, `ci95_difference`, `sign_test_p`, `changes_broken`, `excluded_reasons` and
+  `per_change`. The printed difference is the difference of the two rates printed next to it
+  (`12%` -> `75%` is `+63`), while results.json keeps the exact value.
+- "Changes fixed" now counts what it says: an API change is fixed when more than half of its
+  counted held-out tasks are wrong without the notes and correct with them (with one or two
+  held-out tasks per change, as in `--quick` and the default, that means all of them); "broken"
+  is the mirror case. Before, a held-out answer that was already correct without the notes also
+  counted towards a fix.
+- The regression check (previously-correct APIs) reports the API changes still correct with the
+  notes (more than half of their pairs correct) with a Wilson 95% CI, and the changes broken;
+  report.md leaves out "changes fixed" and the sign test for it, which say nothing about changes
+  the model already got right. In results.json, `heldout.regression.changes_fixed` and
+  `ci95_changes_fixed` now count wrong -> right, as for the held-out tasks (so they are about 0);
+  what they counted before, the changes still correct, is now `changes_still_correct` and
+  `ci95_changes_still_correct`.
+- `run --tasks-out FILE` saves the tasks a run used (per API change, the probe task first), and
+  `run --tasks-from FILE` runs on those tasks instead of calling the task writer; API changes
+  the file does not cover are skipped with that reason. Together they repeat a measurement on
+  exactly the same tasks, for another model or another set of notes. A tasks file may be UTF-8
+  with or without a byte order mark. Within a change, a task that repeats an earlier one, the
+  probe included (ignoring case, punctuation and spacing), is dropped, as the task writer's
+  repeats are. When failing changes have fewer held-out tasks than `--heldout` asks for (a file
+  written with a smaller `--heldout`, or a task writer that repeated itself), the run says so
+  and records the numbers it used (`heldout_used` in the settings; report.md shows "2 asked, 1
+  used"). The tasks file keeps who wrote the tasks: written again from reused tasks, it names
+  the original task writer, prompt version and tool, and a run on reused tasks records them
+  (`tasks_written_by`; report.md shows "tasks written by", and the run's own model as the note
+  writer). `--tasks-out` is checked before any model call (not a folder, not the `--tasks-from`
+  file, which it would shrink to the changes this run probed) and written last, so a failed
+  write keeps the result card, the JSON output and `--apply`.
+- results.json (`settings`) and report.md ("Run settings") record what a run's numbers depend
+  on besides the answers: the since-cutoff version, the model under test, the task and note
+  model, the Claude Code effort, the prompt version, the API diff schema, the probe, held-out
+  and regression budgets, the Python version, the tasks file (if any) and the date.
+- `run --compare template,signatures` measures simpler notes next to the verified ones, so a run
+  shows how much the verified notes add instead of assuming they are best. `template` states
+  each failing change in one sentence from the API diff; `signatures` gives the new signature
+  and first docstring paragraph of each changed API, or of the replacement its library names.
+  Neither calls a model. Every held-out task and regression check is answered once without
+  notes and once per block, so all blocks are paired against the same answers without notes,
+  and they are compared on the same pairs: a pair counts for every block only when its answer
+  without notes is scorable and no block's answer with notes is an error (so a rate-limit error
+  on the one task a baseline did not fix cannot hand it a "fix"). The verified notes' own result
+  keeps every pair it can count, as without `--compare`; when errors leave out some of those,
+  the result card adds the verified notes' rates on the shared pairs. The result card adds a
+  line per baseline; report.md adds a table with each block's size in tokens, held-out correct
+  without -> with, the pairs it did not count and why, changes fixed with its 95% CI, changes
+  broken, the regression check, and the changes only the verified notes or only the baseline
+  fixed with an exact sign test; results.json adds `arms` and, on each held-out attempt, the
+  `arm` it saw. Without `--compare` a run does and reports exactly what it did before.
+- Without `--model`, `run` and `scan` test the model your coding agent is set up with.
+  `SINCE_CUTOFF_MODEL` (a full spec such as `openai:gpt-5.4`) always wins. Inside Claude Code
+  (which sets `CLAUDECODE=1` for the commands it runs) only Claude Code's settings count:
+  `ANTHROPIC_MODEL`, then `model` in the project's `.claude/settings.local.json` and
+  `.claude/settings.json`, then in `~/.claude/settings.json`, else Claude Code's default; other
+  agents' files are not read. Elsewhere the most specific setting wins: first the agents'
+  environment variables (`ANTHROPIC_MODEL`, `AIDER_MODEL`), then every project setting, the
+  nearest folder first, then the user settings. Project settings are looked for from the
+  scanned folder up to the repository root (the first folder with `.git`), never in the home
+  folder or above: Claude Code's `.claude/settings.local.json` and `.claude/settings.json`,
+  Codex's `.codex/config.toml` (with the selected profile, as `openai:<model>`), OpenCode's
+  `opencode.json` or `opencode.jsonc`, Aider's `.aider.conf.yml`. User settings, in the same
+  order: `~/.claude/settings.json`, `$CODEX_HOME/config.toml` or `~/.codex/config.toml`,
+  `~/.config/opencode/`, `~/.aider.conf.yml`. Aider's short aliases (`4o`, `flash`, `gemini`,
+  `deepseek`, `r1`, `grok3`, ...) are read as the models they stand for; a model name
+  since-cutoff cannot place stops the run with a message naming the setting, instead of a
+  malformed spec. The model line, report.md and results.json say where the model came from
+  ("model from .claude/settings.json"), and an error about a detected model names the setting.
+  Only the model fields are read. Before, the default was Claude Code's user-level model, and
+  `scan` guessed Sonnet whenever `~/.claude/settings.json` named none, even when the project,
+  `ANTHROPIC_MODEL` or another agent named a model. When no setting names a model, the default
+  is still Claude Code's, and the tool now says so and how to choose another.
+  `--model claude-code` behaves as before.
+- A `--model` whose provider since-cutoff does not know, such as `lmstudio:qwen3-coder`, gets a
+  hint to use `openai-compatible:<model>` with `--base-url` for a local or custom server.
+- `scan` looks up the training cutoff of models from any maker or reseller the model registry
+  knows, such as `--model google:gemini-2.5-pro`; `run` says which providers it can call
+  instead. Amazon Bedrock (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) and Vertex AI
+  (`claude-sonnet-4-5@20250929`) model ids are recognised, `claude-code:opusplan` counts as
+  Sonnet (the model that writes the code), and `anthropic:sonnet` (Aider's alias) means the
+  newest Sonnet, reported as an assumption. The MCP tools take `provider:model` ids for any
+  provider the registry knows, such as `github-copilot:gpt-5.4`.
+- `run` checks that it can call the model (its API key, or the `claude` CLI) before it scans
+  the dependencies, instead of failing minutes later on the first call.
 
 ## 0.2.0 - 2026-09-27
 

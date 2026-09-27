@@ -93,7 +93,8 @@ def test_full_run_measures_fixes_and_verifies(tmp_path, cache, fake_pypi):
     heldout = run.pairing("heldout")
     assert heldout.n == 8  # 4 failures x 2 held-out tasks, compared as pairs
     assert (heldout.before, heldout.after, heldout.fixed, heldout.broken) == (0, 8, 8, 0)
-    assert (heldout.changes, heldout.changes_fixed) == (4, 4)
+    assert (heldout.changes, heldout.changes_fixed, heldout.changes_broken) == (4, 4, 0)
+    assert heldout.excluded == 0 and all(c.outcome == "fixed" for c in heldout.per_change)
     regression = run.pairing("regression")
     assert (regression.n, regression.after, regression.broken) == (1, 1, 0)
 

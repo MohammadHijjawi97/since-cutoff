@@ -19,10 +19,14 @@ do not guess results**. Run the tool and report what it prints.
 2. Pick the command. Use `$ARGUMENTS` if the user gave any; otherwise:
    - quick look, no model calls: `since-cutoff scan`
    - full measurement with verified notes: `since-cutoff run --quick`
-3. Name the model. Inside Claude Code the default (`claude-code`) is right. If you are not
-   running inside Claude Code, add `--model <provider>:<model>` for the model you are (for
-   example `--model openai:gpt-5.4`); the default stands for a Claude model and `run` needs
-   the `claude` CLI for it.
+3. Name the model. Without `--model`, the tool tests the model your coding agent is set up with
+   (`SINCE_CUTOFF_MODEL`; inside Claude Code, only Claude Code's settings; elsewhere the Claude
+   Code, Codex, OpenCode and Aider settings, the project's before the user's) and says where
+   it read it ("model from ..."). If that is not the model you are, or it warns that no model
+   setting was found, add `--model <provider>:<model>` for the model you are (for example
+   `--model openai:gpt-5.4`, or `--model claude-code:<model>` for a model picked with
+   `/model`). `run` calls Claude Code models through the `claude` CLI and other models through
+   their provider's API key.
 4. Before `run`, tell the user that it sends prompts (package names, versions, public API
    signatures and generated tasks, never their source code) to the model provider they choose,
    uses their API credits or Claude Code usage, and can take 5-20 minutes. Wait for a yes.
@@ -32,7 +36,11 @@ do not guess results**. Run the tool and report what it prints.
    2-minute foreground call. Everything is cached, so re-running after an interruption resumes
    quickly.
 6. Summarise the result card: the model and its training cutoff, how many dependencies changed
-   after the cutoff, what was stale, and the held-out before/after numbers.
+   after the cutoff, what was stale, and the held-out before/after numbers. Quote each interval
+   with the number it belongs to: the bootstrap CI goes with the difference of the task-level
+   rates, the other CI with "changes fixed: X of Y". If the run compared baseline notes
+   (`--compare`), give each block's "changes fixed" with its CI, and call one block better
+   only when report.md's head-to-head sign test for it has a small p-value.
 7. Only write notes into the user's files if they asked for it: re-run with `--apply` (it writes
    a marked block into AGENTS.md, or CLAUDE.md if that is the file the project uses).
    `since-cutoff unapply` removes the block again.

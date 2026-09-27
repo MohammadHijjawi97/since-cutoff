@@ -70,6 +70,26 @@ def _maybe_date(value: Any) -> date | None:
         return None
 
 
+# Amazon Bedrock ids: an optional region, the model maker, the maker's id and a version.
+_BEDROCK_ID = re.compile(
+    r"(?:[a-z-]+\.)?(?:anthropic|openai|meta|mistral|amazon|cohere|deepseek|qwen)\."
+    r"(.+?)(?:-v\d+(?::\d+)?)?"
+)
+
+
+def bare_model_id(model_id: str) -> str:
+    """A model id as its maker spells it, lowercased: without a router prefix
+    (``openrouter/anthropic/``), Amazon Bedrock's region, maker and version
+    (``us.anthropic.claude-sonnet-4-5-20250929-v1:0``), a Vertex AI date
+    (``claude-sonnet-4-5@20250929``) or a context-size tag (``[1m]``)."""
+    mid = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())
+    mid = mid.rsplit("/", 1)[-1]
+    bedrock = _BEDROCK_ID.fullmatch(mid)
+    if bedrock:
+        mid = bedrock.group(1)
+    return mid.split("@", 1)[0]
+
+
 def normalize_model_id(model_id: str) -> list[str]:
     """Candidate spellings of a model id, most specific first."""
     mid = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())  # "claude-opus-4-6[1m]"
@@ -78,6 +98,7 @@ def normalize_model_id(model_id: str) -> list[str]:
     candidates = [mid]
     no_tag = mid.split(":", 1)[0]  # ollama style "qwen3:32b"
     candidates.append(no_tag)
+    candidates.append(bare_model_id(model_id))  # Bedrock, Vertex AI, nested router prefixes
     for c in list(candidates):
         candidates.append(c.replace(".", "-"))
         candidates.append(re.sub(r"-\d{8}$", "", c))  # dated snapshot suffix

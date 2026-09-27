@@ -88,7 +88,7 @@ class Note:
 def template_bullet(change: APIChange) -> str:
     """A factual bullet derived only from the API diff (never wrong, sometimes less helpful)."""
     pkg = f"{change.package} {change.to_version}"
-    hint = f" ({_safe(change.hint).rstrip('.')})" if change.hint else ""
+    hint = f" ({safe_text(change.hint).rstrip('.')})" if change.hint else ""
     if change.kind == MOVED and change.moved_to:
         module, _, name = change.moved_to.rpartition(".")
         return f"`{change.path}` moved: use `from {module} import {name}` ({pkg})."
@@ -110,7 +110,7 @@ def template_bullet(change: APIChange) -> str:
     if change.kind == PARAM_POSITIONAL_ONLY:
         return f"`{change.owner + '.' if change.owner else ''}{change.name}`: pass `{change.parameter}` positionally in {pkg}."
     if change.kind == DEPRECATED:
-        text = _safe(change.deprecation or "").rstrip(".")
+        text = safe_text(change.deprecation or "").rstrip(".")
         msg = (
             f": {text}" if text and text.lower() not in ("deprecated", "deprecated method") else ""
         )
@@ -175,7 +175,7 @@ def api_identifiers(code: str) -> set[str]:
     return expanded
 
 
-def _safe(text: str, limit: int = 160) -> str:
+def safe_text(text: str, limit: int = 160) -> str:
     """Package-provided text (docstrings, deprecation messages) is untrusted: keep it short,
     single-line, and unable to close the block or smuggle code spans."""
     text = " ".join(text.split())

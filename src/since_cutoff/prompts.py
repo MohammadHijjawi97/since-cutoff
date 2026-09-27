@@ -39,6 +39,29 @@ If no sensible task exists (for example the change only affects internals or con
 Return JSON: {{"tasks": ["...", "..."], "skip_reason": null}}"""
 
 
+def normalize_task(text: str) -> str:
+    """A task reduced to what makes it the same task: lower case, letters and digits, single
+    spaces. Two tasks that normalize alike are one task (the probe included)."""
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
+
+
+def distinct_tasks(tasks: list[str]) -> list[str]:
+    """``tasks`` without those that repeat an earlier one (:func:`normalize_task`), in order.
+
+    Held-out tasks must differ from the probe task and from each other: a repeat would count
+    one answer twice, and the probe as a held-out task would test notes on the answer they were
+    written from.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for task in tasks:
+        key = normalize_task(task)
+        if key not in seen:
+            seen.add(key)
+            out.append(task)
+    return out
+
+
 def forbidden_identifiers(change: APIChange) -> list[str]:
     names = {change.name}
     if change.owner:

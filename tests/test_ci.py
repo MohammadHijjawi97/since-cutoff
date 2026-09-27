@@ -235,6 +235,7 @@ def test_scan_with_only_a_cutoff_names_no_model(tmp_path, capsys, fake_cli, monk
 
     monkeypatch.setattr(engine_module.Engine, "resolve_target", no_model)
     monkeypatch.setattr(engine_module, "_claude_settings_model", no_model)
+    monkeypatch.setattr(cli, "detect_model", no_model)
     root = make_app(tmp_path)
     summary_md = tmp_path / "summary.md"
     argv = ["scan", str(root), "--cutoff", "2025-02-28", "--markdown", str(summary_md)]

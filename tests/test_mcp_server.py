@@ -73,6 +73,35 @@ def test_model_ids_prefer_the_model_maker_over_resellers(tools: Tools) -> None:
     assert tools.model_cutoff("gpt-5.4").startswith("gpt-5.4 (openai")
 
 
+@pytest.mark.parametrize(
+    ("spec", "start", "cutoff"),
+    [
+        ("openai:gpt-5.4", "gpt-5.4 (openai", "2025-08-31"),
+        ("openai/gpt-5.4", "gpt-5.4 (openai", "2025-08-31"),
+        ("codex:gpt-5.4", "gpt-5.4 (openai", "2025-08-31"),
+        ("google:gemini-2.5-pro", "gemini-2.5-pro (google", "2025-01"),
+        ("gemini-2.5-pro", "gemini-2.5-pro (google", "2025-01"),
+        ("google/gemini-2.5-pro", "gemini-2.5-pro (google", "2025-01"),
+        ("gemini/gemini-2.5-pro", "gemini-2.5-pro (google", "2025-01"),  # Aider's spelling
+        # Any provider the registry knows, not only those since-cutoff can call.
+        ("github-copilot:gpt-5.4", "gpt-5.4 (github-copilot", "2025-08-31"),
+    ],
+)
+def test_model_cutoff_takes_ids_from_any_vendor_the_registry_knows(
+    tools: Tools, spec: str, start: str, cutoff: str
+) -> None:
+    out = tools.model_cutoff(spec)
+    assert out.startswith(start) and f"training cutoff {cutoff}" in out
+
+
+def test_the_change_tools_take_openai_and_google_ids(tools: Tools) -> None:
+    out = tools.api_changes("toylib", model="google:gemini-2.5-pro")
+    assert "the newest release on or before 2025-01-31" in out and "gemini-2.5-pro" in out
+    assert "5 breaking changes, 1 new deprecation" in out
+    out = tools.api_changes("toylib", model="openai:gpt-5.4")
+    assert "the newest release on or before 2025-08-31" in out and "gpt-5.4" in out
+
+
 def test_model_cutoff_maps_claude_aliases_and_says_so(tools: Tools) -> None:
     out = tools.model_cutoff("sonnet")
     assert "'sonnet' is an alias: assuming the newest sonnet model" in out

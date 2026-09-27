@@ -7,12 +7,28 @@ import re
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from since_cutoff import cli, hosts
 from since_cutoff.cache import DiskCache
+from since_cutoff.engine import Engine, Settings
 from since_cutoff.providers.base import Completion
 from since_cutoff.pypi import PyPI, Release, SourceTree
+
+
+# ------------------------------------------------------------ agent settings
+@pytest.fixture(autouse=True)
+def agent_home(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """An empty home directory and none of the model variables, so that no test reads the
+    developer's own coding-agent settings (:func:`since_cutoff.hosts.detect_model`)."""
+    for name in hosts.ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(hosts, "user_home", lambda: home)
+    return home
+
 
 # --------------------------------------------------------------- toy library
 TOYLIB_V1 = {
@@ -282,11 +298,24 @@ def topic_of(text: str) -> str | None:
 
 
 class ScriptedModel:
-    """A deterministic stand-in for an LLM that knows toylib 1.0 but not 2.0."""
+    """A deterministic stand-in for an LLM that knows toylib 1.0 but not 2.0.
 
-    def __init__(self, *, knows: set[str] | None = None, learns_from_notes: bool = True) -> None:
+    With notes in the system prompt it writes correct code for every topic, unless
+    ``learns_from`` maps topics to the text the notes must contain for that topic: then it only
+    gets a topic right when its notes contain that text, and never gets an unlisted topic right
+    from notes. That lets different notes blocks (``run --compare``) fix different changes.
+    """
+
+    def __init__(
+        self,
+        *,
+        knows: set[str] | None = None,
+        learns_from_notes: bool = True,
+        learns_from: dict[str, str] | None = None,
+    ) -> None:
         self.knows = knows or set()
         self.learns_from_notes = learns_from_notes
+        self.learns_from = learns_from
         self.calls: list[tuple[str, str]] = []
 
     provider_name = "scripted"
@@ -305,10 +334,19 @@ class ScriptedModel:
             bullet, example = NOTE_BULLETS[topic or "send"]
             return Completion(json.dumps({"bullet": bullet, "example": example}))
         topic = topic_of(user) or "send"
-        notes = "Project notes" in system
-        good = topic in self.knows or (notes and self.learns_from_notes)
+        good = topic in self.knows or self._learns(topic, system)
         code = (GOOD_CODE if good else STALE_CODE)[topic]
         return Completion(f"```python\n{code}```")
+
+    def _learns(self, topic: str, system: str) -> bool:
+        """Do the notes in this solver prompt (if any) teach the model ``topic``?"""
+        _, found, notes = system.partition("Project notes")
+        if not found or not self.learns_from_notes:
+            return False
+        if self.learns_from is None:
+            return True
+        needle = self.learns_from.get(topic)
+        return needle is not None and needle in notes
 
     @staticmethod
     def _tasks(prompt: str) -> list[str]:
@@ -329,3 +367,24 @@ class ScriptedModel:
 @pytest.fixture
 def scripted() -> ScriptedModel:
     return ScriptedModel()
+
+
+@pytest.fixture
+def scripted_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fake_pypi: FakePyPI
+) -> list[ScriptedModel]:
+    """The CLI with the fake PyPI, a throwaway cache and a scripted model per run.
+
+    Append one ScriptedModel per ``cli.main`` call; each run's engine takes the next.
+    """
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(tmp_path / "cli-cache"))
+    models: list[ScriptedModel] = []
+
+    def engine(settings: Settings, **kwargs: Any) -> Engine:
+        model = models.pop(0)
+        return Engine(
+            settings, **{**kwargs, "pypi": fake_pypi, "provider_factory": lambda s: model}
+        )
+
+    monkeypatch.setattr(cli, "Engine", engine)
+    return models
