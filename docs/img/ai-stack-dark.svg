@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 597" width="940" height="597" role="img" aria-labelledby="t d" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">
+<title id="t">What your model hasn't seen: the Python AI stack after each training cutoff</title>
+<desc id="d">For 21 models from 8 vendors, how many of 36 widely used Python AI libraries broke their public API or shipped a new major version after the model's training cutoff.</desc>
+<rect width="940" height="597" fill="#0d1117"/>
+<text x="24" y="34" font-size="20" font-weight="650" fill="#e6edf3">What your model hasn't seen</text>
+<text x="24" y="58" font-size="13.5" fill="#9198a1">Of 36 widely used Python AI/LLM libraries (September 2026 versions), how many changed after each model's training cutoff</text>
+<line x1="250.0" x2="250.0" y1="84" y2="533" stroke="#21262d"/>
+<text x="250.0" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">0</text>
+<line x1="353.3" x2="353.3" y1="84" y2="533" stroke="#21262d"/>
+<text x="353.3" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">6</text>
+<line x1="456.7" x2="456.7" y1="84" y2="533" stroke="#21262d"/>
+<text x="456.7" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">12</text>
+<line x1="560.0" x2="560.0" y1="84" y2="533" stroke="#21262d"/>
+<text x="560.0" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">18</text>
+<line x1="663.3" x2="663.3" y1="84" y2="533" stroke="#21262d"/>
+<text x="663.3" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">24</text>
+<line x1="766.7" x2="766.7" y1="84" y2="533" stroke="#21262d"/>
+<text x="766.7" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">30</text>
+<line x1="870.0" x2="870.0" y1="84" y2="533" stroke="#21262d"/>
+<text x="870.0" y="79" font-size="10.5" fill="#9198a1" text-anchor="middle">36</text>
+<circle cx="24" cy="102.5" r="4" fill="#10a37f"/>
+<text x="34" y="106.5" font-size="12.5" fill="#e6edf3">gpt-4o</text>
+<text x="240" y="106.5" font-size="11.5" fill="#9198a1" text-anchor="end">Sep 2023</text>
+<rect x="250" y="94" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="95" width="361.7" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="104" width="258.3" height="6" rx="2" fill="#4493f8"/>
+<text x="617.7" y="106.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">21</tspan> <tspan fill="#4493f8">15</tspan> <tspan fill="#9198a1">· 13 did not exist yet</tspan></text>
+<circle cx="24" cy="123.5" r="4" fill="#10a37f"/>
+<text x="34" y="127.5" font-size="12.5" fill="#e6edf3">gpt-4.1</text>
+<text x="240" y="127.5" font-size="11.5" fill="#9198a1" text-anchor="end">Apr 2024</text>
+<rect x="250" y="115" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="116" width="482.2" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="125" width="327.2" height="6" rx="2" fill="#4493f8"/>
+<text x="738.2" y="127.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">28</tspan> <tspan fill="#4493f8">19</tspan> <tspan fill="#9198a1">· 6 did not exist yet</tspan></text>
+<circle cx="24" cy="144.5" r="4" fill="#10a37f"/>
+<text x="34" y="148.5" font-size="12.5" fill="#e6edf3">o3</text>
+<text x="240" y="148.5" font-size="11.5" fill="#9198a1" text-anchor="end">May 2024</text>
+<rect x="250" y="136" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="137" width="499.4" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="146" width="344.4" height="6" rx="2" fill="#4493f8"/>
+<text x="755.4" y="148.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">29</tspan> <tspan fill="#4493f8">20</tspan> <tspan fill="#9198a1">· 5 did not exist yet</tspan></text>
+<circle cx="24" cy="165.5" r="4" fill="#10a37f"/>
+<text x="34" y="169.5" font-size="12.5" fill="#e6edf3">gpt-5</text>
+<text x="240" y="169.5" font-size="11.5" fill="#9198a1" text-anchor="end">Sep 2024</text>
+<rect x="250" y="157" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="158" width="516.7" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="167" width="310.0" height="6" rx="2" fill="#4493f8"/>
+<text x="772.7" y="169.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">30</tspan> <tspan fill="#4493f8">18</tspan> <tspan fill="#9198a1">· 4 did not exist yet</tspan></text>
+<circle cx="24" cy="186.5" r="4" fill="#b8860b"/>
+<text x="34" y="190.5" font-size="12.5" fill="#e6edf3">kimi-k2</text>
+<text x="240" y="190.5" font-size="11.5" fill="#9198a1" text-anchor="end">Oct 2024</text>
+<rect x="250" y="178" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="179" width="516.7" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="188" width="310.0" height="6" rx="2" fill="#4493f8"/>
+<text x="772.7" y="190.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">30</tspan> <tspan fill="#4493f8">18</tspan> <tspan fill="#9198a1">· 4 did not exist yet</tspan></text>
+<circle cx="24" cy="207.5" r="4" fill="#fa520f"/>
+<text x="34" y="211.5" font-size="12.5" fill="#e6edf3">mistral-large-latest</text>
+<text x="240" y="211.5" font-size="11.5" fill="#9198a1" text-anchor="end">Nov 2024</text>
+<rect x="250" y="199" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="200" width="533.9" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="209" width="344.4" height="6" rx="2" fill="#4493f8"/>
+<text x="789.9" y="211.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">31</tspan> <tspan fill="#4493f8">20</tspan> <tspan fill="#9198a1">· 2 did not exist yet</tspan></text>
+<circle cx="24" cy="228.5" r="4" fill="#4285f4"/>
+<text x="34" y="232.5" font-size="12.5" fill="#e6edf3">gemini-2.5-pro</text>
+<text x="240" y="232.5" font-size="11.5" fill="#9198a1" text-anchor="end">Jan 2025</text>
+<rect x="250" y="220" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="221" width="568.3" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="230" width="361.7" height="6" rx="2" fill="#4493f8"/>
+<text x="824.3" y="232.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">33</tspan> <tspan fill="#4493f8">21</tspan></text>
+<circle cx="24" cy="249.5" r="4" fill="#c15f3c"/>
+<text x="34" y="253.5" font-size="12.5" fill="#e6edf3">claude-haiku-4-5</text>
+<text x="240" y="253.5" font-size="11.5" fill="#9198a1" text-anchor="end">Feb 2025</text>
+<rect x="250" y="241" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="242" width="568.3" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="251" width="361.7" height="6" rx="2" fill="#4493f8"/>
+<text x="824.3" y="253.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">33</tspan> <tspan fill="#4493f8">21</tspan></text>
+<circle cx="24" cy="270.5" r="4" fill="#c15f3c"/>
+<text x="34" y="274.5" font-size="12.5" fill="#e6edf3">claude-opus-4-6</text>
+<text x="240" y="274.5" font-size="11.5" fill="#9198a1" text-anchor="end">May 2025</text>
+<rect x="250" y="262" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="263" width="568.3" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="272" width="344.4" height="6" rx="2" fill="#4493f8"/>
+<text x="824.3" y="274.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">33</tspan> <tspan fill="#4493f8">20</tspan></text>
+<circle cx="24" cy="291.5" r="4" fill="#4d6bfe"/>
+<text x="34" y="295.5" font-size="12.5" fill="#e6edf3">deepseek-v4-flash</text>
+<text x="240" y="295.5" font-size="11.5" fill="#9198a1" text-anchor="end">May 2025</text>
+<rect x="250" y="283" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="284" width="568.3" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="293" width="344.4" height="6" rx="2" fill="#4493f8"/>
+<text x="824.3" y="295.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">33</tspan> <tspan fill="#4493f8">20</tspan></text>
+<circle cx="24" cy="312.5" r="4" fill="#c15f3c"/>
+<text x="34" y="316.5" font-size="12.5" fill="#e6edf3">claude-sonnet-4-5</text>
+<text x="240" y="316.5" font-size="11.5" fill="#9198a1" text-anchor="end">Jul 2025</text>
+<rect x="250" y="304" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="305" width="551.1" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="314" width="344.4" height="6" rx="2" fill="#4493f8"/>
+<text x="807.1" y="316.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">32</tspan> <tspan fill="#4493f8">20</tspan></text>
+<circle cx="24" cy="333.5" r="4" fill="#6f42c1"/>
+<text x="34" y="337.5" font-size="12.5" fill="#e6edf3">qwen3-coder</text>
+<text x="240" y="337.5" font-size="11.5" fill="#9198a1" text-anchor="end">Jul 2025</text>
+<rect x="250" y="325" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="326" width="551.1" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="335" width="344.4" height="6" rx="2" fill="#4493f8"/>
+<text x="807.1" y="337.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">32</tspan> <tspan fill="#4493f8">20</tspan></text>
+<circle cx="24" cy="354.5" r="4" fill="#10a37f"/>
+<text x="34" y="358.5" font-size="12.5" fill="#e6edf3">gpt-5.4</text>
+<text x="240" y="358.5" font-size="11.5" fill="#9198a1" text-anchor="end">Aug 2025</text>
+<rect x="250" y="346" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="347" width="551.1" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="356" width="327.2" height="6" rx="2" fill="#4493f8"/>
+<text x="807.1" y="358.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">32</tspan> <tspan fill="#4493f8">19</tspan></text>
+<circle cx="24" cy="375.5" r="4" fill="#10a37f"/>
+<text x="34" y="379.5" font-size="12.5" fill="#e6edf3">gpt-5.5</text>
+<text x="240" y="379.5" font-size="11.5" fill="#9198a1" text-anchor="end">Dec 2025</text>
+<rect x="250" y="367" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="368" width="499.4" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="377" width="223.9" height="6" rx="2" fill="#4493f8"/>
+<text x="755.4" y="379.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">29</tspan> <tspan fill="#4493f8">13</tspan></text>
+<circle cx="24" cy="396.5" r="4" fill="#fa520f"/>
+<text x="34" y="400.5" font-size="12.5" fill="#e6edf3">devstral-medium-latest</text>
+<text x="240" y="400.5" font-size="11.5" fill="#9198a1" text-anchor="end">Dec 2025</text>
+<rect x="250" y="388" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="389" width="499.4" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="398" width="223.9" height="6" rx="2" fill="#4493f8"/>
+<text x="755.4" y="400.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">29</tspan> <tspan fill="#4493f8">13</tspan></text>
+<circle cx="24" cy="417.5" r="4" fill="#c15f3c"/>
+<text x="34" y="421.5" font-size="12.5" fill="#e6edf3">claude-opus-4-7</text>
+<text x="240" y="421.5" font-size="11.5" fill="#9198a1" text-anchor="end">Jan 2026</text>
+<rect x="250" y="409" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="410" width="499.4" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="419" width="189.4" height="6" rx="2" fill="#4493f8"/>
+<text x="755.4" y="421.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">29</tspan> <tspan fill="#4493f8">11</tspan></text>
+<circle cx="24" cy="438.5" r="4" fill="#555555"/>
+<text x="34" y="442.5" font-size="12.5" fill="#e6edf3">grok-4.6</text>
+<text x="240" y="442.5" font-size="11.5" fill="#9198a1" text-anchor="end">Feb 2026</text>
+<rect x="250" y="430" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="431" width="499.4" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="440" width="189.4" height="6" rx="2" fill="#4493f8"/>
+<text x="755.4" y="442.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">29</tspan> <tspan fill="#4493f8">11</tspan></text>
+<circle cx="24" cy="459.5" r="4" fill="#4285f4"/>
+<text x="34" y="463.5" font-size="12.5" fill="#e6edf3">gemini-3.7-flash</text>
+<text x="240" y="463.5" font-size="11.5" fill="#9198a1" text-anchor="end">Mar 2026</text>
+<rect x="250" y="451" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="452" width="430.6" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="461" width="172.2" height="6" rx="2" fill="#4493f8"/>
+<text x="686.6" y="463.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">25</tspan> <tspan fill="#4493f8">10</tspan></text>
+<circle cx="24" cy="480.5" r="4" fill="#10a37f"/>
+<text x="34" y="484.5" font-size="12.5" fill="#e6edf3">gpt-6-sol</text>
+<text x="240" y="484.5" font-size="11.5" fill="#9198a1" text-anchor="end">Apr 2026</text>
+<rect x="250" y="472" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="473" width="430.6" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="482" width="172.2" height="6" rx="2" fill="#4493f8"/>
+<text x="686.6" y="484.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">25</tspan> <tspan fill="#4493f8">10</tspan></text>
+<circle cx="24" cy="501.5" r="4" fill="#555555"/>
+<text x="34" y="505.5" font-size="12.5" fill="#e6edf3">grok-4.7</text>
+<text x="240" y="505.5" font-size="11.5" fill="#9198a1" text-anchor="end">May 2026</text>
+<rect x="250" y="493" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="494" width="413.3" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="503" width="137.8" height="6" rx="2" fill="#4493f8"/>
+<text x="669.3" y="505.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">24</tspan> <tspan fill="#4493f8">8</tspan></text>
+<circle cx="24" cy="522.5" r="4" fill="#c15f3c"/>
+<text x="34" y="526.5" font-size="12.5" fill="#e6edf3">claude-opus-5-5</text>
+<text x="240" y="526.5" font-size="11.5" fill="#9198a1" text-anchor="end">Jun 2026</text>
+<rect x="250" y="514" width="620.0" height="17" rx="3" fill="#161b22"/>
+<rect x="250" y="515" width="344.4" height="8" rx="2" fill="#f85149"/>
+<rect x="250" y="524" width="103.3" height="6" rx="2" fill="#4493f8"/>
+<text x="600.4" y="526.5" font-size="11.5" fill="#e6edf3"><tspan fill="#f85149" font-weight="600">20</tspan> <tspan fill="#4493f8">6</tspan></text>
+<rect x="250" y="553" width="14" height="8" rx="2" fill="#f85149"/>
+<text x="270" y="563" font-size="12" fill="#e6edf3">libraries whose public API broke (names or parameters removed or changed)</text>
+<rect x="250" y="571" width="14" height="6" rx="2" fill="#4493f8"/>
+<text x="270" y="579" font-size="12" fill="#e6edf3">libraries now on a new major version</text>
+<text x="916" y="579" font-size="11" fill="#9198a1" text-anchor="end">static API diff, since-cutoff 0.2.0</text>
+</svg>

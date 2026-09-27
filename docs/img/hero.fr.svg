@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="520" viewBox="0 0 640 520" role="img" aria-labelledby="title desc" xml:lang="fr">
+<title id="title">since-cutoff : votre modèle de code a appris vos bibliothèques avant qu&#x27;elles ne changent</title>
+<desc id="desc">Claude Opus 4.6, testé sur un seul projet d&#x27;exemple avec since-cutoff 0.1.0 : sur 7 des 16 changements d&#x27;API sondés, il a utilisé un nom ou un paramètre supprimé depuis. Avec les notes, la part de tâches réservées correctes est passée de 5 % à 65 % (20 tâches). Essayez : uvx since-cutoff scan (aucun appel au modèle, aucune clé d&#x27;API).</desc>
+<style>
+    .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
+    .text { fill: #1f2328; }
+    .muted { fill: #59636e; }
+    .accent { fill: #bc4c00; }
+    .red { fill: #cf222e; }
+    .green { fill: #1a7f37; }
+    .b { font-weight: 700; }
+    .sb { font-weight: 600; }
+  </style>
+<clipPath id="card"><rect x="0.5" y="0.5" width="639" height="519" rx="16"/></clipPath>
+<rect x="0.5" y="0.5" width="639" height="519" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="0" y="0" width="640" height="6" fill="#bc4c00" clip-path="url(#card)"/>
+<g transform="translate(25 29) scale(0.0546875)"><circle cx="256" cy="256" r="148" fill="none" stroke="#bc4c00" stroke-width="44"/><path d="M256 168v88l62 38" fill="none" stroke="#1f2328" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="60" y="50" font-size="20" class="mono b accent">since-cutoff</text>
+<text x="28" y="96" font-size="30" class="sans b text">Votre modèle de code a appris</text>
+<text x="28" y="134" font-size="30" class="sans b text">vos bibliothèques avant</text>
+<text x="28" y="172" font-size="30" class="sans b text">qu&#x27;elles ne changent.</text>
+<text x="28" y="210" font-size="18" class="sans muted">Claude Opus 4.6 sur un seul projet (since-cutoff 0.1.0) :</text>
+<rect x="28" y="228" width="584" height="95" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="48" y="290.5" font-size="42" class="sans b"><tspan class="red">7</tspan><tspan class="text"> sur 16</tspan></text>
+<text x="300" y="257.15" font-size="19" class="sans text">changements d&#x27;API sondés</text>
+<text x="300" y="282.15" font-size="19" class="sans text">où il a utilisé un nom ou</text>
+<text x="300" y="307.15" font-size="19" class="sans text">un paramètre supprimé depuis</text>
+<rect x="28" y="335" width="584" height="95" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="48" y="397.5" font-size="42" class="sans b"><tspan class="red">5 %</tspan><tspan class="muted" font-weight="400"> → </tspan><tspan class="green">65 %</tspan></text>
+<text x="300" y="376.65" font-size="19" class="sans text">de 20 tâches réservées</text>
+<text x="300" y="401.65" font-size="19" class="sans text">réussies, sans → avec notes</text>
+<rect x="28" y="444" width="584" height="52" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="46" y="477" font-size="21" class="mono"><tspan class="muted">$ </tspan><tspan class="text b">uvx since-cutoff scan</tspan></text>
+<text x="596" y="466" font-size="15" class="sans muted" text-anchor="end">aucun appel au modèle,</text>
+<text x="596" y="484" font-size="15" class="sans muted" text-anchor="end">aucune clé d&#x27;API</text>
+</svg>

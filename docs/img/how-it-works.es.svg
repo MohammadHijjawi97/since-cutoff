@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="508" viewBox="0 0 640 508" role="img" aria-labelledby="title desc" xml:lang="es">
+<title id="title">Cómo funciona since-cutoff</title>
+<desc id="desc">Análisis, sin llamadas al modelo: se lee el lockfile, se busca la versión de cada dependencia en la fecha de corte de entrenamiento del modelo y se compara la API pública de forma estática con griffe. Sondeo: tareas breves que requieren una API modificada, el modelo responde sin herramientas ni documentación y basedpyright comprueba la respuesta con ambas versiones. Corrección y verificación: una nota escrita por el modelo solo se conserva si su ejemplo pasa la verificación de tipos; si no, se usa una descripción del cambio tomada del diff de la API. Después se comparan las tareas reservadas sin las notas y con ellas, y --apply escribe el bloque en AGENTS.md.</desc>
+<style>
+    .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
+    .text { fill: #1f2328; }
+    .muted { fill: #59636e; }
+    .accent { fill: #bc4c00; }
+    .red { fill: #cf222e; }
+    .green { fill: #1a7f37; }
+    .b { font-weight: 700; }
+    .sb { font-weight: 600; }
+  </style>
+<defs><marker id="head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#59636e"/></marker></defs>
+<rect x="0.5" y="0.5" width="639" height="507" rx="14" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="16" y="16" width="608" height="134" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="36" y="49" font-size="22" class="sans b accent">1  Análisis</text>
+<text x="604" y="48" font-size="17" class="sans muted" text-anchor="end">sin llamadas al modelo</text>
+<line x1="46" y1="74" x2="46" y2="132" stroke="#d0d7de" stroke-width="2"/>
+<circle cx="46" cy="74" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="80" font-size="20" class="sans text">Lockfile: tus versiones exactas</text>
+<circle cx="46" cy="103" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="109" font-size="20" class="sans text">La versión en la fecha de corte del modelo</text>
+<circle cx="46" cy="132" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="138" font-size="20" class="sans text">Diff estático de la API con griffe</text>
+<line x1="46" y1="153" x2="46" y2="172" stroke="#59636e" stroke-width="2" marker-end="url(#head)"/>
+<rect x="16" y="176" width="608" height="134" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="36" y="209" font-size="22" class="sans b accent">2  Sondeo</text>
+<text x="604" y="208" font-size="17" class="sans muted" text-anchor="end">el modelo, sin herramientas</text>
+<line x1="46" y1="234" x2="46" y2="292" stroke="#d0d7de" stroke-width="2"/>
+<circle cx="46" cy="234" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="240" font-size="20" class="sans text">Tareas breves que requieren el cambio</text>
+<circle cx="46" cy="263" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="269" font-size="20" class="sans text">El modelo responde de memoria</text>
+<circle cx="46" cy="292" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="298" font-size="20" class="sans text">basedpyright comprueba ambas versiones</text>
+<line x1="46" y1="313" x2="46" y2="332" stroke="#59636e" stroke-width="2" marker-end="url(#head)"/>
+<rect x="16" y="336" width="608" height="156" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="36" y="369" font-size="22" class="sans b accent">3  Corrección y verificación</text>
+<text x="36" y="393" font-size="17" class="sans muted">decide el verificador de tipos</text>
+<line x1="46" y1="416" x2="46" y2="474" stroke="#d0d7de" stroke-width="2"/>
+<circle cx="46" cy="416" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="422" font-size="20" class="sans text">Notas verificadas, o tomadas del diff</text>
+<circle cx="46" cy="445" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="451" font-size="20" class="sans text">Tareas reservadas: sin las notas y con ellas</text>
+<circle cx="46" cy="474" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="480" font-size="20" class="sans text">--apply escribe un bloque en AGENTS.md</text>
+</svg>

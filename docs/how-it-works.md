@@ -7,12 +7,17 @@ It is built so that every number it prints can be checked: nothing is judged by 
 scoring is done by a type checker against the exact package versions, and all intermediate data
 (tasks, answers, diagnostics) lands in `.since-cutoff/report.md` and `results.json`.
 
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works-dark.svg">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works.svg" width="640" alt="Three stages. Scan, with no model calls: the lockfile gives your exact versions, then the release at the model's cutoff, then a static API diff with griffe. Probe: short tasks that need the change, the model answers from memory, basedpyright checks the answer against both versions. Fix and verify: a model-written note is kept only if its example type-checks, otherwise the change is stated from the API diff; held-out tasks are answered without and with the notes, and --apply writes a block into AGENTS.md.">
+</picture></p>
+
 ## 1. Scan (no model calls)
 
 1. **Dependencies and exact versions** come from the first source found: `uv.lock`,
    `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`; then the project's `.venv`
-   (read from `*.dist-info/METADATA`, nothing is executed); then pinned lines in
-   `requirements*.txt`; unpinned dependencies use the latest release on PyPI.
+   (read from `*.dist-info/METADATA`, nothing is executed); then `==` pins in `pyproject.toml`
+   and `requirements*.txt`; unpinned dependencies use the latest release on PyPI.
    By default only **direct** dependencies are checked (`--all-deps` adds transitive ones).
 2. **The model's training cutoff** comes from [models.dev](https://models.dev) (a snapshot is
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
@@ -31,7 +36,9 @@ scoring is done by a type checker against the exact package versions, and all in
    | parameter removed | `messages.create(temperature=...)` |
    | parameter now required | `fetch(url)` needs `timeout=` |
    | keyword-only | `f(a, b)` must now be `f(a, b=b)` |
-   | deprecated (PEP 702) | `@deprecated` added since the cutoff |
+   | positional-only | `f(a=a)` must now be `f(a)` |
+   | changed kind | `pkg.Grammar` was a class and is now an attribute |
+   | deprecated | `@deprecated` (PEP 702) added since the cutoff, or a library's own decorator whose name contains "deprecat" (`scan` lists both; `run` probes only the PEP 702 ones) |
 
    Default values, attribute values and return annotations are ignored. Objects in private
    modules are reported under the public path that re-exports them. Sync/async twins and
@@ -45,24 +52,27 @@ scoring is done by a type checker against the exact package versions, and all in
 2. **Tasks.** A task-writer model (the tested model unless `--task-model` is given) gets the old
    and new signatures and docstrings and writes three short tasks that a developer who knows
    only the old version would solve with the old API. Tasks that mention the changed
-   identifier are discarded. One task is the probe; the other two are held out.
+   identifier are discarded. One task is the probe; the other two are held out. In versions
+   after 0.2.0, `run --tasks-out FILE` saves the tasks a run used, and `run --tasks-from FILE`
+   uses them instead of calling the task writer (changes the file does not cover are skipped),
+   so a measurement can be repeated on exactly the same tasks.
 3. **Answers.** The model under test gets the probe task and a system prompt that says which
    version the project pins (a real agent sees the lockfile too). It has no tools, no web, no
    project files: Claude Code is run with `--tools ""`, no MCP servers, no slash commands and an
    empty working directory.
 4. **Scoring.** The code is type-checked with
    [basedpyright](https://github.com/DetachHead/basedpyright) twice: against the locked version
-   and against the cutoff version, each in an isolated environment that contains only the
-   standard library and that one package. Only diagnostics that involve the package count
-   (other imports are simply absent from the environment and are ignored):
+   and against the cutoff version, each in an isolated environment that contains that package
+   version and its own runtime dependencies, nothing else. Only diagnostics that involve the
+   package count (other imports are absent from the environment and are ignored):
 
    | outcome | meaning |
    |---|---|
-   | **stale** | valid for the version the model knew, invalid for the version you use |
-   | **wrong** | invalid for both versions (hallucinated or misused API) |
+   | **stale** | valid for the version the model knew, invalid for the version you use, and the error involves the changed API |
+   | **wrong** | invalid for your version, and not explained by the version change (hallucinated or misused API) |
    | **deprecated** | valid, but uses an API marked `@deprecated` in your version |
-   | **correct** | valid for your version |
-   | off-task / invalid | did not use the package / not parseable; excluded from rates |
+   | **correct** | valid for your version, and actually uses the changed API |
+   | untouched / off-task / invalid | valid but avoided the changed API / did not use the package / not parseable; excluded from rates |
 
    Generated code is never executed.
 
@@ -81,10 +91,38 @@ scoring is done by a type checker against the exact package versions, and all in
    and with the block in the system prompt, and scored the same way. A sample of APIs the model
    got right is re-checked with the block too, to catch notes that make things worse.
 
+### Held-out statistics
+
+This is what versions after 0.2.0 print; 0.2.0 and earlier print one shorter line, and the
+[changelog](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/CHANGELOG.md) lists
+the differences.
+
+- **Pairs.** A held-out task counts as a pair when its answer without the notes is scorable and
+  its answer with the notes is not an error. With the notes, only a passing answer is correct
+  (an answer that avoids the package counts as wrong). Pairs that are not counted are listed by
+  reason: untouched, off-task, invalid, error.
+- **"Held-out tasks correct without -> with notes"** gives the two task-level rates, with the
+  number of paired tasks and of API changes behind them.
+- **"Difference"** is with minus without, in percentage points over all counted pairs. Its 95% CI
+  is a percentile bootstrap that resamples API changes with all their pairs (4000 resamples,
+  seed 0), because the tasks of one change are not independent of each other.
+- **"Changes fixed by the notes: X of Y"**: an API change is fixed when more than half of its
+  counted pairs are wrong without the notes and correct with them (with one or two held-out tasks
+  per change, as in `--quick` and the default, that means all of them), and broken in the mirror
+  case. Its 95% CI is a Wilson score interval for X of Y and belongs to that count only.
+- **Sign test**: an exact two-sided test of changes fixed against changes broken; changes that
+  are neither are left out.
+- With few API changes (under about ten) the bootstrap interval tends to be too narrow; the sign
+  test is exact at any size.
+
+`report.md` has a statistics table (held-out tasks and the regression check side by side) and a
+table per API change; `results.json` has the same numbers (`difference`, `ci95_difference`,
+`ci95_changes_fixed`, `sign_test_p`, `changes_broken`, `excluded_reasons`, `per_change`).
+
 ## What the numbers mean (and do not mean)
 
-- "**Out of date on X of Y dependencies**": X dependencies had at least one probe scored
-  *stale*; Y is the number of dependencies scanned.
+- "**Stale API use in X of Y probed dependencies**": Y is the number of dependencies with at
+  least one scored probe; X is how many of them had at least one probe scored *stale*.
 - Probes cover a **sample** of the breaking changes (ranked as above), not all of them.
 - Held-out tasks are paraphrases of the same change, so the before/after numbers measure whether
   the note fixes *that* change, not general coding ability. Failures were selected on the probe

@@ -20,7 +20,7 @@
     }
 
     .terminal-2053178475-matrix {
-        font-family: Fira Code, monospace;
+        font-family: Fira Code, ui-monospace, SFMono-Regular, Menlo, Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', 'Liberation Mono', monospace;
         font-size: 20px;
         line-height: 24.4px;
         font-variant-east-asian: full-width;
@@ -32,13 +32,13 @@
         font-family: arial;
     }
 
-    .terminal-2053178475-r1 { fill: #c5c8c6;font-weight: bold }
-.terminal-2053178475-r2 { fill: #c5c8c6 }
-.terminal-2053178475-r3 { fill: #cc555a;font-weight: bold }
+    .terminal-2053178475-r1 { fill: #e6e8e6;font-weight: bold }
+.terminal-2053178475-r2 { fill: #e6e8e6 }
+.terminal-2053178475-r3 { fill: #ff7b72;font-weight: bold }
 .terminal-2053178475-r4 { fill: #d0b344;font-weight: bold }
-.terminal-2053178475-r5 { fill: #868887 }
-.terminal-2053178475-r6 { fill: #cc555a }
-.terminal-2053178475-r7 { fill: #98729f }
+.terminal-2053178475-r5 { fill: #9a9b9a }
+.terminal-2053178475-r6 { fill: #ff7b72 }
+.terminal-2053178475-r7 { fill: #c792ea }
 .terminal-2053178475-r8 { fill: #d0b344 }
 .terminal-2053178475-r9 { fill: #98a84b }
 .terminal-2053178475-r10 { fill: #98a84b;font-weight: bold }
@@ -155,7 +155,7 @@
             </clipPath>
     </defs>
 
-    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1456" height="926.4" rx="8"/><text class="terminal-2053178475-title" fill="#c5c8c6" text-anchor="middle" x="728" y="27">since-cutoff&#160;run</text>
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1456" height="926.4" rx="8"/><text class="terminal-2053178475-title" fill="#e6e8e6" text-anchor="middle" x="728" y="27">since-cutoff&#160;run</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>

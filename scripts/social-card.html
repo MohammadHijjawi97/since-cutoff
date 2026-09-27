@@ -9,7 +9,8 @@
     msedge --headless --hide-scrollbars --force-device-scale-factor=1 --window-size=1280,640 \
       --screenshot=docs/img/social-preview.png scripts/social-card.html
 
-  The numbers are from the "A real run" section of the README; keep the sample size next to them.
+  The numbers are from the "Results" section of the README (the Claude Opus 4.6 run, measured with
+  since-cutoff 0.1.0); keep the sample size and the version next to them.
 -->
 <html lang="en">
 <head>
@@ -106,7 +107,7 @@
       <div class="label">Claude Opus 4.6, held-out tasks correct</div>
       <div class="numbers"><span class="before">5%</span><span class="arrow">&rarr;</span><span class="after">65%</span></div>
       <div class="label">without &rarr; with the notes</div>
-      <div class="sample">20 paired tasks, one project</div>
+      <div class="sample">20 paired tasks, one project,<br>measured with since-cutoff 0.1.0</div>
     </section>
     <section class="card code">
       <div class="label">What the model learned vs. the huggingface-hub 2.0 you pin</div>
