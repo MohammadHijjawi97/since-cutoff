@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import contextlib
 import difflib
+import errno
 import json
 import logging
+import os
 import shutil
 import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
+from typing import IO, Any, cast
 
 from rich.console import Console
 from rich.markup import escape
@@ -79,21 +82,119 @@ EXAMPLES = """examples:
 
 exit codes: 0 ok, 1 error (including: no model answer could be scored), 2 usage error,
             3 stale API use found with --fail-on-stale, or API changes found with
-            scan --fail-on-changes
+            scan --fail-on-changes, 141 the output was closed early (e.g. piped into head)
 """
+# The exit code when the reader of the output goes away (``since-cutoff scan | head``): the
+# code a shell reports for a writer stopped by SIGPIPE.
+OUTPUT_CLOSED = 141
+# Output width when it goes to a file, a pipe or a CI log: wide enough that the tables are not
+# squeezed into rich's default of 80 columns (COLUMNS still sets it).
+LOG_WIDTH = 160
+
+
+# ------------------------------------------------------------------ output
+class OutputClosed(Exception):
+    """stdout or stderr went away mid-run: a pipe whose reader stopped (``| head``)."""
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(f"{stream} was closed")
+        self.stream = stream
+
+
+class _Output:
+    """``sys.stdout`` or ``sys.stderr``, looked up at every use (as rich does), where a write to
+    a closed pipe raises :class:`OutputClosed` instead of an OSError that would end in a
+    traceback. POSIX reports a closed pipe as EPIPE; Windows as EINVAL."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    @property
+    def stream(self) -> IO[str]:
+        return cast(IO[str], getattr(sys, self.name))
+
+    def write(self, text: str) -> int:
+        try:
+            return self.stream.write(text)
+        except OSError as exc:
+            raise self._closed(exc) from exc
+
+    def flush(self) -> None:
+        try:
+            self.stream.flush()
+        except OSError as exc:
+            raise self._closed(exc) from exc
+
+    def _closed(self, exc: OSError) -> Exception:
+        return OutputClosed(self.name) if exc.errno in (errno.EPIPE, errno.EINVAL) else exc
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.stream, name)
+
+
+STDOUT = _Output("stdout")
+STDERR = _Output("stderr")
+
+
+def _isatty(stream: Any) -> bool:
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _interactive(stream: Any) -> bool:
+    """Whether ``stream`` is a terminal someone watches, where live progress makes sense.
+
+    On Windows the NUL device claims to be a TTY (isatty() is True, ``> NUL`` or Git Bash's
+    ``> /dev/null``) but is no console: it takes neither the progress bar nor its characters.
+    """
+    if not _isatty(stream):
+        return False
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    import msvcrt
+
+    try:
+        handle = msvcrt.get_osfhandle(stream.fileno())
+        return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(ctypes.c_ulong())))
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _console(output: _Output) -> Console:
+    """A rich console for stdout or stderr that suits where it goes: a terminal as usual; a
+    file, pipe or CI log without terminal features and :data:`LOG_WIDTH` columns wide."""
+    options: dict[str, Any] = {}
+    if not _interactive(output):
+        if _isatty(output):
+            options["force_terminal"] = False  # Windows' NUL device
+        if not os.environ.get("COLUMNS"):
+            options["width"] = LOG_WIDTH
+    return Console(
+        file=cast(IO[str], output), highlight=False, soft_wrap=True, emoji=False, **options
+    )
 
 
 class RichReporter(Reporter):
+    # In a log or a pipe, where there is no live progress bar, a line such as "diffed 40/71
+    # (transformers)" comes about this many times per stage whose steps name a package.
+    LOG_LINES = 10
+
     def __init__(self, console: Console) -> None:
         self.console = console
         self.progress: Progress | None = None
         self.task: object | None = None
+        self.count = self.total = self.next_line = 0
 
     def stage(self, title: str, total: int | None = None) -> None:
         self.done()
         self.console.print(f"[dim]•[/dim] {escape(title)}")
-        if not self.console.is_terminal:
-            return  # no live progress bar in logs and pipes; the stage line is enough
+        self.count, self.total = 0, total or 0
+        self.next_line = max(1, self.total // self.LOG_LINES)
+        if not self.console.is_terminal or not _interactive(self.console.file):
+            return  # no live progress bar in logs and pipes: lines from advance() instead
         self.progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -106,9 +207,14 @@ class RichReporter(Reporter):
         self.progress.start()
         self.task = self.progress.add_task(escape(title), total=total)
 
-    def advance(self, n: int = 1) -> None:
+    def advance(self, n: int = 1, *, label: str | None = None) -> None:
+        self.count += n
         if self.progress is not None and self.task is not None:
             self.progress.advance(self.task, n)  # type: ignore[arg-type]
+        elif label and self.total and (self.count >= self.next_line or self.count == self.total):
+            # A slow stage (a cold diff can take minutes) says how far it got in a log too.
+            self.console.print(f"  [dim]diffed {self.count}/{self.total} ({escape(label)})[/dim]")
+            self.next_line = self.count + max(1, self.total // self.LOG_LINES)
 
     def info(self, message: str) -> None:
         self.console.print(f"[dim]•[/dim] {escape(message)}")
@@ -364,17 +470,45 @@ def _argv_with_default(argv: list[str]) -> list[str]:
 
 # ------------------------------------------------------------------- main
 def _utf8_streams() -> None:
-    """Piped or redirected output must never crash on non-ASCII text (Windows code pages)."""
+    """Output must never crash on non-ASCII text (Windows code pages): a file, pipe or device
+    gets UTF-8; a terminal keeps its encoding and shows what it cannot encode as '?'."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None and not stream.isatty():
-            with contextlib.suppress(ValueError, OSError):
+        if reconfigure is None:
+            continue
+        with contextlib.suppress(ValueError, OSError):
+            if _interactive(stream):
+                reconfigure(errors="replace")
+            else:
                 reconfigure(encoding="utf-8", errors="replace")
 
 
+def _discard(stream: str) -> None:
+    """Send what is left for a closed stream to the null device, so that Python's own flush
+    at exit does not fail on it again ("Exception ignored ... Errno 22", exit code 120)."""
+    with contextlib.suppress(AttributeError, OSError, ValueError):
+        fd = getattr(sys, stream).fileno()
+        null = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null, fd)
+        os.close(null)
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        try:
+            return _main(argv)
+        finally:
+            # A closed pipe can also show up only here, at the last flush (argparse's --help).
+            STDOUT.flush()
+            STDERR.flush()
+    except OutputClosed as exc:
+        _discard(exc.stream)
+        return OUTPUT_CLOSED
+
+
+def _main(argv: list[str] | None) -> int:
     _utf8_streams()
-    err = Console(stderr=True, highlight=False, soft_wrap=True, emoji=False)
+    err = _console(STDERR)
     try:
         argv_ = _argv_with_default(list(sys.argv[1:] if argv is None else argv))
     except SinceCutoffError as exc:
@@ -392,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
     if problem:
         err.print(f"[red]error:[/red] {escape(problem)}")
         return 2
-    out = Console(highlight=False, soft_wrap=True, emoji=False)
+    out = _console(STDOUT)
     ui = err if json_mode or markdown == "-" else out
     try:
         if args.command == "models":
@@ -511,9 +645,9 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     if summary_md:
         _write_markdown(summary_md, render_scan_markdown(scan, limit=args.limit))
     if json_mode:
-        sys.stdout.write(json.dumps(to_json(scan, run), indent=2, default=str) + "\n")
-        sys.stdout.flush()
-    else:
+        STDOUT.write(json.dumps(to_json(scan, run), indent=2, default=str) + "\n")
+        STDOUT.flush()
+    elif summary_md != "-":  # stdout has the Markdown, stderr only the progress, as for --json
         ui.print()
         render_console(ui, scan, run, verbose=args.verbose)
         if args.command == "scan":
@@ -642,8 +776,8 @@ def _resolve_target(engine: Engine, *, allow_calls: bool) -> ModelTarget:
 
 def _write_markdown(target: str, text: str) -> None:
     if target == "-":
-        sys.stdout.write(text)
-        sys.stdout.flush()
+        STDOUT.write(text)
+        STDOUT.flush()
         return
     path = Path(target)
     try:
@@ -674,7 +808,7 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
     if not out.is_terminal:
         for m in models:
             released = m.release_date.isoformat() if m.release_date else ""
-            sys.stdout.write(f"{m.provider}\t{m.id}\t{m.knowledge_raw or ''}\t{released}\n")
+            STDOUT.write(f"{m.provider}\t{m.id}\t{m.knowledge_raw or ''}\t{released}\n")
         return 0
     table = Table(show_edge=False, header_style="bold")
     table.add_column("provider", no_wrap=True)
@@ -696,7 +830,7 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
 def _cmd_cache(args: argparse.Namespace) -> int:
     root = default_cache_dir()
     if args.action == "path":
-        sys.stdout.write(f"{root}\n")
+        STDOUT.write(f"{root}\n")
         return 0
     removed = []
     for ns in CACHE_NAMESPACES:
@@ -706,7 +840,7 @@ def _cmd_cache(args: argparse.Namespace) -> int:
             removed.append(ns)
     with contextlib.suppress(OSError):
         root.rmdir()  # only succeeds if the directory is now empty, i.e. it was ours alone
-    sys.stdout.write(f"cleared {', '.join(removed) or 'nothing'} in {root}\n")
+    STDOUT.write(f"cleared {', '.join(removed) or 'nothing'} in {root}\n")
     return 0
 
 

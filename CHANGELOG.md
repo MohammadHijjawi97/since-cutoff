@@ -1,5 +1,242 @@
 # Changelog
 
+## Unreleased
+
+- The CLI no longer crashes on its own output. On Windows, stdout or stderr sent to NUL (`> NUL`,
+  or Git Bash's `> /dev/null`) crashed every scan with a UnicodeEncodeError on the progress
+  spinner ("lost sys.stderr", exit code 1, which also broke `--fail-on-changes` in CI), because
+  NUL claims to be a terminal. A file, a pipe or NUL now gets UTF-8 and no live progress bar,
+  and a terminal shows a character it cannot encode as `?`. When the reader of the output goes
+  away (`since-cutoff scan | head`), the run stops quietly with exit code 141, the code a shell
+  gives a writer stopped by SIGPIPE, instead of printing a traceback and exiting with 120.
+- Output to a file, a pipe or a CI log is laid out 160 columns wide (`COLUMNS` still sets the
+  width) instead of rich's default of 80, which cut the panel's subtitle and wrapped every
+  table row. In a narrow terminal, long package names and versions fold instead of squeezing
+  the status and changes columns to nothing, and a subtitle too long for the terminal moves
+  into the panel. A skip reason too long for the table is cut at a word and ends with "..."
+  (it was cut at 80 characters, in the middle of `--max-download-mb`).
+- In a terminal narrower than 100 columns the table gives the status its short form
+  ("changed, imported", "new"), the version columns the width their versions need, and the
+  package names the rest, broken at a "-" (`opentelemetry-` / `sdk`). At 80 columns every
+  changed row took three lines and names broke as `opentelemetr` / `y-sdk`.
+- In a file, a pipe or a CI log, where there is no live progress bar, the diff says how far it
+  got about ten times ("diffed 40/71 (transformers)") instead of nothing for minutes. Wheels
+  are extracted about 40% faster on Windows, where resolving the path of every file took half
+  of the time (each directory is resolved once now).
+- SyntaxWarnings about the scanned project's own code ("invalid escape sequence '\W'") no
+  longer reach stderr, in the CLI or the MCP tools.
+- A change reachable under several import paths says "also removed under 12 other paths, e.g.
+  `setuptools.command.alias.alias.ensure_string_list`" (MCP) or "(also removed under 12 other
+  paths)" (Markdown) instead of "12 similar, e.g. ...", which read like a replacement next to
+  "similar names now" but named another path that lost the name too.
+- MCP `api_changes` takes `symbol="Redis"` as redis's `Redis` class: the symbol names the
+  package itself only when spelled like its PyPI or import name (`redis`), and a class name as
+  written (`Redis`, not `legacy`) matches whole path segments, so `Redis` finds `Redis`'s
+  changes and not `RedisCluster`'s. Before, `Redis` and `Celery` applied no filter at all.
+- `scan --markdown -` prints only the progress and the report's path on stderr, as `--json`
+  does, instead of the whole console report, which CI logs then showed twice.
+- Counts of one are singular ("0 of 1 dependency changed its API", "1 dependency was not
+  flagged"); "N more dependencies were not flagged" says "more" only when the table lists
+  others; a single unchecked dependency's reason is no longer "for example"; and the progress
+  line says "Diffing the API of N packages released after their cutoff version" instead of
+  calling them "changed" before the diff has found out. "Checking N dependencies on PyPI"
+  counts only those it looks up, not those installed from git, a path or a private index.
+- The version source says where the versions come from. Without a lockfile or environment, it
+  names the files that pin them (`pyproject.toml`, `requirements.txt`, ...), with "latest on
+  PyPI for N unpinned", or says "latest on PyPI, as nothing is pinned". It said "requirements"
+  even for a pyproject.toml or Pipfile that pins nothing, whose versions were the latest
+  releases on PyPI. The `version_source` field of results.json changes the same way.
+- `--all-deps` without a lockfile or virtual environment warns that the transitive dependencies
+  are unknown, so only the declared ones are checked (in the terminal and the reports), instead
+  of silently doing nothing. A requirements file written by pip-compile or `uv pip compile`
+  counts as a lockfile: it pins the whole tree.
+- The output of pip-compile and `uv pip compile` is read as such: a pin whose `# via` annotation
+  names only other packages (`# via kombu`) is a transitive dependency, checked with
+  `--all-deps`, and only those `# via -r requirements.in` (or via the project's
+  `pyproject.toml`) are direct; without annotations, the `.in` file next to it says which. Every
+  pin counted as direct before, so a scan checked the whole tree (84 packages for pypistats.org,
+  whose requirements.in names 17).
+- A transitive dependency that the project's code imports itself (alembic and sqlalchemy,
+  pinned "via flask-migrate"; a package only a lockfile lists) is checked without `--all-deps`,
+  like a direct one.
+- A lockfile the project is not set up for no longer overrides the versions its requirements
+  pin: a poetry.lock or pdm.lock next to a pyproject.toml without that tool's table or build
+  backend (or a Pipfile.lock without a Pipfile) is ignored when its versions disagree with the
+  pinned requirements, with a warning that names the first disagreements ("ignored poetry.lock:
+  the project is not set up for Poetry, and 51 of its versions disagree with the pinned
+  requirements (alembic 1.4.2 vs ==1.16.4, ...)"), and its lock-only packages are not added
+  with `--all-deps`. A 2020 poetry.lock hid 13 changed packages of pypistats.org, whose
+  requirements.txt pins flask 3.1.1, not 1.1.2. A lockfile the project uses still wins, with a
+  warning about the disagreeing pins. The version source names every place the versions come
+  from ("poetry.lock, requirements.txt for 32 not in it") instead of the lockfile alone. MCP
+  `project_changes` shows these warnings under its heading.
+- A project whose dependencies are only in setup.py or setup.cfg gets an error that says those
+  files are not read and what to do instead (list the dependencies in requirements.txt or
+  pyproject.toml, or install the project into a .venv), and names every file that is read,
+  Pipfile included.
+- A dependency installed from git, a URL or a local path is skipped as "installed from
+  git+https://github.com/org/pkg.git@ref, not from PyPI" (with any credentials removed) instead
+  of "not installed from PyPI (direct URL)". A git or URL source in uv.lock, poetry.lock or
+  pdm.lock is named the same way ("installed from
+  git+https://github.com/pydantic/strict-no-cover@7fc59da2c4df"), not as "installed from git";
+  a Poetry private index (`type = "legacy"`) reads "a private index", not "a URL".
+- A metapackage without code of its own (docling over docling-slim, griffe 2, fastmcp 4, bs4) is
+  skipped with a reason that names what it installs and says to check that instead of "could
+  not find importable modules in <wheel>".
+- The download-limit message gives the limit as set and the file's size in the same unit: it
+  said "84 MB" for the default `--max-download-mb 80`.
+- A package that had only pre-releases by the cutoff (sqlgpt-parser 0.0.1a5, betas such as
+  0.51b0) is compared with the newest of them, instead of being reported as first released
+  after the cutoff; unpinned, a package with only pre-releases is checked at its newest one,
+  which pip and uv install, instead of being skipped. A development release (`0.0.1.dev5`) is
+  not such a baseline: it is how nvidia-cuda-runtime and its siblings reserved their names in
+  2021, so they are "newer than the model" again instead of "could not find importable modules".
+- A release at the cutoff that only reserved the name, with no modules or only empty ones in
+  small pure-Python files (zensical 0.0.0's empty `__init__.py`), makes the package "newer
+  than the model" ("0.0.0 at the cutoff was an empty placeholder"), instead of "no breaking
+  changes" or "not checked". MCP `api_changes` says the API is newer than the model's training
+  data.
+- `scan --model claude-haiku-4-5` works: `scan` only needs the training cutoff, so a model id
+  without a provider (or an alias such as `sonnet`) is enough. An unknown model id gets close
+  matches, and `run`'s hint for a Claude id without a provider names `anthropic:` next to
+  `claude-code:`.
+- MCP `project_changes` stays under about 24,000 characters: past that, the remaining changed
+  dependencies get one line each under "N more with API changes", with a hint to pass them in
+  `only`, and long lists of names end with "and N more" (a project with 155 dependencies got
+  56 KB). Its heading counts the dependencies checked ("9 of 14 dependencies checked") instead
+  of all of them. The one-line list counts towards the budget too (private-gpt got 25,135
+  characters).
+- `Tools().project_changes` called from a script diffs the packages in-process unless given
+  `Tools(processes=True)`: its worker processes imported the script again, which raised a
+  RuntimeError on Windows and macOS without an `if __name__ == "__main__":` guard and ran the
+  script once more per worker. `since-cutoff mcp` still diffs several packages in parallel.
+- `imported` in results.json (`scan[]`, and now `packages[]` too) says whether the project's
+  code imports the package, from the package's import names (a namespace package such as
+  `google.genai` only when the code imports that part): true or false for the packages whose
+  files were read, null for the others (released before the cutoff, first released after it,
+  or not checked). It was always false. The import names behind it are the ones code imports:
+  a stub-only distribution's `pandas-stubs` directory is `pandas` (types-requests, types-tqdm,
+  ...); pywin32's `win32\lib\win32con` is `win32con` and `pythonwin\pywin` is `pywin`, the
+  directories its `.pth` file puts on `sys.path` (its changes were listed as
+  `pythonwin.pywin.*`, which cannot be imported); and a distribution with modules in a shared
+  namespace (google-cloud-core's `google/cloud/client.py`) is those modules, not all of
+  `google.cloud`, which `from google.cloud import bigquery` imports.
+- Every report lists the dependencies in the same order: those whose API changed first, of
+  those the ones the code imports, then by breaking changes and then deprecations. The terminal
+  table, its list of changes and report.md used to rank by the number of changes alone, so the
+  internals of a dev tool the code never imports (mypy, sphinx, coverage) came first, while
+  `--markdown` and MCP `project_changes` put imported packages first. The terminal table and
+  report.md now also say "imported by your code" in the status, as `--markdown` did.
+- The terminal table and report.md show "breaking" and "deprecated" columns instead of one
+  "changes" column that counted breaking changes only, was blank for a package with only
+  deprecations and looked out of order (a package with 2 breaking changes and 7 deprecations
+  sat above one with 7 breaking changes). The `--markdown` summary lists "you use" before "at
+  cutoff", as the others do, and report.md written by `scan` leaves out the probed, stale and
+  wrong columns, which are always empty without probes.
+- "Your code uses X" marks are judged file by file, in the files that import the package, and
+  under the change's own import path. A module-level name counts only when a file imports it or
+  reads it on an imported module: `copier.asdict` is not the `asdict` of `from dataclasses
+  import asdict`, `typing_extensions.Callable` not `typing.Callable`, `torchaudio.io` not the
+  standard `io`. A method or attribute counts only when the same file reads it on the class, on
+  what the file shows is an instance of it (`app = Starlette(...)` then `app.middleware`, a
+  parameter annotated with the class, `self.middleware` in a subclass), or on an attribute
+  named after the class (`client.messages.create`), not on any value in a file that imports
+  the class (`self.middleware` of mcp's own `Server` marked starlette's removed
+  `Starlette.middleware`); a constructor only when
+  the class is called; and a changed parameter only when it is passed by keyword to its own
+  callable (`subprocess.run(text=True)` says nothing about `Version(text=...)`). Before, any
+  attribute, keyword argument or imported name anywhere in the project matched, which marked
+  (and ranked first) changes the code never touches, in the terminal, in both Markdown reports,
+  under MCP's "Touching names your code uses" and in the choice of changes `run` probes.
+- A dependency that nothing pins gets the newest release in the range the project declares
+  (`numpy<2.3`, `transformers>=4.54,<5`) instead of the newest on PyPI, which could be a version
+  the project excludes; with `--python` or a `.python-version`, only a release that supports
+  that Python. `version_source` in results.json says so ("latest on PyPI matching <2.3").
+  Pipfile versions (`requests = "==2.28.2"`, `"<3"`) and Poetry constraints written as PEP 440
+  specifiers (`">=1,<2"`) count too; before, every Pipfile entry was unpinned.
+- A dependency declared several times with environment markers (`typer==0.27.1 ;
+  python_version >= '3.10'` and `typer==0.23.2 ; python_version < '3.10'`) gets the declaration
+  for the project's Python (`--python` or `.python-version`), or else for the newest Python, as
+  uv.lock forks do; before, the last pin in the files won. Of several pins that apply, the
+  newest wins. A dependency declared from PyPI but also as a direct URL in some extra (torch in
+  a CUDA extra) is checked; only one declared by URL alone is skipped as not from PyPI.
+- Names that still work are no longer reported as removed. A name the new version still lists
+  in `__all__` of a module that binds names the source does not spell out (typing_extensions
+  binds `Callable`, `Dict`, ... with `globals().update(...)`, and adds some with
+  `__all__.append(...)` per Python version) is not removed, which takes typing-extensions
+  4.12 -> 4.15 from 41 breaking changes to none; a stale `__all__` entry that nothing binds
+  still is (black 26.5.1's `blib2to3.pgen2.tokenize.generate_tokens`). A name a module still hands
+  out through `__getattr__` or a table of deprecated aliases (click's `BaseCommand`,
+  `mypy_extensions.NoReturn`, `anyio.abc.CapacityLimiter`, Django's
+  `django.core.mail.BadHeaderError`), or a class through a metaclass property (urllib3's
+  `Retry.BACKOFF_MAX`), is reported as deprecated, with the library's own message or
+  replacement ("use `anyio.CapacityLimiter` instead"), or not at all when it is served without
+  a warning. So is a name that the class of a module object swapped into `sys.modules` serves:
+  transformers 5's `_LazyModule` hands out every `*TokenizerFast` as the tokenizer without
+  "Fast", every name that a module below it lists in `__all__` (`BartTokenizerFast`), and a
+  tokenizer its converter table maps to another one (`ElectraTokenizerFast`). Of the 100
+  `*TokenizerFast` names private-gpt got as removed (and `RobertaTokenizerFast` as "moved to"
+  `tokenization_roberta_old`), 5 remain (Bloom, MT5, Realm, RetriBert), for which neither the
+  import structure nor the converter table has an entry. A module that re-exports another
+  distribution
+  with `from other import *` (mcp 2's `mcp.types`, from mcp-types) no longer has every name
+  reported removed.
+- Stubs are read as type checkers read them. A function declared only with `@overload` (the
+  usual case in a `.pyi` file: numpy's `ndarray.partition`, `cachetools.cached`, django-stubs'
+  `QuerySet.defer`, pytest-django's `assertNumQueries`) is no longer reported removed, and names
+  that only a stub next to a module declares reach `from x import *` (qdrant-client's `grpc`
+  package: 555 false removals). Imports that `from x import *` copies without x meaning to
+  re-export them (`av.container.Any`, `yaml.Composer`, `nltk.corpus.reader.ieer.os`,
+  `copier.asdict`), and names a plain module star-imports for its own use, are not API.
+- Other names that were never API are left out: names bound only under
+  `if __name__ == "__main__":` (`rich.diagnose.console`, virtualenv's `py_info.argv`), values
+  bound only on some paths through `if`/`try` blocks (`torchvision.extension.lib_path`,
+  `certifi.core.Package`), per-module loggers and type variables, `TYPE_CHECKING` and
+  `VERSION_TUPLE` in generated version files, transformers' `utils.dummy_*_objects`
+  placeholders, and griffe's `dde/*` placeholder for an unresolved star import.
+- A member that a class may still inherit is no longer reported removed: from a base in the
+  standard library (`BatchFeature.keys` through `UserDict`, `FrozenError.args` through
+  `AttributeError`), or an override that called its base's method when the base comes from
+  another package (starlette's `TestClient.get` through `httpx.Client`), or from a base whose
+  copy the package ships itself (setuptools 80's `Command.ensure_string_list`, from
+  `distutils.core.Command`, which setuptools serves from `setuptools._distutils` on Python
+  3.12 and later; `pkg._vendor.*` likewise). A module function that
+  the old version attached to a class (`Document.new_page = utils.new_page`) and that is now a
+  method of the class is not removed either (58 such changes for pymupdf 1.25 -> 1.27).
+- Parameter changes: a positional parameter renamed in place is one change, the old name's
+  removal with the new name as a suggestion, instead of "removed" plus "now required"; a
+  positional-only one (`/`, or the `__x` convention: pydantic's `model_post_init(__context)`
+  becoming `(context, /)`) is not a change. `*args` and `**kwargs` are shown as such
+  ("`**kwargs` was removed, so extra keyword arguments are no longer accepted") instead of
+  `close(kwargs=...)`, and not reported when the new signature names the parameters they took.
+  A function wrapped by a class (typing_extensions' `@_TypedDictSpecialForm`) keeps its call
+  signature, and the parameters of a pytest fixture, which pytest passes (time-machine's
+  `time_machine_fixture(request)`), are not reported. Signatures show `/` and no longer show
+  `*args = ()`. The console, `--markdown` and report.md show the new name of a renamed
+  parameter, as MCP did: "parameter `pos` was removed (now `start`?)".
+- A deprecation on some overloads of a function is a deprecated call form, not a deprecated
+  function: "`pydantic.config.with_config` called as `with_config(*, config: ConfigDict)` is
+  deprecated: Passing `config` as a keyword argument is deprecated. ..." (and
+  `cachetools.cached` with a positional `info`). results.json has the call form in `call_form`.
+- Kind changes: a name bound to something callable (`write_pack_index = write_pack_index_v2`,
+  `Scanned = namedtuple(...)`, a callable instance, `BadHeaderError = ValueError`, a stub's
+  `ones: Final[_Constructor]`) that becomes a function or class, or the reverse, is not a
+  break, nor is an attribute becoming a type alias or a definition that depends on the Python
+  version or `TYPE_CHECKING`. A value that cannot be called (a literal, `Union[...]`) still is.
+- "Moved to" and "similar names now" hints are checked. A move needs the same object, not just
+  the same name: a class or module that kept its public names (of several such modules, the one
+  that kept the most, and none on a tie), a function with the old parameters, a value with the
+  same literal or type expression; never a logger or type variable from another module. The
+  target is where the object is defined or re-exported, not a module that merely imports it
+  (`dulwich.protocol.PEELED_TAG_SUFFIX`, not `dulwich.server`). A protobuf message that
+  generated code built with `GeneratedProtocolMessageType` and a newer stub declares as a class
+  of another module moved there (21 of qdrant-client's `grpc.points_pb2` messages, now in
+  `qdrant_common_pb2`). Similar names are only names new
+  in the same owner and of the same sort (no `collections` for `Collection`, no existing
+  `Dimension.zero` for `Dimension.is_zero`). Objects are reported under their shortest public
+  path (`cryptography.hazmat.primitives.ciphers.aead.AESGCM`, not a chain of module imports).
+  Diffs cached by earlier versions are recomputed.
+
 ## 0.3.0 - 2026-09-27
 
 - `run` now exits with code 1 when no API change could be probed (for example because every

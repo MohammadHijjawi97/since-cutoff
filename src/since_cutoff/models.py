@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import difflib
 import json
 import re
 from dataclasses import dataclass
@@ -198,11 +199,22 @@ class ModelRegistry:
         cands.sort(key=lambda m: (m.release_date or date.min, m.id))
         return cands[-1]
 
+    def close_matches(self, query: str, n: int = 8) -> list[str]:
+        """Known model ids (with a cutoff) that look like ``query``, for "did you mean"."""
+        ids = sorted({m.id for m in self.all_models() if m.knowledge})
+        wanted = normalize_model_id(query)
+        close = difflib.get_close_matches(wanted[0], ids, n=n, cutoff=0.6)
+        contained = [i for i in ids if any(w and w in i.lower() for w in wanted)]
+        return list(dict.fromkeys([*close, *contained]))[:n]
+
     def require(self, model_id: str, provider: str | None = None) -> ModelInfo:
         info = self.lookup(model_id, provider)
         if info is None:
+            close = self.close_matches(model_id) if model_id else []
+            hint = f" Close matches: {', '.join(close)}." if close else ""
             raise ModelLookupError(
-                f"unknown model '{model_id}'. Pass its training cutoff explicitly, e.g. --cutoff 2025-07"
+                f"unknown model '{model_id}'.{hint} Pass its training cutoff explicitly, "
+                "e.g. --cutoff 2025-07"
             )
         if info.knowledge is None:
             raise ModelLookupError(

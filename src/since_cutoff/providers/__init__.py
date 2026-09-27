@@ -55,8 +55,10 @@ def check_spec(spec: str, *, vendors: Collection[str] = (), calls: bool = True) 
             f"'{spec}', as it only looks up the training cutoff; to run, reach the model "
             "through openrouter:<maker>/<model>, or openai-compatible:<model> with --base-url"
         )
-    if provider in _CLAUDE_ALIASES or provider.startswith("claude-"):
+    if provider in _CLAUDE_ALIASES:
         hint = f"'claude-code:{spec}'"
+    elif provider.startswith("claude-"):
+        hint = f"'claude-code:{spec}' (the Claude Code CLI) or 'anthropic:{spec}' (the API)"
     elif provider.startswith(("gpt-", "o1", "o3", "o4")):
         hint = f"'openai:{spec}'"
     elif model:

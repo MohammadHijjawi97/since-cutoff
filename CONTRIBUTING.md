@@ -23,14 +23,18 @@ welcome, and first-time contributors are very welcome.
 | `project.py` | Reads lockfiles, requirements files and `.venv`, and scans the project's imports |
 | `pypi.py` | PyPI metadata and release dates; downloads and safely extracts sources |
 | `models.py` | Training cutoffs (models.dev plus a bundled snapshot) and model-id normalisation |
+| `hosts.py` | Which model the user's coding agent runs, read from Claude Code, Codex, OpenCode and Aider settings (the default for `--model`) |
 | `apidiff.py` | The static API diff between two versions (griffe): removals, moves, parameters, deprecations |
 | `selection.py` | Ranks the changes and picks which ones to probe |
 | `prompts.py` | Task, solver and note prompts, and the leak filter for tasks |
 | `checker.py` | Type-checks answers with basedpyright against a version, in an isolated environment |
 | `engine.py` | Ties it together: scan, probe, classify (stale / wrong / deprecated / correct), notes, held-out tests |
+| `taskfile.py` | Reads and writes the tasks files of `run --tasks-out` / `--tasks-from` |
 | `notes.py` | Renders, applies and removes the notes block in `AGENTS.md` / `CLAUDE.md` |
+| `baselines.py` | The baseline notes of `run --compare` (`template`, `signatures`), built without a model |
+| `stats.py` | Wilson intervals, the cluster bootstrap, the sign test and token estimates |
 | `report.py` | Terminal, Markdown and JSON reports |
-| `mcp_server.py` | The `since-cutoff mcp` server and its tools |
+| `mcp_server.py` | The `since-cutoff mcp` server and its tools (`Tools` diffs in-process; `Tools(processes=True)`, as the server uses, in worker processes) |
 | `providers/` | Model providers (Claude Code CLI, Anthropic, OpenAI-compatible APIs) |
 | `cli.py` | Command-line interface |
 
@@ -54,7 +58,9 @@ mypy
 
 The offline suite needs no API keys: `tests/conftest.py` defines a toy library with two versions
 and a scripted model that "knows" only the old one, so the whole pipeline (scan, probe, notes,
-held-out verification) runs end to end in CI.
+held-out verification) runs end to end in CI. It never reads your own coding-agent settings
+either: an autouse fixture clears the model variables (`SINCE_CUTOFF_MODEL`, `CLAUDECODE`,
+`ANTHROPIC_MODEL`, ...) and gives each test an empty home folder.
 
 Run one file or one test while you work: `pytest tests/test_project.py -k conda -q`.
 CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so keep paths

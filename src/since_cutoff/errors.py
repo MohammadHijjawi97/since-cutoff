@@ -15,6 +15,11 @@ class PackageIndexError(SinceCutoffError):
     """PyPI could not be reached or a distribution could not be downloaded."""
 
 
+class NoCodeError(PackageIndexError):
+    """A release has no importable modules and requires no package that has them: a
+    placeholder that reserves the name (a metapackage raises PackageIndexError)."""
+
+
 class ModelLookupError(SinceCutoffError):
     """The model name could not be resolved to a knowledge cutoff."""
 

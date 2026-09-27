@@ -88,9 +88,10 @@ uvx since-cutoff run --apply
 
 Vous pouvez aussi l'installer avec `pipx install since-cutoff` (ou `pip install since-cutoff`)
 puis exécuter `since-cutoff`. Lancez-le depuis la racine de votre projet : il lit `uv.lock`,
-`poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`
-ou un `.venv`. Sans `--model`, il teste le modèle que vous utilisez dans Claude Code ; pour tout
-autre modèle, passez `--model` (voir
+`poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`,
+`Pipfile` ou un `.venv` (pas `setup.py` ni `setup.cfg`). Sans `--model`, il teste le modèle
+configuré pour votre agent de code, d'après les réglages de Claude Code, Codex, OpenCode ou
+Aider ; pour tout autre modèle, passez `--model` (voir
 [Choisir le modèle](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#choisir-le-modèle)).
 `scan` est gratuit ; `run` envoie des prompts au fournisseur du modèle et consomme vos crédits
 d'API ou votre quota Claude Code.
@@ -121,8 +122,9 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 Cette commande installe le même skill via la CLI open source [skills](https://github.com/vercel-labs/skills),
 pour Codex, Cursor, Gemini CLI, GitHub Copilot, OpenCode et les autres agents qui lisent
-`SKILL.md`. En dehors de Claude Code, indiquez à l'outil quel modèle tester, par exemple
-`since-cutoff scan --model openai:gpt-5.4`, et ajoutez le serveur MCP comme indiqué plus bas.
+`SKILL.md`. since-cutoff lit aussi le modèle dans les réglages de Codex, OpenCode et Aider ; pour
+les autres agents, indiquez-lui quel modèle tester, par exemple
+`since-cutoff scan --model openai:gpt-5.4`. Ajoutez le serveur MCP comme indiqué plus bas.
 
 Des prompts qui fonctionnent bien :
 
@@ -138,7 +140,7 @@ Des prompts qui fonctionnent bien :
 
 | `--model` | utilise | nécessite |
 |---|---|---|
-| `claude-code` (à défaut) | votre connexion Claude Code (abonnement ou clé), modèle actuel | la CLI `claude` |
+| `claude-code` (par défaut si aucun réglage n'indique de modèle) | votre connexion Claude Code (abonnement ou clé), modèle actuel | la CLI `claude` |
 | `claude-code:sonnet`, `claude-code:claude-haiku-4-5` | un modèle Claude précis | la CLI `claude` |
 | `anthropic:<model>` | API Anthropic | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | API OpenAI | `OPENAI_API_KEY` |
@@ -147,12 +149,38 @@ Des prompts qui fonctionnent bien :
 | `ollama:<model>` | Ollama en local | Ollama en cours d'exécution |
 | `openai-compatible:<model>` | tout serveur compatible OpenAI | `--base-url`, `OPENAI_API_KEY` facultative |
 
-Sans `--model`, since-cutoff teste le modèle avec lequel votre agent est configuré : `SINCE_CUTOFF_MODEL` s'il est défini ; dans Claude Code, le modèle de Claude Code lui-même ; ailleurs, le modèle indiqué dans la configuration de Claude Code, Codex, OpenCode ou Aider, celle du projet (jusqu'à la racine du dépôt) avant celle de l'utilisateur. Il indique d'où vient le modèle et se rabat sur `claude-code` sinon.
+Sans `--model`, les versions 0.3.0 et suivantes testent le modèle configuré pour votre
+agent de code, et la ligne du modèle indique d'où il vient (« model from .claude/settings.json ») :
+
+1. `SINCE_CUTOFF_MODEL` (une spécification complète comme `openai:gpt-5.4`) l'emporte toujours.
+2. Dans Claude Code (qui définit `CLAUDECODE=1` pour les commandes qu'il exécute), seuls
+   comptent les réglages de Claude Code : `ANTHROPIC_MODEL`, puis `.claude/settings.local.json`
+   et `.claude/settings.json` du projet, puis `~/.claude/settings.json`.
+3. Ailleurs, le réglage le plus spécifique l'emporte : d'abord `ANTHROPIC_MODEL` ou
+   `AIDER_MODEL`, puis les réglages du projet, en commençant par le dossier le plus proche,
+   depuis le dossier analysé jusqu'à la racine du dépôt (jamais le dossier personnel), puis les
+   réglages de l'utilisateur. Dans un même dossier, les agents comptent dans cet ordre :
+
+| agent | réglages du projet | réglages de l'utilisateur |
+|---|---|---|
+| Claude Code | `.claude/settings.local.json`, `.claude/settings.json` | `~/.claude/settings.json` |
+| Codex | `.codex/config.toml`, avec son profil sélectionné | `$CODEX_HOME/config.toml` ou `~/.codex/config.toml` |
+| OpenCode | `opencode.json`, `opencode.jsonc` | `~/.config/opencode/` |
+| Aider | `.aider.conf.yml`, avec les alias d'Aider (`4o`, `flash`, `r1`, ...) | `~/.aider.conf.yml` |
+
+Si aucun réglage n'indique de modèle, il teste le modèle par défaut de Claude Code et le signale.
+Seuls les champs du modèle sont lus, et un nom de modèle qu'il ne sait pas identifier arrête
+l'exécution avec un message qui nomme le réglage. Un modèle auquel un agent accède via un autre
+service (GitHub Copilot, Amazon Bedrock, Vertex AI) est désigné d'après l'entreprise qui l'a conçu,
+si bien que `run` appelle l'API de celle-ci (`openai:` nécessite `OPENAI_API_KEY`).
 
 Les dates limites d'entraînement proviennent de [models.dev](https://models.dev) (un instantané
 est inclus pour une utilisation hors ligne). `since-cutoff models sonnet` les affiche ;
 `--cutoff 2025-07` remplace la date, et `since-cutoff scan --cutoff 2025-07` sans `--model`
-analyse par rapport à cette seule date.
+analyse par rapport à cette seule date. `scan` n'a besoin que de la date limite : il accepte donc
+aussi un identifiant de modèle sans fournisseur (`claude-haiku-4-5`, `sonnet`) ou avec n'importe
+quel fournisseur répertorié par models.dev (`google:gemini-2.5-pro`, identifiants Amazon Bedrock
+et Vertex AI compris) ; `run` a besoin d'un fournisseur du tableau ci-dessus.
 
 ## Résultats
 
@@ -221,11 +249,13 @@ erreur du vérificateur de types) dans `.since-cutoff/report.md`. Pour reproduir
 avec la version actuelle (son diff et son classement ont changé, les sondes ne seront donc pas
 identiques) :
 `cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.
-Pour savoir si les notes vérifiées font mieux que des notes plus simples, ajoutez `--compare template,signatures` : les tâches réservées sont aussi traitées avec des notes construites sans modèle (chaque changement énoncé d'après le diff de l'API, ou les nouvelles signatures et docstrings), évaluées sur les mêmes paires, avec la taille de chaque bloc en tokens.
 Depuis la 0.3.0, une exécution peut aussi enregistrer les tâches utilisées : ajoutez
 `--tasks-out tasks.json`, et chacun pourra refaire l'exécution sur exactement les mêmes tâches avec
-`--tasks-from tasks.json`, pour un autre modèle ou un autre jeu de notes. Les résultats obtenus
-sur vos propres projets sont les bienvenus dans la discussion
+`--tasks-from tasks.json`, pour un autre modèle ou un autre jeu de notes. Le fichier indique qui a
+rédigé les tâches (modèle, version du prompt, version de since-cutoff), et une exécution sur des
+tâches réutilisées le mentionne dans son rapport
+([détails](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md#2-probe),
+en anglais). Les résultats obtenus sur vos propres projets sont les bienvenus dans la discussion
 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)
 (« Partagez vos résultats », en anglais).
 
@@ -305,10 +335,13 @@ sont les plus longs). Les résultats sont mis en cache : les appels suivants ne
 quelques secondes. Pour préchauffer le cache, lancez une fois `since-cutoff scan` dans le
 projet ; il partage son cache avec le serveur. Les clients dont le délai d'expiration par défaut
 des outils est court peuvent avoir besoin d'un délai plus long, comme dans l'exemple Codex
-ci-dessus.
+ci-dessus. `project_changes` limite sa réponse à environ 24 000 caractères : les dépendances
+modifiées qui n'y tiennent pas occupent une ligne chacune, et les passer dans `only` affiche
+leurs changements.
 
-Ce que renvoie `api_changes("huggingface-hub", model="claude-haiku-4-5")` (sortie réelle,
-abrégée) :
+Ce qu'a renvoyé `api_changes("huggingface-hub", model="claude-haiku-4-5")` avec la 0.2.0 (sortie
+réelle, abrégée ; les versions suivantes affinent le diff, leurs chiffres diffèrent donc
+légèrement) :
 
 ```markdown
 # huggingface-hub 0.29.1 -> 2.0.0
@@ -404,10 +437,14 @@ since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fa
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ```
 
-`--markdown -` écrit le résumé sur stdout (la sortie habituelle passe alors sur stderr). Codes
-de sortie : `0` OK, `1` erreur (par exemple, aucune réponse du modèle n'a pu être évaluée), `2`
-erreur d'utilisation, `3` utilisation d'API périmée (stale) détectée avec `run --fail-on-stale`,
-ou changements d'API détectés avec `scan --fail-on-changes`.
+`--markdown -` écrit le résumé sur stdout, et seulement la progression et le chemin du rapport
+sur stderr, comme `--json`. Dans un fichier, un pipe ou un journal de CI, il n'y a pas de barre
+de progression animée, et la sortie est mise en page sur 160 colonnes (`COLUMNS` fixe une autre
+largeur). Codes de sortie : `0` OK, `1` erreur (par exemple, `run` n'a pu sonder aucun
+changement d'API ou n'a pu évaluer aucune réponse du modèle), `2` erreur d'utilisation, `3`
+utilisation d'API périmée (stale) détectée avec `run --fail-on-stale`, ou changements d'API
+détectés avec `scan --fail-on-changes`, `141` la sortie a été fermée prématurément (par
+exemple, redirigée vers `head`).
 
 ## Fonctionnement
 
@@ -426,6 +463,23 @@ de types évalue chaque réponse et contrôle chaque note rédigée par le modè
 | **deprecated** | valide, mais utilise une API marquée `@deprecated` dans votre version |
 | **correct** | valide pour votre version, et utilise effectivement l'API modifiée |
 | untouched / off-task / invalid / error | exclus de tous les taux, et toujours signalés |
+
+Depuis la 0.3.0, le résultat des tâches réservées donne les taux par
+tâche sans -> avec notes (avec le nombre de tâches appariées et de changements d'API dont elles
+proviennent), leur différence avec un intervalle bootstrap à 95 % qui rééchantillonne les
+changements d'API, les changements corrigés par les notes (faux sans elles, justes avec) avec un
+intervalle de Wilson à 95 %, les changements qu'elles ont cassés, un test des signes exact des
+corrigés contre les cassés, et les paires non comptées, par motif. La vérification de
+non-régression indique combien d'API que le modèle utilisait déjà correctement le restent avec
+les notes.
+
+`run --compare template,signatures` (depuis la 0.3.0) fait aussi répondre aux
+tâches réservées et aux vérifications de non-régression avec des notes de référence qui ne
+demandent aucun modèle : `template` énonce chaque changement en échec en une phrase tirée du diff
+d'API, et `signatures` donne la nouvelle signature et le premier paragraphe de la docstring de
+chaque API modifiée, ou de celle que sa bibliothèque désigne pour la remplacer. Tous les blocs sont
+évalués sur les mêmes paires, par rapport aux mêmes réponses sans notes, et la taille de chaque
+bloc est indiquée en jetons : une exécution montre ainsi ce qu'apportent les notes vérifiées.
 
 Tout est évalué par un vérificateur de types sur les versions exactes des paquets, chacune dans
 un environnement isolé avec les dépendances d'exécution propres à ce paquet. Aucun LLM ne sert
@@ -465,7 +519,8 @@ de juge, et chaque chiffre peut être retrouvé dans `results.json`. Détails (e
   PEP 702. Il ne voit pas les changements de comportement derrière une signature inchangée, ni
   les dépréciations qui ne déclenchent un avertissement qu'à l'exécution. `scan` liste aussi les
   dépréciations déclarées avec le décorateur propre à une bibliothèque (dont le nom contient
-  « deprecat »), mais `run` ne les sonde pas.
+  « deprecat ») et les noms supprimés qu'un module sert encore, avec un avertissement, via
+  `__getattr__`, mais `run` ne les sonde pas.
 - Le diff couvre l'API publique : les noms `_private`, ainsi que les suites de tests, benchmarks
   et exemples livrés dans un paquet, sont ignorés.
 - Les sondes portent sur un **échantillon** classé des changements incompatibles (en commençant

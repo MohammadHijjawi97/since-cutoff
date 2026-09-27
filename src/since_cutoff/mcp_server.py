@@ -12,13 +12,12 @@ is built, so the other subcommands never pay for it.
 
 from __future__ import annotations
 
-import difflib
 import inspect
 import logging
 import multiprocessing
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -58,13 +57,12 @@ from since_cutoff.models import (
     PROVIDER_ALIASES,
     ModelInfo,
     ModelRegistry,
-    normalize_model_id,
     parse_cutoff,
 )
-from since_cutoff.project import load_project
+from since_cutoff.project import FileUse, load_project
 from since_cutoff.providers import KNOWN_PROVIDERS
 from since_cutoff.pypi import PyPI, Release
-from since_cutoff.selection import uses_text
+from since_cutoff.selection import other_paths_text, uses_text
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -108,6 +106,11 @@ _CAVEAT = (
     "_Static diff of the public API (names, parameters, deprecation markers). Behaviour changes "
     "behind an unchanged signature are not shown._"
 )
+# project_changes stays under about this many characters (some 6,000 tokens): past it, the
+# remaining changed dependencies get one line each instead of their changes, and long lists of
+# names are cut short, each with the count of what was left out.
+PROJECT_BUDGET = 24_000
+_LIST_LIMIT = 40
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,11 @@ class Tools:
     """The MCP tools as plain methods, sharing one cache, model registry and PyPI client.
 
     The method docstrings are the tool descriptions the calling model reads.
+
+    ``processes=True`` lets project_changes diff several packages at once in worker processes.
+    Started with spawn (Windows, macOS, the MCP server), each worker imports the program's main
+    module again, so a script needs ``if __name__ == "__main__":`` around its calls; hence it
+    is off by default, and ``since-cutoff mcp`` turns it on.
     """
 
     def __init__(
@@ -134,11 +142,13 @@ class Tools:
         pypi: PyPI | None = None,
         max_download_mb: float = 80.0,
         today: date | None = None,
+        processes: bool = False,
     ) -> None:
         self.store = store or DiskCache()
         self.registry = registry or ModelRegistry(self.store)
         self.pypi = pypi or PyPI(self.store, max_download_mb=max_download_mb)
         self.max_download_mb = max_download_mb
+        self.processes = processes
         self._today = today
 
     # ----------------------------------------------------------------- tools
@@ -287,6 +297,8 @@ class Tools:
         )
         if scan.status == SKIPPED:
             raise PackageIndexError(scan.reason or f"could not diff {name}")
+        if scan.status == NEW:  # the release at the cutoff was an empty placeholder
+            return "\n".join([*head, "", _placeholder_note(old, new)]) + "\n"
         changes = scan.distinct
         head.append(f"- {_counts(changes)}")
         if not changes:
@@ -367,7 +379,9 @@ class Tools:
         the code imports first, with its counts and its top changes: first "Touching names your
         code uses" (each marked "[your code uses ...]"), then the rest grouped as in
         api_changes; then the dependencies released after the cutoff and those that could not
-        be checked.
+        be checked. The answer stays under about 24,000 characters: past that, the remaining
+        changed dependencies get one line each, under "N more with API changes"; pass them in
+        `only` to see their changes.
         """
         target = self._target(model, cutoff)
         project = load_project(_project_root(project_dir))
@@ -397,6 +411,7 @@ class Tools:
             registry=self.registry,
             pypi=self.pypi,
             reporter=reporter,
+            processes=self.processes,
         )
 
     def _target(self, model: str | None, cutoff: str | None, *, needs: str = "") -> Target:
@@ -461,11 +476,7 @@ class Tools:
         return info, note
 
     def _close_models(self, query: str, n: int = 8) -> list[str]:
-        ids = sorted({m.id for m in self.registry.all_models() if m.knowledge})
-        wanted = normalize_model_id(query)
-        close = difflib.get_close_matches(wanted[0], ids, n=n, cutoff=0.6)
-        contained = [i for i in ids if any(w and w in i.lower() for w in wanted)]
-        return list(dict.fromkeys([*close, *contained]))[:n]
+        return self.registry.close_matches(query, n)
 
 
 # ------------------------------------------------------------------ rendering
@@ -484,8 +495,7 @@ def change_line(change: APIChange) -> str:
     if change.hint and change.kind != DEPRECATED:
         parts.append(f"the old docs said: {_clip(change.hint.rstrip(' .;'), 200)}")
     if change.occurrences > 1:
-        example = f", e.g. `{change.also[0]}`" if change.also else ""
-        parts.append(f"{change.occurrences - 1} similar{example}")
+        parts.append(other_paths_text(change))
     return _clip("; ".join(parts), 480)
 
 
@@ -494,14 +504,14 @@ def _section_of(change: APIChange) -> int:
 
 
 def _sections(
-    changes: list[APIChange], used: set[str] | None = None, level: str = "##"
+    changes: list[APIChange], files: Sequence[FileUse] = (), level: str = "##"
 ) -> list[str]:
     """Markdown sections in hard-breaks-first order, keeping the given order inside each.
 
-    With ``used`` (the project's identifiers), the changes that touch names the code uses
-    come first, in their own section and in the given order.
+    With ``files`` (the files of the project's code that import the package), the changes
+    that touch names the code uses come first, in their own section and in the given order.
     """
-    marks = {id(c): uses_text(c, used) for c in changes} if used else {}
+    marks = {id(c): uses_text(c, files) for c in changes} if files else {}
     out: list[str] = []
     hits = [c for c in changes if marks.get(id(c))]
     if hits:
@@ -521,19 +531,20 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
     by_status: dict[str, list[PackageScan]] = {}
     for p in scan.packages:
         by_status.setdefault(p.status, []).append(p)
-    changed = by_status.get(CHANGED, [])
-    imported = {p.name for p in changed if project.imports(p.import_names)}
-    changed.sort(key=lambda p: (p.name not in imported, -p.counts[0], p.name))
+    changed = by_status.get(CHANGED, [])  # in the order of Engine.scan: imported ones first
     quiet = sorted(by_status.get(KNOWN, []) + by_status.get(UNCHANGED, []), key=lambda p: p.name)
     new, skipped = by_status.get(NEW, []), by_status.get(SKIPPED, [])
+    total = _plural(len(scan.packages), "dependency", "dependencies")
+    checked = len(scan.packages) - len(skipped)
     out = [
-        f"# {project.root.name}: {_plural(len(scan.packages), 'dependency', 'dependencies')} "
-        f"checked (versions from {project.version_source})",
+        f"# {project.root.name}: {f'{checked} of {total}' if skipped else total} checked "
+        f"(versions from {project.version_source})",
         "",
         f"- Cutoff {target.cutoff.isoformat()} ({target.label})",
     ]
     if target.note:
         out.append(f"- {target.note}")
+    out += [f"- Warning: {w}" for w in project.warnings]  # (`only` gets its own line below)
     out.append(
         f"- API changed after the cutoff: {len(changed)}; first released after it: {len(new)}; "
         f"unchanged or older: {len(quiet)}; not checked: {len(skipped)}"
@@ -542,45 +553,117 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
     missing = sorted({canonicalize_name(s) for s in only} - known)
     if missing:
         out.append(f"- `only` names no dependency of this project: {', '.join(missing)}")
-    for p in changed:
-        uses = " Your code imports it." if p.name in imported else ""
-        ranked = scan.ranked(p)
-        breaking, deprecated = p.counts
-        out += [
-            "",
-            f"## {p.name} {p.cutoff_version} ({p.cutoff_version_date}) -> {p.locked} "
-            f"({p.locked_date})",
-            "",
-            f"{breaking} breaking, {deprecated} deprecated.{uses}",
-            *_sections(ranked[:limit], scan.uses(p), level="###"),
-        ]
-        if len(ranked) > limit:
-            out += [
-                "",
-                f'{len(ranked) - limit} more: api_changes("{p.name}", '
-                f'from_version="{p.cutoff_version}", to_version="{p.locked}", symbol="...")',
-            ]
+
+    tail: list[str] = []
     if new:
-        out += ["", "## First released after the cutoff (you have never seen their API)", ""]
-        out += [f"- {p.name} {p.locked or ''} ({p.locked_date or 'date unknown'})" for p in new]
+        tail += ["", "## First released after the cutoff (you have never seen their API)", ""]
+        tail += _capped(
+            [
+                f"- {p.name} {p.locked or ''} ({p.locked_date or 'date unknown'})"
+                + (f"; {p.reason}" if p.cutoff_version and p.reason else "")
+                for p in new
+            ]
+        )
     if skipped:
-        out += ["", "## Could not be checked", ""]
-        out += [f"- {p.name}: {_clip(p.reason or 'unknown reason', 160)}" for p in skipped]
+        tail += ["", "## Could not be checked", ""]
+        tail += _capped(
+            [f"- {p.name}: {_clip(p.reason or 'unknown reason', 160)}" for p in skipped]
+        )
     if quiet:
-        out += [
+        names = [f"{p.name} {p.locked}" for p in quiet]
+        rest = f", and {len(names) - _LIST_LIMIT} more" if len(names) > _LIST_LIMIT else ""
+        tail += [
             "",
             "Not listed (released before the cutoff, or no breaking change since): "
-            + ", ".join(f"{p.name} {p.locked}" for p in quiet),
+            + ", ".join(names[:_LIST_LIMIT])
+            + rest,
         ]
     if changed:
-        out += ["", _CAVEAT]
-    return "\n".join(out) + "\n"
+        tail += ["", _CAVEAT]
+
+    # The changed dependencies in full while they fit the budget, keeping room for one line
+    # each for the rest.
+    room = PROJECT_BUDGET - _size(out) - _size(tail)
+    shown = 0
+    for i, p in enumerate(changed):
+        section = _package_section(scan, p, limit)
+        if _size(section) + _size(_brief(changed[i + 1 :])) > room:
+            break
+        out += section
+        room -= _size(section)
+        shown += 1
+    return "\n".join(out + _brief(changed[shown:]) + tail) + "\n"
+
+
+def _brief(packages: list[PackageScan]) -> list[str]:
+    """One line for each changed dependency project_changes has no room to show in full."""
+    if not packages:
+        return []
+    example = ", ".join(f'"{p.name}"' for p in packages[:3])
+    return [
+        "",
+        f"## {len(packages)} more with API changes (left out to keep this answer short)",
+        "",
+        *_capped([_package_line(p) for p in packages]),
+        "",
+        f"Their changes: project_changes(..., only=[{example}]) or api_changes(package, "
+        "from_version=..., to_version=...).",
+    ]
+
+
+def _package_section(scan: ScanResult, p: PackageScan, limit: int) -> list[str]:
+    """One changed dependency in project_changes: its versions, counts and top changes."""
+    uses = " Your code imports it." if p.imported else ""
+    ranked = scan.ranked(p)
+    breaking, deprecated = p.counts
+    out = [
+        "",
+        f"## {p.name} {p.cutoff_version} ({p.cutoff_version_date}) -> {p.locked} ({p.locked_date})",
+        "",
+        f"{breaking} breaking, {deprecated} deprecated.{uses}",
+        *_sections(ranked[:limit], scan.uses(p), level="###"),
+    ]
+    if len(ranked) > limit:
+        out += [
+            "",
+            f'{len(ranked) - limit} more: api_changes("{p.name}", '
+            f'from_version="{p.cutoff_version}", to_version="{p.locked}", symbol="...")',
+        ]
+    return out
+
+
+def _package_line(p: PackageScan) -> str:
+    breaking, deprecated = p.counts
+    uses = "; your code imports it" if p.imported else ""
+    return (
+        f"- {p.name} {p.cutoff_version} -> {p.locked}: {breaking} breaking, "
+        f"{deprecated} deprecated{uses}"
+    )
+
+
+def _capped(lines: list[str]) -> list[str]:
+    """At most :data:`_LIST_LIMIT` list items, then how many were left out."""
+    if len(lines) <= _LIST_LIMIT:
+        return lines
+    return [*lines[:_LIST_LIMIT], f"- ... and {len(lines) - _LIST_LIMIT} more"]
+
+
+def _size(lines: list[str]) -> int:
+    return sum(len(line) + 1 for line in lines)
+
+
+def _placeholder_note(old: Release, new: Release) -> str:
+    return (
+        f"{old.version} was an empty placeholder that only reserved the name: the API of "
+        f"{new.version} is newer than your training data. Read its documentation or source "
+        "before using it."
+    )
 
 
 def _newer_than_cutoff(name: str, latest: Release, target: Target) -> str:
     return (
         f"# {name}: no release on or before the cutoff\n\n"
-        f"{name} had no final release on or before {target.cutoff.isoformat()} "
+        f"{name} had no release on or before {target.cutoff.isoformat()} "
         f"({target.label}); {latest.version} was published {_day(latest)}. Its whole API is "
         "newer than your training data: read its documentation or source before using it.\n"
     )
@@ -619,11 +702,11 @@ def _counts(changes: list[APIChange]) -> str:
 _CALL = re.compile(r"\([^()]*\)")
 
 
-def _symbol_terms(symbol: str) -> list[list[str]]:
+def _symbol_terms(symbol: str, *, keep_case: bool = False) -> list[list[str]]:
     """``"await client.messages.create(model=m)"`` -> ``[["client", "messages", "create"]]``.
 
     Call syntax, backticks and whitespace are dropped, and commas separate several symbols.
-    Segments are lower-cased.
+    Segments are lower-cased unless ``keep_case``.
     """
     text = symbol.replace("`", "")
     while True:  # innermost parentheses first, so nested calls go too
@@ -635,7 +718,8 @@ def _symbol_terms(symbol: str) -> list[list[str]]:
     terms = []
     for term in text.split(","):
         term = re.sub(r"^\s*await\s+", "", term)
-        segments = [s for s in re.sub(r"\s+", "", term).lower().split(".") if s]
+        term = re.sub(r"\s+", "", term)
+        segments = [s for s in (term if keep_case else term.lower()).split(".") if s]
         if segments:
             terms.append(segments)
     return terms
@@ -696,11 +780,12 @@ def _without_root(path: str) -> str:
     return path.split(".", 1)[1] if "." in path else path
 
 
-def _contains(change: APIChange, needle: str) -> bool:
+def _contains(change: APIChange, needle: str, *, whole: bool = False) -> bool:
     """Whether a symbol written as text appears in one of the change's paths.
 
     The import name is left out, so a symbol such as ``Anthropic`` or ``hub`` does not match
-    every change of its package. A dotted symbol must appear as consecutive whole segments.
+    every change of its package. A dotted symbol, or one that is ``whole`` (a class name such
+    as ``Redis``, which is not ``RedisCluster``), must appear as whole segments.
     """
     fields = [change.path, change.short_path, change.moved_to, *change.also]
     parts = [_without_root(f).split(".") for f in fields if f]
@@ -708,6 +793,8 @@ def _contains(change: APIChange, needle: str) -> bool:
         parts.append([change.parameter])
     want = needle.split(".")
     if len(want) == 1:
+        if whole:
+            return any(seg.lower() == needle for segs in parts for seg in segs)
         return any(_in_segment(needle, seg) for segs in parts for seg in segs)
     return any(
         [s.lower() for s in segs[i : i + len(want)]] == want
@@ -717,10 +804,13 @@ def _contains(change: APIChange, needle: str) -> bool:
 
 
 def _names_package(symbol: str, package: str, changes: list[APIChange]) -> bool:
-    """Whether ``symbol`` is just the package or its import name (``"openai"``)."""
-    text = symbol.strip().strip("`").lower()
-    roots = {c.path.split(".", 1)[0].lower() for c in changes}
-    return text in roots or canonicalize_name(text) == canonicalize_name(package)
+    """Whether ``symbol`` is just the package or its import name (``"openai"``), spelled as
+    they are: ``Redis`` is redis's client class, ``Anthropic`` anthropic's."""
+    text = symbol.strip().strip("`")
+    roots = {c.path.split(".", 1)[0] for c in changes}
+    return text in roots or (
+        text == text.lower() and canonicalize_name(text) == canonicalize_name(package)
+    )
 
 
 def _matching(changes: list[APIChange], symbol: str) -> tuple[list[APIChange], bool]:
@@ -733,10 +823,16 @@ def _matching(changes: list[APIChange], symbol: str) -> tuple[list[APIChange], b
     """
     terms = _symbol_terms(symbol)
     needles = [".".join(t) for t in terms]
+    # A class name as written (``Redis``, not ``LEGACY`` or ``legacy``) names whole segments.
+    whole = [
+        len(t) == 1 and re.match(r"[A-Z][a-z0-9]", t[0]) is not None
+        for t in _symbol_terms(symbol, keep_case=True)
+    ]
     found = [
         c
         for c in changes
-        if any(_contains(c, n) for n in needles) or any(_names(c, t, strict=True) for t in terms)
+        if any(_contains(c, n, whole=w) for n, w in zip(needles, whole, strict=True))
+        or any(_names(c, t, strict=True) for t in terms)
     ]
     if found or all(len(t) == 1 for t in terms):
         return found, False
@@ -821,7 +917,7 @@ class _Progress(Reporter):
         self.title, self.stage_total, self.stage_done = title, n, 0
         self._send()
 
-    def advance(self, n: int = 1) -> None:
+    def advance(self, n: int = 1, *, label: str | None = None) -> None:
         self.step += n
         self.stage_done += n
         self._send()
@@ -968,5 +1064,5 @@ def serve(*, max_download_mb: float = 80.0, debug: bool = False) -> None:
     # Diffs of several packages run in worker processes. The server is multi-threaded, where
     # fork() can deadlock, so start workers fresh (already the default on Windows and macOS).
     multiprocessing.set_start_method("spawn", force=True)
-    tools = Tools(max_download_mb=max_download_mb)
+    tools = Tools(max_download_mb=max_download_mb, processes=True)
     build_server(tools, log_level="DEBUG" if debug else "WARNING").run("stdio")

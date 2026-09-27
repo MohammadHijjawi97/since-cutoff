@@ -60,7 +60,7 @@ uvx since-cutoff scan
 uvx since-cutoff run --apply
 ```
 
-也可以用 `pipx install since-cutoff`（或 `pip install since-cutoff`）安装，然后运行 `since-cutoff`。请在项目根目录运行：它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml` 或 `.venv`。不加 `--model` 时，它测试的是你的 Claude Code 当前使用的模型；要测试其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan` 不花钱；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
+也可以用 `pipx install since-cutoff`（或 `pip install since-cutoff`）安装，然后运行 `since-cutoff`。请在项目根目录运行：它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它测试的是你的编程 Agent 所配置的模型，从 Claude Code、Codex、OpenCode 或 Aider 的设置中读取；要测试其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan` 不花钱；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
 
 `scan` 在示例项目上的输出：
 
@@ -81,7 +81,7 @@ uvx since-cutoff run --apply
 npx skills add MohammadHijjawi97/since-cutoff
 ```
 
-这条命令通过开源的 [skills](https://github.com/vercel-labs/skills) 命令行工具，把同一个技能安装到 Codex、Cursor、Gemini CLI、GitHub Copilot、OpenCode 以及其他读取 `SKILL.md` 的 Agent 中。在 Claude Code 之外，需要告诉工具要测试哪个模型，例如 `since-cutoff scan --model openai:gpt-5.4`，并按下文的方法添加 MCP 服务器。
+这条命令通过开源的 [skills](https://github.com/vercel-labs/skills) 命令行工具，把同一个技能安装到 Codex、Cursor、Gemini CLI、GitHub Copilot、OpenCode 以及其他读取 `SKILL.md` 的 Agent 中。since-cutoff 也会从 Codex、OpenCode 和 Aider 的设置中读取模型；对于其他 Agent，需要告诉它要测试哪个模型，例如 `since-cutoff scan --model openai:gpt-5.4`。然后按下文的方法添加 MCP 服务器。
 
 效果较好的提示词：
 
@@ -93,7 +93,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 | `--model` | 使用 | 需要 |
 |---|---|---|
-| `claude-code`（未检测到时） | 你的 Claude Code 登录（订阅或 API key），当前模型 | `claude` 命令行工具 |
+| `claude-code`（没有任何设置指定模型时的默认值） | 你的 Claude Code 登录（订阅或 API key），当前模型 | `claude` 命令行工具 |
 | `claude-code:sonnet`、`claude-code:claude-haiku-4-5` | 指定的 Claude 模型 | `claude` 命令行工具 |
 | `anthropic:<model>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | OpenAI API | `OPENAI_API_KEY` |
@@ -102,9 +102,22 @@ npx skills add MohammadHijjawi97/since-cutoff
 | `ollama:<model>` | 本地 Ollama | 正在运行的 Ollama |
 | `openai-compatible:<model>` | 任何 OpenAI 兼容的服务 | `--base-url`，可选 `OPENAI_API_KEY` |
 
-不传 `--model` 时，since-cutoff 测试你的编程 Agent 当前配置的模型：先看 `SINCE_CUTOFF_MODEL`；在 Claude Code 里运行时只看 Claude Code 自己的模型；其他情况下读取 Claude Code、Codex、OpenCode 或 Aider 配置里的模型，先项目（一直向上到仓库根目录）后用户。它会说明模型来自哪里，找不到时使用 `claude-code`。
+不加 `--model` 时，0.3.0 及以后的版本会测试你的编程 Agent 所配置的模型，并在模型那一行注明来源（“model from .claude/settings.json”）：
 
-训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。
+1. `SINCE_CUTOFF_MODEL`（完整写法，例如 `openai:gpt-5.4`）始终优先。
+2. 在 Claude Code 内部运行时（Claude Code 会为它执行的命令设置 `CLAUDECODE=1`），只看 Claude Code 自己的设置：先是 `ANTHROPIC_MODEL`，然后是项目的 `.claude/settings.local.json` 和 `.claude/settings.json`，最后是 `~/.claude/settings.json`。
+3. 在其他环境中，以最具体的设置为准：先是 `ANTHROPIC_MODEL` 或 `AIDER_MODEL`；然后是项目设置，从被扫描的目录向上查找到仓库根目录，离得最近的目录优先（不包括主目录及其上层目录）；最后是用户设置。在同一个目录中，各 Agent 按下表的顺序计算：
+
+| Agent | 项目设置 | 用户设置 |
+|---|---|---|
+| Claude Code | `.claude/settings.local.json`、`.claude/settings.json` | `~/.claude/settings.json` |
+| Codex | `.codex/config.toml`，包括其中选定的 profile | `$CODEX_HOME/config.toml` 或 `~/.codex/config.toml` |
+| OpenCode | `opencode.json`、`opencode.jsonc` | `~/.config/opencode/` |
+| Aider | `.aider.conf.yml`，支持 Aider 的别名（`4o`、`flash`、`r1` 等） | `~/.aider.conf.yml` |
+
+如果没有任何设置指定模型，它会测试 Claude Code 的默认模型，并明确说明这一点。它只读取这些文件中的模型字段；遇到无法识别的模型名称时会停止运行，并在提示中指出是哪个设置。Agent 通过其他服务（GitHub Copilot、Amazon Bedrock、Vertex AI）使用的模型，会按开发它的厂商来命名，因此 `run` 调用的是该厂商的 API（`openai:` 需要 `OPENAI_API_KEY`）。
+
+训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`scan` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
 
 ## 实测结果
 
@@ -150,8 +163,7 @@ Claude Haiku 4.5 那次运行写出的说明（节选，原文照录）：
 <p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/run.svg" width="100%" alt="since-cutoff 0.1.0 在 Claude Haiku 4.5 上的运行结果：探测的 5 个依赖中有 3 个出现过时的 API 用法；探测了 20 个 API 变更：5 个过时、1 个写错、2 个已弃用、12 个正确；8 条说明；留出任务正确率（无说明 -> 有说明）：14% -> 57%（14 对任务）"></p>
 </details>
 
-样本小，只有两个模型、一个项目：请把它当作方法的演示，而不是基准测试。每次运行都会把完整报告（每个任务、每个回答和每条类型检查错误）写入 `.since-cutoff/report.md`。用当前版本重复这个实验（它的对比和排序都有变化，所以探测不会完全相同）：`cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`。想知道经过验证的说明是否比更简单的说明更有效，可以加上 `--compare template,signatures`：留出任务还会用不调用模型生成的说明再答一遍（直接由 API 对比得出的变更说明，或新的函数签名和 docstring），在同一批配对上打分，并给出每组说明的 token 数。
-从 0.3.0 起，还能保存一次运行所用的任务：加上 `--tasks-out tasks.json`，其他人就可以用 `--tasks-from tasks.json` 在完全相同的任务上重复这次运行，换一个模型或换一组说明都可以。非常欢迎把你自己项目上的结果发到 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)。
+样本小，只有两个模型、一个项目：请把它当作方法的演示，而不是基准测试。每次运行都会把完整报告（每个任务、每个回答和每条类型检查错误）写入 `.since-cutoff/report.md`。用当前版本重复这个实验（它的对比和排序都有变化，所以探测不会完全相同）：`cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`。从 0.3.0 起，还能保存一次运行所用的任务：加上 `--tasks-out tasks.json`，其他人就可以用 `--tasks-from tasks.json` 在完全相同的任务上重复这次运行，换一个模型或换一组说明都可以。这个文件记录了任务的编写者（模型、提示词版本和 since-cutoff 版本），在复用的任务上运行时也会在报告中注明（[详情](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md#2-probe)，英文）。非常欢迎把你自己项目上的结果发到 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)。
 
 测量方法的细节，以及这些数字能说明什么、不能说明什么，见[这篇文章](https://mohammadhijjawi97.github.io/since-cutoff/)（英文）。
 
@@ -213,9 +225,9 @@ gemini extensions install https://github.com/MohammadHijjawi97/since-cutoff
 
 `@latest` 让 `uvx` 使用新发布的版本，而不是一直复用第一次缓存的版本（插件自带的 `.mcp.json` 固定到确切版本）。如果客户端找不到 `uvx`，请安装 [uv](https://docs.astral.sh/uv/)，或者写上完整路径（`which uvx`）。这个服务器已登记在 [MCP Registry](https://registry.modelcontextprotocol.io) 中，名称为 `io.github.MohammadHijjawi97/since-cutoff`。
 
-在较大的项目上，第一次调用 `project_changes` 会下载每个有变更的依赖的 wheel，可能需要几分钟（transformers 这类特别大的包最慢）。结果会被缓存，之后的调用只需几秒。要预热缓存，可以先在项目里运行一次 `since-cutoff scan`，它和服务器共用同一个缓存。默认工具超时较短的客户端可能需要把超时调长，就像上面的 Codex 示例那样。
+在较大的项目上，第一次调用 `project_changes` 会下载每个有变更的依赖的 wheel，可能需要几分钟（transformers 这类特别大的包最慢）。结果会被缓存，之后的调用只需几秒。要预热缓存，可以先在项目里运行一次 `since-cutoff scan`，它和服务器共用同一个缓存。默认工具超时较短的客户端可能需要把超时调长，就像上面的 Codex 示例那样。`project_changes` 的回答会控制在约 24,000 个字符以内：放不下的有变更的依赖每个只占一行，把它们传入 `only` 就能列出它们的变更。
 
-`api_changes("huggingface-hub", model="claude-haiku-4-5")` 的返回结果（真实输出，有删节）：
+`api_changes("huggingface-hub", model="claude-haiku-4-5")` 在 0.2.0 中的返回结果（真实输出，有删节；之后的版本改进了 API 对比，所以数量会略有不同）：
 
 ```markdown
 # huggingface-hub 0.29.1 -> 2.0.0
@@ -300,7 +312,7 @@ since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fa
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ```
 
-`--markdown -` 把摘要打印到标准输出（常规输出则改为输出到标准错误）。退出码：`0` 正常；`1` 出错（例如没有任何模型回答能被打分）；`2` 用法错误；`3` 用 `run --fail-on-stale` 时发现了过时的 API 用法，或用 `scan --fail-on-changes` 时发现了 API 变更。
+`--markdown -` 把摘要打印到标准输出，标准错误中只有进度和报告路径，与 `--json` 相同。输出到文件、管道或 CI 日志时不显示实时进度条，并按 160 列的宽度排版（可以用 `COLUMNS` 设置其他宽度）。退出码：`0` 正常；`1` 出错（例如 `run` 没能探测任何 API 变更，或没有任何模型回答能被打分）；`2` 用法错误；`3` 用 `run --fail-on-stale` 时发现了过时的 API 用法，或用 `scan --fail-on-changes` 时发现了 API 变更；`141` 输出被提前关闭（例如通过管道传给了 `head`）。
 
 ## 工作原理
 
@@ -319,6 +331,10 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 | **correct**（正确） | 对你的版本有效，并且确实用到了变更后的 API |
 | untouched / off-task / invalid / error | 不计入任何比率，但始终会在报告中列出 |
 
+从 0.3.0 起，留出任务的结果包括：无说明 -> 有说明时按任务计算的正确率（附上配对任务数和它们来自的 API 变更数）；两者之差及其 95% bootstrap 置信区间（按 API 变更重抽样）；说明修正了的变更数（无说明时错、有说明时对）及其 Wilson 95% 置信区间；说明弄坏了的变更数；修正与弄坏之间的精确符号检验；以及按原因列出的未计入的配对。回归检查报告模型原本答对的 API 在加入说明后有多少仍然正确。
+
+`run --compare template,signatures`（0.3.0 及以后）还会用两种不需要模型的基线说明，回答同样的留出任务和回归检查：`template` 用一句话陈述每个失败的变更，内容取自 API 对比结果；`signatures` 给出每个变更 API（或其所在库指明的替代 API）的新签名和文档字符串的第一段。所有区块都在相同的配对上、对照相同的无说明回答打分，并显示每个区块的 token 数，所以一次运行就能看出经过验证的说明究竟多带来了什么。
+
 所有回答都由类型检查器针对确切的包版本打分，每个包都在各自独立的环境中检查，环境里装有该包自己的运行时依赖。没有 LLM 当评判，每个数字都能追溯到 `results.json`。详见 [docs/how-it-works.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md)（英文）。
 
 ## 它会运行、发送和保存什么
@@ -332,7 +348,7 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ## 局限
 
 - 目前仅支持 Python。下一步是 TypeScript（`.d.ts` 对比、`tsc`）（[#1](https://github.com/MohammadHijjawi97/since-cutoff/issues/1)）。
-- 类型检查器能发现错误的名称、错误的参数和 PEP 702 弃用，但看不到签名不变而行为改变的情况，也看不到只在运行时发出警告的弃用。`scan` 还会列出用库自己的装饰器（名称包含 "deprecat"）声明的弃用，但 `run` 不会探测这些弃用。
+- 类型检查器能发现错误的名称、错误的参数和 PEP 702 弃用，但看不到签名不变而行为改变的情况，也看不到只在运行时发出警告的弃用。`scan` 还会列出用库自己的装饰器（名称包含 "deprecat"）声明的弃用，以及已被移除、但模块仍通过 `__getattr__` 提供并发出警告的名称；不过 `run` 不会探测这些弃用。
 - 对比只覆盖公开 API：`_private` 名称，以及包内自带的测试、基准测试和示例，都会被跳过。
 - 探测的是破坏性变更中按优先级排序的一个**样本**（你的代码已经用到的符号优先），而不是全部。
 - “模型见过的版本”指截止日期当天或之前发布的最新版本。模型对最近的版本了解得更少，所以实际的过时可能开始得更早。

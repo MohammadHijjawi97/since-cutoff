@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
@@ -15,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from since_cutoff import __version__
-from since_cutoff.apidiff import DIFF_SCHEMA, APIChange
+from since_cutoff.apidiff import DIFF_SCHEMA, PARAM_REMOVED, APIChange
 from since_cutoff.baselines import ARM_SIGNATURES, ARM_TEMPLATE, ARM_VERIFIED
 from since_cutoff.engine import (
     CHANGE_BROKEN,
@@ -38,7 +40,8 @@ from since_cutoff.engine import (
     RunResult,
     ScanResult,
 )
-from since_cutoff.selection import uses_text
+from since_cutoff.project import FileUse
+from since_cutoff.selection import other_paths_text, uses_text
 from since_cutoff.stats import (
     BOOTSTRAP_RESAMPLES,
     BOOTSTRAP_SEED,
@@ -61,6 +64,10 @@ STATUS_LABEL = {
     NEW: "newer than the model",
     SKIPPED: "not checked",
 }
+# Added to the status of a dependency the project's code imports (PackageScan.imported).
+IMPORTED = "imported by your code"
+# Characters of a skip reason shown in the terminal (the reports have it in full).
+REASON_WIDTH = 120
 # How every report counts: each change once, under its shortest public path.
 COUNTING_NOTE = "A change reachable under several import paths is counted once."
 # How held-out answers are counted (RunResult.pairing, ChangePairs.outcome).
@@ -117,6 +124,7 @@ def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]
                 "cutoff_version": p.cutoff_version,
                 "cutoff_version_date": p.cutoff_version_date,
                 "status": p.status,
+                "imported": p.imported,
                 "breaking_changes": breaking,
                 "deprecations": deprecations,
                 "probed": len(valid),
@@ -303,13 +311,15 @@ def headline(
                 Text.assemble(
                     ("Stale API use in ", "bold"),
                     (f"{stale} of {len(probed)}", "bold red" if stale else "bold green"),
-                    (" probed dependencies", "bold"),
+                    (f" probed {_deps_word(len(probed))}", "bold"),
                 )
             )
+    checked = s["dependencies_checked"]
     lines.append(
         Text.assemble(
-            (f"{s['dependencies_changed']} of {s['dependencies_checked']}", "bold yellow"),
-            " dependencies changed their API after the cutoff",
+            (f"{s['dependencies_changed']} of {checked}", "bold yellow"),
+            f" {_deps_word(checked)} changed {'its' if checked == 1 else 'their'} API "
+            "after the cutoff",
         )
     )
     if s["breaking_changes"] or s["deprecations"]:
@@ -321,25 +331,23 @@ def headline(
             )
         )
     if s["dependencies_newer_than_model"]:
-        lines.append(
-            Text(
-                f"{s['dependencies_newer_than_model']} dependencies did not exist yet at the cutoff",
-                style="dim",
-            )
-        )
+        new = s["dependencies_newer_than_model"]
+        lines.append(Text(f"{_deps(new)} did not exist yet at the cutoff", style="dim"))
     if s["dependencies_skipped"]:
+        skipped, total = s["dependencies_skipped"], s["dependencies_total"]
         first = next((p.reason for p in scan.skipped if p.reason), "")
+        if first:
+            first = ("; for example: " if skipped > 1 else ": ") + clip(first, REASON_WIDTH)
         lines.append(
             Text(
-                f"{s['dependencies_skipped']} of {s['dependencies_total']} dependencies could not "
-                "be checked" + (f"; for example: {first[:110]}" if first else ""),
+                f"{skipped} of {_deps(total)} could not be checked{first}",
                 style="yellow",
             )
         )
     if run is not None and run.probes:
         p = s["probes"]
         text = Text.assemble(
-            f"Probed {p['valid']} API changes: ",
+            f"Probed {_plural(p['valid'], 'API change')}: ",
             (f"{p['stale']} stale", "red"),
             " · ",
             (f"{p['wrong']} wrong", "magenta"),
@@ -362,7 +370,9 @@ def headline(
             if n["from_diff"]
             else " (all checked by the type checker)"
         )
-        lines.append(Text(f"Fix: {n['count']} notes{detail}, about {n['tokens']} tokens"))
+        lines.append(
+            Text(f"Fix: {_plural(n['count'], 'note')}{detail}, about {n['tokens']} tokens")
+        )
     if run is not None and "heldout" in s.get("heldout", {}):
         lines += _heldout_lines(s["heldout"]["heldout"])
         reg = s["heldout"].get("regression")
@@ -506,17 +516,21 @@ def render_console(
         title = f"since-cutoff · {escape(s['model'])} · training cutoff {s['cutoff']}"
     else:
         title = f"since-cutoff · custom cutoff {s['cutoff']}"
-    sub = (
-        f"{escape(scan.project.root.name)} · {s['dependencies_total']} dependencies"
+    sub = Text(
+        f"{scan.project.root.name} · {_deps(s['dependencies_total'])}"
         + (f" ({s['dependencies_skipped']} not checked)" if s["dependencies_skipped"] else "")
-        + f" · versions from {escape(s['version_source'])}"
+        + f" · versions from {s['version_source']}"
     )
     lines = headline(scan, run, s)
     # rich fits a panel to its body and title but not to its subtitle, which it would cut: size
-    # it here (expand=True then means "exactly this wide").
+    # it here (expand=True then means "exactly this wide"). A subtitle too long for the console
+    # goes into the body instead, where it wraps.
+    subtitle: Text | None = sub
+    if sub.cell_len + 6 > console.width:
+        lines, subtitle = [*lines, Text(sub.plain, style="dim")], None
     width = 6 + max(
         Text.from_markup(title).cell_len,
-        Text.from_markup(sub).cell_len,
+        subtitle.cell_len if subtitle else 0,
         *(t.cell_len for t in lines),
     )
     # The CLI's console does not wrap (soft_wrap), which would crop long lines inside the panel.
@@ -524,7 +538,7 @@ def render_console(
         Panel(
             Group(*lines),
             title=title,
-            subtitle=sub,
+            subtitle=subtitle,
             expand=True,
             width=min(width, console.width),
             padding=(1, 2),
@@ -532,29 +546,35 @@ def render_console(
         soft_wrap=False,
     )
 
-    table = Table(show_edge=False, header_style="bold", pad_edge=False)
-    table.add_column("package", no_wrap=True)
-    table.add_column("you use", justify="right", no_wrap=True)
-    table.add_column("at cutoff", justify="right", no_wrap=True)
-    table.add_column("status")
-    table.add_column("changes", justify="right")
+    # Every column may wrap, and a long name, version or flag folds: in a narrow terminal the
+    # columns then share the width. (With the names kept whole, a long package name used to
+    # squeeze the status and changes columns to nothing.) The rows come in the order of
+    # Engine.scan: changed packages first, those the code imports first among them.
     has_probes = run is not None and bool(run.probes)
+    rows = [r for r in s["packages"] if verbose or r["status"] not in (KNOWN, UNCHANGED)]
+    widths = _narrow_widths(console.width, rows, has_probes)
+    table = Table(show_edge=False, header_style="bold", pad_edge=False)
+    table.add_column("package", overflow="fold", width=widths.get("package"))
+    table.add_column("you use", justify="right", overflow="fold", width=widths.get("you use"))
+    table.add_column("at cutoff", justify="right", overflow="fold", width=widths.get("at cutoff"))
+    table.add_column("status", overflow="fold")
+    table.add_column("breaking", justify="right", overflow="fold")
+    table.add_column("deprecated", justify="right", overflow="fold")
     if has_probes:
-        table.add_column("probed", justify="right")
-        table.add_column("stale", justify="right", style="red")
-        table.add_column("wrong", justify="right", style="magenta")
-    for row in s["packages"]:
-        if row["status"] in (KNOWN, UNCHANGED) and not verbose:
-            continue
-        status = STATUS_LABEL.get(row["status"], row["status"])
+        table.add_column("probed", justify="right", overflow="fold")
+        table.add_column("stale", justify="right", style="red", overflow="fold")
+        table.add_column("wrong", justify="right", style="magenta", overflow="fold")
+    for row in rows:
+        status = _status_text(row, short=bool(widths))
         if row["reason"] and (verbose or row["status"] == SKIPPED):
-            status += f" ({row['reason'][:80]})"
+            status += f" ({clip(row['reason'], REASON_WIDTH)})"
+        name = row["package"]
         cells = [
-            row["package"],
-            row["locked"] or "?",
-            row["cutoff_version"] or "-",
+            escape(_fold_at_hyphens(name, widths["package"]) if widths else name),
+            escape(row["locked"] or "?"),
+            escape(row["cutoff_version"] or "-"),
             escape(status),
-            str(row["breaking_changes"] or "") if row["status"] == CHANGED else "",
+            *_count_cells(row),
         ]
         if has_probes:
             cells += [str(row["probed"] or ""), str(row["stale"] or ""), str(row["wrong"] or "")]
@@ -563,10 +583,12 @@ def render_console(
     if table.row_count:
         console.print(table)
     if hidden and not verbose:
+        more = " more" if table.row_count else ""
+        were = "was" if hidden == 1 else "were"
         console.print(
             Text(
-                f"{hidden} more dependencies were not flagged (released before the cutoff, or no "
-                "breaking changes); --verbose shows them",
+                f"{hidden}{more} {_deps_word(hidden)} {were} not flagged (released before the "
+                "cutoff, or no breaking changes); --verbose shows them",
                 style="dim",
             )
         )
@@ -596,6 +618,67 @@ def render_console(
 _STYLE = {STALE: "red", WRONG: "magenta", DEPRECATED: "yellow", PASS: "green"}
 
 
+def _status_text(row: dict[str, Any], *, short: bool = False) -> str:
+    """A dependency's status label, with :data:`IMPORTED` when the code imports it; with
+    ``short``, in the form that fits a narrow table ("changed, imported")."""
+    if short:
+        status = _STATUS_SHORT.get(row["status"]) or STATUS_LABEL.get(row["status"], "")
+        return f"{status}, imported" if row["imported"] else status
+    status = STATUS_LABEL.get(row["status"], row["status"])
+    return f"{status}, {IMPORTED}" if row["imported"] else status
+
+
+# In a terminal narrower than this, the table uses the short status labels, the version
+# columns get the width their versions need and the package names the rest, folded at "-".
+# (At 80 columns every row took three lines, and names broke as "opentelemetr" / "y-sdk".)
+NARROW_TABLE = 100
+_STATUS_SHORT = {CHANGED: "changed", NEW: "new"}
+_STATUS_WIDTH = len("changed, imported")
+
+
+def _narrow_widths(width: int, rows: list[dict[str, Any]], probes: bool) -> dict[str, int]:
+    """The widths of the package and version columns of a narrow table (see
+    :data:`NARROW_TABLE`); empty when the terminal is wide, or too narrow for this layout."""
+    if width >= NARROW_TABLE or not rows:
+        return {}
+    locked = max(len("you use"), *(len(r["locked"] or "?") for r in rows))
+    cutoff = max(len("at cutoff"), *(len(r["cutoff_version"] or "-") for r in rows))
+    counts = ["breaking", "deprecated", *(["probed", "stale", "wrong"] if probes else [])]
+    columns = 4 + len(counts)
+    # Each column is padded by a space on either side, but for the outer edges, and a line
+    # separates the columns: 3 characters between two columns.
+    room = width - 3 * (columns - 1) - locked - cutoff - _STATUS_WIDTH - sum(map(len, counts))
+    if room < 10:
+        return {}
+    longest = max(len(r["package"]) for r in rows)
+    return {"package": min(room, longest), "you use": locked, "at cutoff": cutoff}
+
+
+def _fold_at_hyphens(name: str, width: int) -> str:
+    """``opentelemetry-sdk`` in lines of at most ``width`` characters, broken after a "-"
+    where it can be (``opentelemetry-`` / ``sdk``), or before it when the part with its "-"
+    is one character too long (``opentelemetry`` / ``-sdk``)."""
+    lines = [""]
+    carry = ""
+    for part in re.split(r"(?<=-)", name):
+        part, carry = carry + part, ""
+        if part.endswith("-") and len(part) == width + 1:
+            part, carry = part[:-1], "-"
+        if lines[-1] and len(lines[-1]) + len(part) > width:
+            lines.append(part)
+        else:
+            lines[-1] += part
+    return "\n".join(lines)
+
+
+def _count_cells(row: dict[str, Any]) -> list[str]:
+    """The breaking and deprecated cells of a changed dependency (``0`` included); blank for
+    the others, which were not diffed or have nothing to count."""
+    if row["status"] != CHANGED:
+        return ["", ""]
+    return [str(row["breaking_changes"]), str(row["deprecations"])]
+
+
 def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> None:
     limit = max(0, limit)
     for p in scan.changed:
@@ -608,10 +691,10 @@ def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> N
                 style="bold",
             )
         )
-        ranked, ids = scan.ranked(p), scan.uses(p)
+        ranked, files = scan.ranked(p), scan.uses(p)
         for c in ranked[:limit]:
-            uses = uses_text(c, ids)
-            line = c.describe(short=True, versioned=False)
+            uses = uses_text(c, files)
+            line = change_text(c, short=True)
             line += f" (your code uses {uses})" if uses else ""
             console.print(Text("  - " + line.replace("`", "")))
         if len(ranked) > limit:
@@ -638,22 +721,26 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
     out += [f"- {t.plain}" for t in headline(scan, run, s)]
     out += [f"- Warning: {w}" for w in scan.warnings]
     out += _settings_md(s["settings"])
+    # The probe columns only when there were probes (never in a scan).
+    probed = run is not None and bool(run.probes)
     out += [
         "",
         "## Dependencies",
         "",
-        "| package | you use | at cutoff | status | changes | probed | stale | wrong |",
-        "|---|---|---|---|---:|---:|---:|---:|",
+        "| package | you use | at cutoff | status | breaking | deprecated |"
+        + (" probed | stale | wrong |" if probed else ""),
+        "|---|---|---|---|---:|---:|" + ("---:|---:|---:|" if probed else ""),
     ]
     for r in s["packages"]:
-        status = STATUS_LABEL.get(r["status"], r["status"]) + (
-            f": {r['reason']}" if r["reason"] else ""
-        )
-        out.append(
+        status = _status_text(r) + (f": {r['reason']}" if r["reason"] else "")
+        counts = " | ".join(_count_cells(r))
+        row = (
             f"| {r['package']} | {r['locked'] or '?'} ({r['locked_date'] or '-'}) "
-            f"| {r['cutoff_version'] or '-'} | {_cell(status)} | {r['breaking_changes'] or ''} "
-            f"| {r['probed'] or ''} | {r['stale'] or ''} | {r['wrong'] or ''} |"
+            f"| {r['cutoff_version'] or '-'} | {_cell(status)} | {counts} |"
         )
+        if probed:
+            row += f" {r['probed'] or ''} | {r['stale'] or ''} | {r['wrong'] or ''} |"
+        out.append(row)
     if run is not None and run.block:
         out += ["", "## Notes written for AGENTS.md", "", "```markdown", run.block.strip(), "```"]
     if run is not None and run.probes:
@@ -691,8 +778,8 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
                 f"{deprecated} deprecated",
                 "",
             ]
-            ids = scan.uses(p)
-            out += [_md_change(c, ids, example=True) for c in scan.ranked(p)]
+            files = scan.uses(p)
+            out += [_md_change(c, files, example=True) for c in scan.ranked(p)]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -910,15 +997,21 @@ def _cutoff_md(s: dict[str, Any]) -> str:
     return f"Model `{s['model']}`, training cutoff **{s['cutoff']}** (source: {s['cutoff_source']})"
 
 
-def _md_change(change: APIChange, ids: set[str], *, example: bool = False) -> str:
+def _md_change(change: APIChange, files: Sequence[FileUse], *, example: bool = False) -> str:
     """One Markdown list item: the change, how many paths share it, and what the code uses."""
-    similar = ""
-    if change.occurrences > 1:
-        e_g = f", e.g. `{change.also[0]}`" if example and change.also else ""
-        similar = f" (also: {change.occurrences - 1} similar{e_g})"
-    uses = uses_text(change, ids)
+    others = other_paths_text(change, example=example)
+    uses = uses_text(change, files)
     mark = f" · **your code uses {uses}**" if uses else ""
-    return f"- {change.describe(versioned=False)}{similar}{mark}"
+    return f"- {change_text(change)}{f' ({others})' if others else ''}{mark}"
+
+
+def change_text(change: APIChange, *, short: bool = False) -> str:
+    """The change in a sentence, with the parameter that replaced a removed one, when the
+    diff found it renamed in place: ``parameter `pos` was removed (now `start`?)``."""
+    text = change.describe(short=short, versioned=False)
+    if change.kind == PARAM_REMOVED and change.suggestions:
+        text += " (now " + " or ".join(f"`{s}`" for s in change.suggestions[:2]) + "?)"
+    return text
 
 
 def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
@@ -926,7 +1019,8 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
 
     One table row per flagged dependency, then the top ``limit`` changes of each changed one,
     with changes to names the project's code uses first. The full list stays in report.md.
-    Every count is of distinct changes, as in the full report and the MCP tools.
+    Every count is of distinct changes, and the dependencies come in the same order, as in
+    the full report and the MCP tools.
     """
     s = summary(scan)
     project = scan.project
@@ -939,25 +1033,24 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
     out += [f"- {t.plain}" for t in headline(scan, None, s)]
     out += [f"- Warning: {w}" for w in scan.warnings]
 
-    imported = {p.name for p in scan.changed if project.imports(p.import_names)}
-    changed = sorted(scan.changed, key=lambda p: (p.name not in imported, -p.counts[0], p.name))
+    changed = scan.changed
     flagged = [*changed, *(p for p in scan.packages if p.status in (NEW, SKIPPED))]
     if flagged:
         out += [
             "",
-            "| package | at cutoff | you use | status | breaking | deprecated |",
+            "| package | you use | at cutoff | status | breaking | deprecated |",
             "|---|---|---|---|---:|---:|",
         ]
     for p in flagged:
         status = STATUS_LABEL.get(p.status, p.status)
-        if p.name in imported:
-            status += ", imported by your code"
+        if p.imported:
+            status += f", {IMPORTED}"
         elif p.reason:
-            status += f": {p.reason[:120]}"
+            status += f": {clip(p.reason, 2 * REASON_WIDTH)}"
         counts = p.counts if p.status == CHANGED else ("", "")
         out.append(
-            f"| {p.name} | {_version_cell(p.cutoff_version, p.cutoff_version_date)} "
-            f"| {_version_cell(p.locked, p.locked_date)} | {_cell(status)} "
+            f"| {p.name} | {_version_cell(p.locked, p.locked_date)} "
+            f"| {_version_cell(p.cutoff_version, p.cutoff_version_date)} | {_cell(status)} "
             f"| {counts[0]} | {counts[1]} |"
         )
     quiet = [p for p in scan.packages if p.status in (KNOWN, UNCHANGED)]
@@ -967,8 +1060,8 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
 
     limit = max(0, limit)
     for p in changed:
-        ranked, ids = scan.ranked(p), scan.uses(p)
-        hits = sum(uses_text(c, ids) is not None for c in ranked)
+        ranked, files = scan.ranked(p), scan.uses(p)
+        hits = sum(uses_text(c, files) is not None for c in ranked)
         breaking, deprecated = p.counts
         detail = f"{breaking} breaking, {deprecated} deprecated" + (
             f", {hits} touching names your code uses" if hits else ""
@@ -979,7 +1072,7 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
             f"{p.cutoff_version} -> {p.locked}: {detail}</summary>",
             "",
         ]
-        out += [_md_change(c, ids) for c in ranked[:limit]]
+        out += [_md_change(c, files) for c in ranked[:limit]]
         if len(ranked) > limit:
             out.append(f"- ... and {len(ranked) - limit} more in the full report")
         out += ["", "</details>"]
@@ -998,8 +1091,30 @@ def _version_cell(version: str | None, day: str | None) -> str:
     return f"{version} ({day})" if day else version
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word if n == 1 else word + 's'}"
+def _plural(n: int, word: str, many: str | None = None) -> str:
+    return f"{n} {word if n == 1 else many or word + 's'}"
+
+
+def _deps(n: int) -> str:
+    """``1 dependency``, ``2 dependencies``."""
+    return _plural(n, "dependency", "dependencies")
+
+
+def _deps_word(n: int) -> str:
+    return "dependency" if n == 1 else "dependencies"
+
+
+def clip(text: str, limit: int) -> str:
+    """``text`` on one line, cut to ``limit`` characters at a word boundary with "..." when it
+    is longer: never in the middle of a word such as a command-line flag."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    space = cut.rfind(" ")
+    if space > limit // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:(") + "..."
 
 
 def to_json(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:

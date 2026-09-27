@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 
@@ -28,6 +29,7 @@ from since_cutoff.notes import (
     render_block,
     template_bullet,
 )
+from since_cutoff.project import scan_file
 from since_cutoff.selection import select
 from since_cutoff.stats import (
     cluster_bootstrap_interval,
@@ -184,14 +186,15 @@ def test_selection_prefers_used_symbols_and_spreads_across_packages():
     a = [change(name=f"f{i}", param=f"p{i}") for i in range(5)] + [change(name="used", param="q")]
     b = [change(pkg="openai", name=f"g{i}", param=f"p{i}") for i in range(5)]
     # `client.messages.used(...)`: the method and its class are both named in the code.
-    picked = select({"anthropic": a, "openai": b}, {"used", "messages"}, 4)
+    files = (scan_file(ast.parse("import anthropic\nclient.messages.used()\n")),)
+    picked = select({"anthropic": a, "openai": b}, {"anthropic": files}, 4)
     assert picked[0].name == "used"
     assert [c.package for c in picked].count("openai") == 2
 
 
 def test_selection_dedupes_concepts():
     twins = [change(owner="Messages"), change(owner="AsyncMessages")]
-    assert len(select({"anthropic": twins}, set(), 10)) == 1
+    assert len(select({"anthropic": twins}, {}, 10)) == 1
 
 
 # ---------------------------------------------------------------- stats/cache

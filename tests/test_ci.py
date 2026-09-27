@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
+import textwrap
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from since_cutoff.engine import Engine, ScanResult, Settings
 from since_cutoff.errors import ProviderError
 from since_cutoff.mcp_server import Tools
 from since_cutoff.models import ModelRegistry
-from since_cutoff.project import load_project
+from since_cutoff.project import FileUse, load_project, scan_file
 from since_cutoff.providers.base import Completion
 from since_cutoff.report import (
     render_console,
@@ -75,11 +77,12 @@ def test_markdown_summary_lists_what_the_code_uses_first(tmp_path, cache, fake_p
 
     assert md.startswith("## since-cutoff scan\n")
     assert "Model `claude-sonnet-4-5`, training cutoff **2025-07-31** (source: --cutoff)" in md
-    assert "- 1 of 1 dependencies changed their API after the cutoff" in md
+    assert "- 1 of 1 dependency changed its API after the cutoff" in md
     assert "- Static diff: 5 breaking changes, 1 new deprecation" in md
-    assert "| package | at cutoff | you use | status | breaking | deprecated |" in md
+    # The same columns, in the same order, as the terminal table and report.md.
+    assert "| package | you use | at cutoff | status | breaking | deprecated |" in md
     assert (
-        "| toylib | 1.0 (2025-01-10) | 2.0 (2025-10-01) | API changed, imported by your code | 5 | 1 |"
+        "| toylib | 2.0 (2025-10-01) | 1.0 (2025-01-10) | API changed, imported by your code | 5 | 1 |"
         in md
     )
     # Changes that hit the project's own code open the section and come first: the call with
@@ -92,7 +95,7 @@ def test_markdown_summary_lists_what_the_code_uses_first(tmp_path, cache, fake_p
     assert len(items) == 3
     assert "parameter `temperature` was removed" in items[0]
     assert items[0].endswith("**your code uses `send` and `temperature`**")
-    assert "(also: 1 similar)" in items[0]  # the AsyncClient twin is folded in
+    assert "(also changed under 1 other path)" in items[0]  # the AsyncClient twin is folded in
     assert "`stream` is now keyword-only" in items[1]
     assert items[1].endswith("**your code uses `send`**")
     assert "- ... and 3 more in the full report" in md  # 3 listed + 3 more = 5 + 1
@@ -110,7 +113,12 @@ def test_markdown_summary_for_new_and_known_dependencies(tmp_path, cache, fake_p
     assert "Not flagged (released before the cutoff, or no breaking changes): toylib 1.0" in known
 
     new = render_scan_markdown(scan_app(root, cache, fake_pypi, date(2024, 1, 1)))
-    assert "| toylib | - | 1.0 (2025-01-10) | newer than the model: first released after" in new
+    assert "| toylib | 1.0 (2025-01-10) | - | newer than the model: first released after" in new
+
+
+def code(text: str) -> tuple[FileUse, ...]:
+    """What one file with this code reaches through its imports."""
+    return (scan_file(ast.parse(textwrap.dedent(text))),)
 
 
 def test_a_common_method_name_needs_its_class_in_the_code() -> None:
@@ -118,7 +126,14 @@ def test_a_common_method_name_needs_its_class_in_the_code() -> None:
         name = path.rsplit(".", 1)[-1]
         return APIChange("sdk", "1", "2", kind, path, name, owner, parameter)
 
-    ids = {"messages", "create", "temperature", "hf_hub_download", "Session"}
+    ids = code(
+        """
+        from sdk import Session, hf_hub_download
+        client.messages.create(temperature=0.2)
+        hf_hub_download("repo")
+        Session()
+        """
+    )
     # client.messages.create(...): `messages` stands for the Messages resource.
     assert used_name(change(DEPRECATED, "sdk.Messages.create", "Messages"), ids) == "create"
     assert used_name(change(DEPRECATED, "sdk.Assistants.create", "Assistants"), ids) is None
@@ -137,7 +152,10 @@ def test_a_parameter_counts_only_with_its_callable() -> None:
         )
 
     # hf_hub_download(repo, "config.json", resume_download=True) is the only call in the code.
-    ids = {"hf_hub_download", "resume_download"}
+    ids = code(
+        "from hub import hf_hub_download\n"
+        "hf_hub_download(repo, 'config.json', resume_download=True)\n"
+    )
     snapshot = removed("hub.snapshot_download", "resume_download")
     stale = removed("hub.hf_hub_download", "resume_download")
     other = removed("hub.hf_hub_download", "force_filename")
@@ -158,11 +176,11 @@ def test_console_headline_renders_in_full(tmp_path, cache, fake_pypi, width):
     lines = console.export_text().splitlines()
     assert all(len(line) <= width for line in lines)  # wrapped, never cropped at the edge
     body = " ".join(line.strip("│ ") for line in lines if line.startswith("│"))
-    assert "1 of 1 dependencies changed their API after the cutoff" in body
+    assert "1 of 1 dependency changed its API after the cutoff" in body
     assert "Static diff: 5 breaking changes, 1 new deprecation" in body
     assert "(" not in body and ")" not in body  # no parenthesis a wrap could split
     if width >= 80:  # room for the subtitle: it is not cut
-        assert any("versions from requirements ─" in line for line in lines)
+        assert any("versions from pyproject.toml ─" in line for line in lines)
 
 
 # ------------------------------------------------------------------------ CLI

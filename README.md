@@ -83,9 +83,10 @@ uvx since-cutoff run --apply
 
 Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) and run
 `since-cutoff`. Run it from your project root: it reads `uv.lock`, `poetry.lock`, `pdm.lock`,
-`pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml` or a `.venv`. Without
-`--model` it tests the model your Claude Code uses; for any other model, pass `--model` (see
-[Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
+`pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` or a `.venv`
+(not `setup.py` or `setup.cfg`). Without `--model` it tests the model your coding agent is set
+up with, from the Claude Code, Codex, OpenCode or Aider settings; for any other model, pass
+`--model` (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
 `scan` is free; `run` sends prompts to the model provider and uses your API credits or Claude
 Code usage.
 
@@ -114,8 +115,9 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 This installs the same skill through the open [skills](https://github.com/vercel-labs/skills)
 CLI for Codex, Cursor, Gemini CLI, GitHub Copilot, OpenCode and other agents that read
-`SKILL.md`. Outside Claude Code, tell the tool which model to test, for example
-`since-cutoff scan --model openai:gpt-5.4`, and add the MCP server as shown below.
+`SKILL.md`. since-cutoff reads the model from the Codex, OpenCode and Aider settings too; for
+other agents, tell it which model to test, for example `since-cutoff scan --model openai:gpt-5.4`.
+Add the MCP server as shown below.
 
 Prompts that work well:
 
@@ -130,7 +132,7 @@ Prompts that work well:
 
 | `--model` | uses | needs |
 |---|---|---|
-| `claude-code` (fallback) | your Claude Code login (subscription or key), current model | the `claude` CLI |
+| `claude-code` (default when no setting names a model) | your Claude Code login (subscription or key), current model | the `claude` CLI |
 | `claude-code:sonnet`, `claude-code:claude-haiku-4-5` | a specific Claude model | the `claude` CLI |
 | `anthropic:<model>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `openai:<model>` | OpenAI API | `OPENAI_API_KEY` |
@@ -139,11 +141,37 @@ Prompts that work well:
 | `ollama:<model>` | local Ollama | Ollama running |
 | `openai-compatible:<model>` | any OpenAI-compatible server | `--base-url`, optional `OPENAI_API_KEY` |
 
-Without `--model`, since-cutoff tests the model your coding agent is set up with: `SINCE_CUTOFF_MODEL` if set; inside Claude Code, Claude Code's own model; elsewhere the model named in the Claude Code, Codex, OpenCode or Aider settings, the project's (up to the repository root) before the user's. It says where the model came from, and falls back to `claude-code`.
+Without `--model`, since-cutoff 0.3.0 and later test the model your coding agent is set up with, and
+the model line says where it came from ("model from .claude/settings.json"):
+
+1. `SINCE_CUTOFF_MODEL` (a full spec such as `openai:gpt-5.4`) always wins.
+2. Inside Claude Code (which sets `CLAUDECODE=1` for the commands it runs), only Claude Code's
+   settings count: `ANTHROPIC_MODEL`, then the project's `.claude/settings.local.json` and
+   `.claude/settings.json`, then `~/.claude/settings.json`.
+3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL` or `AIDER_MODEL`, then the
+   project settings, nearest folder first, from the scanned folder up to the repository root
+   (never the home folder), then the user settings. In one folder the agents count in this
+   order:
+
+| agent | project settings | user settings |
+|---|---|---|
+| Claude Code | `.claude/settings.local.json`, `.claude/settings.json` | `~/.claude/settings.json` |
+| Codex | `.codex/config.toml`, with its selected profile | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
+| OpenCode | `opencode.json`, `opencode.jsonc` | `~/.config/opencode/` |
+| Aider | `.aider.conf.yml`, with Aider's aliases (`4o`, `flash`, `r1`, ...) | `~/.aider.conf.yml` |
+
+When no setting names a model, it tests Claude Code's default model and says so. Only the model
+fields are read, and a model name it cannot place stops the run with a message naming the
+setting. A model that an agent reaches through another service (GitHub Copilot, Amazon Bedrock,
+Vertex AI) is named after its maker, so `run` calls the maker's API (`openai:` needs
+`OPENAI_API_KEY`).
 
 Training cutoffs come from [models.dev](https://models.dev) (a snapshot is bundled for offline
 use). `since-cutoff models sonnet` lists them; `--cutoff 2025-07` overrides the date, and
-`since-cutoff scan --cutoff 2025-07` without `--model` scans against that date alone.
+`since-cutoff scan --cutoff 2025-07` without `--model` scans against that date alone. `scan`
+needs only the cutoff, so it also takes a model id without a provider (`claude-haiku-4-5`,
+`sonnet`) or with any provider models.dev lists (`google:gemini-2.5-pro`, Amazon Bedrock and
+Vertex AI ids included); `run` needs a provider from the table above.
 
 ## Results
 
@@ -208,10 +236,12 @@ benchmark. Every run writes its full report (each task, answer and type-checker 
 `.since-cutoff/report.md`. To repeat the experiment with the current version (its diff and
 ranking changed, so the probes will not be identical):
 `cd examples/agent-app && since-cutoff run --model claude-code:claude-haiku-4-5 --task-model claude-code:claude-opus-4-6`.
-To see whether the verified notes beat simpler ones, add `--compare template,signatures`: the held-out tasks are also answered with notes built without a model (each change stated from the API diff, or the new signatures and docstrings), scored on the same pairs, with each block's size in tokens.
 Since 0.3.0, a run can also save its tasks: add `--tasks-out tasks.json`, and anyone
 can repeat the run on exactly the same tasks with `--tasks-from tasks.json`, for another model or
-another set of notes. Results from your own projects are very welcome in
+another set of notes. The file names who wrote the tasks (model, prompt version, since-cutoff
+version), and a run on reused tasks reports it
+([details](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md#2-probe)).
+Results from your own projects are very welcome in
 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6).
 
 How the measurement works and what these numbers do and do not show, in more detail:
@@ -286,8 +316,11 @@ that changed and can take several minutes (very large packages such as transform
 longest). Results are cached, so later calls take seconds. To warm the cache, run
 `since-cutoff scan` in the project once; it shares the cache with the server. Clients with a
 short default tool timeout may need a longer one, as in the Codex example above.
+`project_changes` keeps its answer under about 24,000 characters: changed dependencies that do
+not fit get one line each, and passing them in `only` lists their changes.
 
-What `api_changes("huggingface-hub", model="claude-haiku-4-5")` returns (real output, trimmed):
+What `api_changes("huggingface-hub", model="claude-haiku-4-5")` returned in 0.2.0 (real output,
+trimmed; later versions refine the diff, so their counts differ slightly):
 
 ```markdown
 # huggingface-hub 0.29.1 -> 2.0.0
@@ -381,9 +414,12 @@ since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fa
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ```
 
-`--markdown -` prints the summary to stdout (the usual output then goes to stderr). Exit codes:
-`0` ok, `1` error (for example, no model answer could be scored), `2` usage error, `3` stale API
-use found with `run --fail-on-stale`, or API changes found with `scan --fail-on-changes`.
+`--markdown -` prints the summary to stdout, and only the progress and the report's path to
+stderr, as `--json` does. In a file, a pipe or a CI log there is no live progress bar, and the
+output is laid out 160 columns wide (`COLUMNS` sets another width). Exit codes: `0` ok, `1`
+error (for example, `run` could not probe any API change or score any model answer), `2` usage
+error, `3` stale API use found with `run --fail-on-stale`, or API changes found with
+`scan --fail-on-changes`, `141` the output was closed early (piped into `head`, for example).
 
 ## How it works
 
@@ -402,6 +438,20 @@ and checks every note the model writes:
 | **deprecated** | valid, but uses an API marked `@deprecated` in your version |
 | **correct** | valid for your version and actually uses the changed API |
 | untouched / off-task / invalid / error | not counted in any rate, and always reported |
+
+Since 0.3.0, the held-out result gives the task-level rates without -> with notes
+(with the number of paired tasks and API changes behind them), their difference with a 95%
+bootstrap interval that resamples API changes, the changes the notes fixed (wrong without,
+correct with) with a Wilson 95% interval, the changes they broke, an exact sign test of fixed
+against broken, and the held-out pairs not counted, by reason. The regression check reports how
+many previously-correct APIs are still correct with the notes.
+
+`run --compare template,signatures` (0.3.0 and later) also answers the held-out tasks and
+regression checks with baseline notes that need no model: `template` states each failing change in
+one sentence from the API diff, and `signatures` gives the new signature and first docstring
+paragraph of each changed API, or of the replacement its library names. All blocks are scored on
+the same pairs, against the same answers without notes, and each block's size is shown in tokens,
+so a run shows what the verified notes add.
 
 Everything is scored by a type checker against the exact package versions, each in an isolated
 environment with that package's own runtime dependencies. No LLM judges anything, and every
@@ -433,7 +483,8 @@ number traces back to `results.json`. Details: [docs/how-it-works.md](https://gi
 - A type checker sees wrong names, wrong parameters and PEP 702 deprecations. It cannot see
   behaviour changes behind an unchanged signature, or deprecations that only warn at run time.
   `scan` also lists deprecations declared with a library's own decorator (name containing
-  "deprecat"), but `run` does not probe them.
+  "deprecat") and removed names that a module still serves with a warning through
+  `__getattr__`, but `run` does not probe them.
 - The diff covers the public API: `_private` names, and test suites, benchmarks and examples
   shipped inside a package, are skipped.
 - Probes cover a ranked **sample** of the breaking changes (symbols your code already uses

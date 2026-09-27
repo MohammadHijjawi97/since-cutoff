@@ -140,7 +140,7 @@ def test_api_changes_lists_hard_breaks_first_with_replacements(tools: Tools) -> 
     assert "`toylib.Client.close` is deprecated: Use Client.shutdown() instead." in out
     # The same change under two public paths, or its async twin, is listed once.
     assert out.count("legacy_fetch` was removed") == 1
-    assert "1 similar, e.g. `toylib.AsyncClient.send`" in out
+    assert "also changed under 1 other path, e.g. `toylib.AsyncClient.send`" in out
     assert "(toylib 2.0)" not in out  # versions are in the header, not on every line
 
 
@@ -256,7 +256,7 @@ def test_project_changes_puts_what_the_code_uses_first(tools: Tools, tmp_path: P
     touching = out.split("### Touching names your code uses\n\n")[1].split("\n\n")[0]
     first, second = touching.splitlines()
     assert first.endswith(
-        "`temperature` was removed; 1 similar, e.g. `toylib.AsyncClient.send` "
+        "`temperature` was removed; also changed under 1 other path, e.g. `toylib.AsyncClient.send` "
         "[your code uses `send` and `temperature`]"
     )
     assert "`stream` is now keyword-only" in second
@@ -449,8 +449,8 @@ def test_long_calls_report_progress(tools: Tools, tmp_path: Path) -> None:
     assert [m for _, _, m in project] == [
         "Checking 1 dependency on PyPI",
         "Checking 1 dependency on PyPI (1 of 1)",
-        "Diffing the API of 1 changed package",
-        "Diffing the API of 1 changed package (1 of 1)",
+        "Diffing the API of 1 package released after its cutoff version",
+        "Diffing the API of 1 package released after its cutoff version (1 of 1)",
     ]
     done = [d for d, _, _ in project]
     assert done == sorted(set(done))  # strictly increasing, as MCP requires
@@ -689,9 +689,37 @@ def test_symbols_do_not_match_the_package_name_or_word_fragments() -> None:
     legacy = _change("removed", "toylib.legacy_fetch", "legacy_fetch")
     assert _matching([stream], "messages") == ([], False)
     assert _matching([legacy], "legacy") == ([legacy], False)
-    assert _names_package("Anthropic", "anthropic", [stream])
+    assert _names_package("anthropic", "anthropic", [stream])
     assert _names_package("hub", "huggingface-hub", [_change("removed", "hub.x", "x")])
+    assert _names_package("huggingface_hub", "huggingface-hub", [stream])
     assert not _names_package("MessageStream", "anthropic", [stream])
+    assert not _names_package("Anthropic", "anthropic", [stream])  # the client class
+
+
+def test_a_class_named_like_its_package_is_a_filter() -> None:
+    # redis 5.2.1 -> 6.4.0: symbol="Redis" named the package, so no filter was applied.
+    from since_cutoff.mcp_server import _matching, _names_package
+
+    tfcall = _change("removed", "redis.client.Redis.tfcall", "tfcall", owner="Redis")
+    init = _change(
+        "param_removed", "redis.client.Redis.__init__", "__init__", owner="Redis", parameter="x"
+    )
+    graph = _change(
+        "removed",
+        "redis.commands.redismodules.RedisModuleCommands.graph",
+        "graph",
+        owner="RedisModuleCommands",
+        also=["redis.client.Redis.graph"],
+    )
+    cluster = _change(
+        "removed", "redis.cluster.RedisCluster.get_retry", "get_retry", owner="RedisCluster"
+    )
+    parser = _change("removed", "redis.cluster.ClusterParser", "ClusterParser")
+    changes = [tfcall, init, graph, cluster, parser]
+    assert not _names_package("Redis", "redis", changes)
+    assert _names_package("redis", "redis", changes)
+    for symbol in ("Redis", "client.Redis"):
+        assert _matching(changes, symbol) == ([tfcall, init, graph], False)
 
 
 def test_naming_the_package_as_symbol_applies_no_filter(tools: Tools) -> None:

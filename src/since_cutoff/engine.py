@@ -61,12 +61,12 @@ from since_cutoff.baselines import (
 )
 from since_cutoff.cache import DiskCache, stable_hash
 from since_cutoff.checker import Checker, CheckResult, Diagnostic, extract_code
-from since_cutoff.errors import CheckerError, PackageIndexError, ProviderError
+from since_cutoff.errors import CheckerError, NoCodeError, PackageIndexError, ProviderError
 from since_cutoff.models import PROVIDER_ALIASES, ModelInfo, ModelRegistry
 from since_cutoff.notes import Note, bullet_is_grounded, clean_bullet, render_block, template_bullet
-from since_cutoff.project import Dependency, Project
+from since_cutoff.project import Dependency, FileUse, Project
 from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
-from since_cutoff.pypi import PyPI, SourceTree
+from since_cutoff.pypi import PyPI, Release, SourceTree, is_placeholder
 from since_cutoff.selection import collapse, project_rank, select
 from since_cutoff.taskfile import TaskFile
 
@@ -96,6 +96,9 @@ UNCHANGED = "unchanged"
 KNOWN = "known"
 NEW = "new"
 SKIPPED = "skipped"
+# A release at the cutoff with files this small and nothing in its modules only reserved the
+# name (see Engine._placeholder); a compiled extension would not fit.
+_PLACEHOLDER_BYTES = 64 * 1024
 
 
 def _claude_settings_model() -> str | None:
@@ -109,7 +112,8 @@ class Reporter:
 
     def stage(self, title: str, total: int | None = None) -> None: ...
 
-    def advance(self, n: int = 1) -> None: ...
+    def advance(self, n: int = 1, *, label: str | None = None) -> None:
+        """``n`` more steps of the stage done; ``label`` names the last one (a package)."""
 
     def info(self, message: str) -> None: ...
 
@@ -166,7 +170,10 @@ class PackageScan:
     locked: str | None
     version_source: str
     direct: bool
-    imported: bool = False
+    # Whether the project's code imports the package: set by Engine.scan from its import
+    # names, so None when those are unknown (its files were not read: released before the
+    # cutoff, first released after it, or not checked).
+    imported: bool | None = None
     status: str = SKIPPED
     cutoff_version: str | None = None
     cutoff_version_date: str | None = None
@@ -232,17 +239,17 @@ class ScanResult:
     def package(self, name: str) -> PackageScan:
         return next(p for p in self.packages if p.name == name)
 
-    def uses(self, package: PackageScan) -> set[str]:
-        """The identifiers of the project's code, or none if its code never imports the package.
+    def uses(self, package: PackageScan) -> tuple[FileUse, ...]:
+        """The files of the project's code that import the package (none when it does not).
 
-        ``create`` in your code says nothing about a package you do not import.
+        ``create`` in a file says nothing about a package that file does not import.
         """
-        return self.project.identifiers if self.project.imports(package.import_names) else set()
+        return self.project.code_use(package.import_names)
 
     def ranked(self, package: PackageScan) -> list[APIChange]:
         """The package's distinct changes, those the project's code uses first."""
-        ids = self.uses(package)
-        return sorted(package.distinct, key=lambda c: project_rank(c, ids))
+        files = self.uses(package)
+        return sorted(package.distinct, key=lambda c: project_rank(c, files))
 
 
 @dataclass
@@ -516,8 +523,13 @@ class Engine:
         checker: Checker | None = None,
         provider_factory: Callable[[str], Provider] | None = None,
         reporter: Reporter | None = None,
+        processes: bool = True,
     ) -> None:
+        """``processes``: diff several packages at once in worker processes. A spawned worker
+        (Windows, macOS, the MCP server) imports the program's main module again, so this needs
+        its top-level code behind ``if __name__ == "__main__":``; without, diffs run here."""
         self.settings = settings
+        self.processes = processes
         self.store = store
         self.llm_cache = llm_cache
         self.registry = registry or ModelRegistry(store)
@@ -616,14 +628,22 @@ class Engine:
 
         When calls are allowed, the tested model is set up here, so that a missing API key or
         ``claude`` CLI fails before the scan rather than minutes into the run.
+
+        Without calls, a model id alone (``claude-haiku-4-5``, ``gpt-5.4``, ``sonnet``) is
+        enough: only its training cutoff is needed, which the model registry has.
         """
-        if self._provider_factory is None:
-            self._check_spec(allow_calls)
         spec = self.settings.model
         provider_name, model = split_spec(spec)
+        bare = not allow_calls and model is None and provider_name not in KNOWN_PROVIDERS
+        if self._provider_factory is None and not bare:
+            self._check_spec(allow_calls)
         model_id = model or ""
         source_note = ""
-        if provider_name in ("claude-code", "claude") and (not model or model in CLAUDE_ALIASES):
+        if bare:
+            provider_name, model_id = "", spec.strip()
+            if model_id.lower() in CLAUDE_ALIASES:
+                model_id, source_note = self._guess_claude_code_model(model_id.lower())
+        elif provider_name in ("claude-code", "claude") and (not model or model in CLAUDE_ALIASES):
             if allow_calls:
                 model_id = self._discover_claude_code_model(spec)
                 self.settings.model = spec = f"claude-code:{model_id}"
@@ -646,7 +666,7 @@ class Engine:
                 "--cutoff" + source_note,
                 effort=effort,
             )
-        info = self.registry.require(model_id, provider_name)
+        info = self.registry.require(model_id, provider_name or None)
         assert info.knowledge is not None
         return ModelTarget(spec, info.id, info.knowledge, "models.dev" + source_note, info, effort)
 
@@ -687,16 +707,25 @@ class Engine:
 
     # ---------------------------------------------------------------- scan
     def scan(self, project: Project, target: ModelTarget) -> ScanResult:
-        warnings: list[str] = []
+        warnings: list[str] = list(project.warnings)
         known = {d.key for d in project.dependencies}
         include = {canonicalize_name(s) for s in self.settings.include}
         exclude = {canonicalize_name(s) for s in self.settings.exclude}
         for name in sorted((include | exclude) - known):
             warnings.append(f"--only/--exclude: no dependency named '{name}' in this project")
+        if self.settings.all_deps and not project.transitive:
+            warnings.append(
+                "--all-deps: without a lockfile (uv.lock, poetry.lock, ...) or a virtual "
+                "environment (.venv), the transitive dependencies are unknown, so only the "
+                "declared ones are checked"
+            )
+        # A dependency of a dependency that the code imports itself (alembic, pinned by
+        # pip-compile "via flask-migrate") is used like a direct one.
+        imported = {canonicalize_name(m) for m in project.imported_modules}
         deps = [
             d
             for d in project.dependencies
-            if d.direct or self.settings.all_deps or d.key in include
+            if d.direct or self.settings.all_deps or d.key in include or d.key in imported
         ]
         if include:
             deps = [d for d in deps if d.key in include]
@@ -704,28 +733,40 @@ class Engine:
         for w in warnings:
             self.reporter.warn(w)
 
-        deps_text = f"{len(deps)} dependenc{'y' if len(deps) == 1 else 'ies'}"
-        self.reporter.stage(f"Checking {deps_text} on PyPI", len(deps))
-        scans = self._map(lambda d: self._scan_versions(d, target.cutoff, project), deps, jobs=8)
+        # Those installed from git, a path or a private index are not looked up.
+        queried = [d for d in deps if not d.non_pypi]
+        deps_text = f"{len(queried)} dependenc{'y' if len(queried) == 1 else 'ies'}"
+        self.reporter.stage(f"Checking {deps_text} on PyPI", len(queried))
+        found = self._map(lambda d: self._scan_versions(d, target.cutoff, project), queried, jobs=8)
+        by_key = {s.name: s for s in found}
+        scans = [by_key.get(d.key) or self._scan_versions(d, target.cutoff, project) for d in deps]
 
         to_diff = [s for s in scans if s.status == CHANGED]
         if to_diff:
-            what = f"{len(to_diff)} changed package{'' if len(to_diff) == 1 else 's'}"
-            self.reporter.stage(f"Diffing the API of {what}", len(to_diff))
+            # Newer than at the cutoff: whether their API changed is what the diff finds out.
+            one = len(to_diff) == 1
+            what = f"{len(to_diff)} package{'' if one else 's'} released after {'its' if one else 'their'}"
+            self.reporter.stage(f"Diffing the API of {what} cutoff version", len(to_diff))
             self._diff_all(to_diff)
         self.reporter.done()
-        scans.sort(key=lambda s: (s.status != CHANGED, -len(s.distinct), s.name))
+        for s in scans:
+            s.imported = project.imports(s.import_names) if s.import_names else None
+        # Every report lists the packages in this order: those with changes first, of those
+        # the ones the code imports, then by breaking changes and deprecations.
+        scans.sort(
+            key=lambda s: (s.status != CHANGED, not s.imported, *(-n for n in s.counts), s.name)
+        )
         return ScanResult(project, target, scans, warnings)
 
     def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
         scan = PackageScan(dep.key, dep.version, dep.source, dep.direct)
         if dep.non_pypi:
-            scan.reason = f"not installed from PyPI ({dep.non_pypi})"
+            scan.reason = dep.non_pypi_reason
             return scan
         try:
             if not dep.version:
-                latest = self.pypi.latest(dep.key)
-                scan.locked, scan.version_source = latest.version, "latest on PyPI"
+                latest, scan.version_source = self._unpinned(dep, project)
+                scan.locked = latest.version
             assert scan.locked is not None
             locked = self.pypi.release(dep.key, scan.locked)
             scan.locked_date = locked.uploaded.date().isoformat()
@@ -742,6 +783,24 @@ class Engine:
         except PackageIndexError as exc:
             scan.status, scan.reason = SKIPPED, str(exc)
         return scan
+
+    def _unpinned(self, dep: Dependency, project: Project) -> tuple[Release, str]:
+        """The version a dependency that nothing pins gets, and where it comes from: the newest
+        release in the range the project declares (``numpy<2.3``), for the project's Python
+        when it has one (:attr:`Project.resolution_python`). With nothing in the range, the
+        newest release."""
+        python = project.resolution_python
+        if dep.specifier or python:
+            for prereleases in (False, True):
+                found = self.pypi.best_match(
+                    dep.key, dep.specifier, prereleases=prereleases, python=python
+                )
+                if found is not None:
+                    where = f" matching {dep.specifier}" if dep.specifier else ""
+                    return found, f"latest on PyPI{where}" + (
+                        f" for Python {python}" if python else ""
+                    )
+        return self.pypi.latest(dep.key), "latest on PyPI"
 
     def diff_package(self, scan: PackageScan) -> PackageScan:
         """Diff ``scan.cutoff_version`` against ``scan.locked`` outside a project scan (cached).
@@ -770,9 +829,15 @@ class Engine:
             assert s.cutoff_version and s.locked
             new = trees[(s.name, s.locked)]
             old = new if id(s) in cached else trees[(s.name, s.cutoff_version)]
+            if isinstance(new, SourceTree) and self._placeholder(s, old):
+                # Nothing to compare with: the model has never seen this API.
+                s.status, s.import_names = NEW, list(new.import_names)
+                s.reason = f"{s.cutoff_version} at the cutoff was an empty placeholder"
+                self.reporter.advance(label=s.name)
+                continue
             if isinstance(new, PackageIndexError) or isinstance(old, PackageIndexError):
                 s.status, s.reason = SKIPPED, str(new if isinstance(new, Exception) else old)
-                self.reporter.advance()
+                self.reporter.advance(label=s.name)
                 continue
             s.import_names = list(new.import_names)
             if id(s) in cached:
@@ -781,7 +846,7 @@ class Engine:
             names = sorted(set(old.import_names) | set(new.import_names))
             pending.append((s, old, new, names))
 
-        if len(pending) <= 1 or os.environ.get("SINCE_CUTOFF_NO_PROCESSES"):
+        if len(pending) <= 1 or not self.processes or os.environ.get("SINCE_CUTOFF_NO_PROCESSES"):
             for s, old, new, names in pending:
                 result = diff_sources(s.name, old.version, old.root, new.version, new.root, names)
                 self._finish(s, result, self._diff_key(s))
@@ -801,11 +866,35 @@ class Engine:
                     self._finish(s, fut.result(), self._diff_key(s))
                 except Exception as exc:  # a crash in one package must not sink the run
                     s.status, s.reason = SKIPPED, f"API diff failed: {exc}"
-                    self.reporter.advance()
+                    self.reporter.advance(label=s.name)
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
         pool.shutdown()
+
+    def _placeholder(self, s: PackageScan, old: SourceTree | PackageIndexError) -> bool:
+        """Is the release at the cutoff one that only reserved the name: no modules at all
+        (nvidia-cuda-runtime's sdist) or modules with nothing in them (zensical 0.0.0)?
+
+        Only for a release of small pure-Python files: a compiled extension (ujson has no
+        ``.py`` file) is code the sources do not show.
+        """
+        if isinstance(old, SourceTree) and old.version != s.cutoff_version:
+            return False  # the diff is cached, so ``old`` is the new tree
+        if not isinstance(old, (SourceTree, NoCodeError)):
+            return False
+        try:
+            assert s.cutoff_version
+            files = self.pypi.release(s.name, s.cutoff_version).files
+        except PackageIndexError:
+            return False
+        if not all(
+            int(f.get("size") or 0) < _PLACEHOLDER_BYTES
+            and not (f["filename"].endswith(".whl") and not f["filename"].endswith("-any.whl"))
+            for f in files
+        ):
+            return False
+        return isinstance(old, NoCodeError) or is_placeholder(old)
 
     @staticmethod
     def _diff_key(s: PackageScan) -> str:
@@ -819,7 +908,7 @@ class Engine:
         s.changes = [APIChange.from_dict(c) for c in result]
         # Module metadata alone (``__version__``) is not an API change worth flagging.
         s.status = CHANGED if s.distinct else UNCHANGED
-        self.reporter.advance()
+        self.reporter.advance(label=s.name)
 
     # ---------------------------------------------------------------- run
     def run_settings(self, scan: ScanResult) -> dict[str, Any]:
@@ -866,7 +955,8 @@ class Engine:
         if not changes_by_pkg:
             return result
         budget = max(0, self.settings.max_probes)
-        candidates = select(changes_by_pkg, scan.project.identifiers, int(budget * 1.5) + 2)
+        files = {p.name: scan.uses(p) for p in scan.changed}
+        candidates = select(changes_by_pkg, files, int(budget * 1.5) + 2)
 
         # Tasks -------------------------------------------------------------
         task_spec = self.settings.task_model or self.settings.model
