@@ -154,7 +154,9 @@ def test_models_prints_a_table_in_a_terminal(models_cache, monkeypatch) -> None:
     terminal = Console(file=screen, force_terminal=True, color_system=None, width=100)
     monkeypatch.setattr(cli, "_console", lambda output: terminal)
     assert cli.main(["models", "claude", "--offline"]) == 0
-    rows = [line.replace("│", " ").split() for line in screen.getvalue().splitlines()]
+    rows = [
+        line.replace("│", " ").replace("┃", " ").split() for line in screen.getvalue().splitlines()
+    ]
     assert rows[0] == ["provider", "model", "training", "cutoff", "released"]
     assert ["anthropic", "claude-new", "2025-07-31", "2025-09-29"] in rows
     assert " ".join(rows[-1]) == "2 models (source: models.dev (cached))"

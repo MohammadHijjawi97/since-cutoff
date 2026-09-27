@@ -48,6 +48,19 @@ settings.load_profile(
 
 # ------------------------------------------------------------ agent settings
 @pytest.fixture(autouse=True)
+def modern_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Render Rich output the same way on every OS.
+
+    On Windows, Rich falls back to legacy box characters (light bars throughout), while Linux
+    and macOS draw table headers with heavy bars (U+2503). Tests that read rendered tables then
+    pass locally and fail in CI; with this, Windows renders like the CI runners.
+    """
+    import rich.console
+
+    monkeypatch.setattr(rich.console, "detect_legacy_windows", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def agent_home(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """An empty home directory and none of the model variables, so that no test reads the
     developer's own coding-agent settings (:func:`since_cutoff.hosts.detect_model`)."""
