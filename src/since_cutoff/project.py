@@ -323,10 +323,10 @@ def _lock_in_use(root: Path, lockfile: Path) -> bool:
         data = _load_toml(pyproject)
     except ProjectError:
         return True
-    build = data.get("build-system") or {}
+    build = _table(data.get("build-system"))
     backend = str(build.get("build-backend") or "")
-    requires = " ".join(str(r) for r in build.get("requires") or []).lower()
-    return tool in (data.get("tool") or {}) or backend.startswith(tool) or tool in requires
+    requires = " ".join(str(r) for r in _array(build.get("requires"))).lower()
+    return tool in _table(data.get("tool")) or backend.startswith(tool) or tool in requires
 
 
 def _read_text(path: Path) -> str:
@@ -352,6 +352,25 @@ def _load_toml(path: Path) -> dict[str, Any]:
         raise ProjectError(f"could not parse {path.name}: {exc}") from exc
 
 
+# A hand-edited or damaged file can hold anything where a table or a list belongs: that part is
+# read as missing. ``dependencies = "requests"`` is not six one-letter dependencies.
+def _table(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _array(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _dependency_names(entries: object) -> list[str]:
+    """The names in a list of ``{name = "..."}`` tables (uv.lock's dependencies)."""
+    return [
+        canonicalize_name(e["name"])
+        for e in _array(entries)
+        if isinstance(e, dict) and isinstance(e.get("name"), str)
+    ]
+
+
 def parse_lockfile(path: Path) -> tuple[dict[str, str], set[str]]:
     """Return ``({name: version}, direct_dependency_names)`` for any supported lockfile."""
     lock = parse_lock(path)
@@ -365,15 +384,30 @@ def parse_lock(path: Path, *, python: str | None = None) -> _Lock:
     if path.name == "uv.lock":
         return _parse_uv_lock(data, python)
     lock = _Lock()
+    candidates: dict[str, list[tuple[Version, str, list[str]]]] = {}
     entries = data.get("packages") if path.name.startswith("pylock") else data.get("package")
-    for p in entries or []:
-        if not isinstance(p, dict) or not p.get("name") or not p.get("version"):
+    for p in _array(entries):
+        if not isinstance(p, dict) or not isinstance(p.get("name"), str) or not p.get("version"):
             continue
         name = canonicalize_name(p["name"])
-        lock.versions[name] = str(p["version"])
+        version = str(p["version"])
         reason = _non_pypi_reason(p)
         if reason:
             lock.non_pypi[name] = reason
+        try:
+            parsed = Version(version)
+        except InvalidVersion:
+            lock.versions[name] = version
+            continue
+        # A package locked once per Python range (Poetry's ``markers``, per dependency group
+        # too; PDM's and pylock's ``marker``) is a fork, as in uv.lock.
+        marker = p.get("markers", p.get("marker"))
+        markers = list(marker.values()) if isinstance(marker, dict) else [marker]
+        candidates.setdefault(name, []).append(
+            (parsed, version, [m for m in markers if isinstance(m, str)])
+        )
+    for locked_name, forks in candidates.items():
+        lock.versions[locked_name] = _pick_forked(forks, python)
     return lock
 
 
@@ -422,19 +456,20 @@ def _git_source(source: dict[str, Any]) -> str:
 def _parse_uv_lock(data: dict[str, Any], python: str | None) -> _Lock:
     lock = _Lock()
     candidates: dict[str, list[tuple[Version, str, list[str]]]] = {}
-    for pkg in data.get("package", []):
-        name = canonicalize_name(pkg.get("name", ""))
-        source = pkg.get("source") or {}
+    for pkg in _array(data.get("package")):
+        if not isinstance(pkg, dict) or not isinstance(pkg.get("name"), str):
+            continue
+        name = canonicalize_name(pkg["name"])
+        source = _table(pkg.get("source"))
         # Editable/virtual sources are the project itself (or workspace members): their
         # dependencies are the project's direct dependencies.
         if "editable" in source or "virtual" in source:
             lock.members.add(name)
-            for dep in pkg.get("dependencies", []):
-                lock.direct.add(canonicalize_name(dep["name"]))
-            for group in (pkg.get("optional-dependencies") or {}).values():
-                lock.direct.update(canonicalize_name(d["name"]) for d in group)
-            for group in (pkg.get("dev-dependencies") or {}).values():
-                lock.direct.update(canonicalize_name(d["name"]) for d in group)
+            lock.direct.update(_dependency_names(pkg.get("dependencies")))
+            for group in _table(pkg.get("optional-dependencies")).values():
+                lock.direct.update(_dependency_names(group))
+            for group in _table(pkg.get("dev-dependencies")).values():
+                lock.direct.update(_dependency_names(group))
             continue
         version = str(pkg.get("version") or "")
         if not version:
@@ -447,25 +482,33 @@ def _parse_uv_lock(data: dict[str, Any], python: str | None) -> _Lock:
         except InvalidVersion:
             lock.versions[name] = version
             continue
-        candidates.setdefault(name, []).append(
-            (parsed, version, list(pkg.get("resolution-markers") or []))
-        )
+        markers = [m for m in _array(pkg.get("resolution-markers")) if isinstance(m, str)]
+        candidates.setdefault(name, []).append((parsed, version, markers))
     for locked_name, entries in candidates.items():
         lock.versions[locked_name] = _pick_forked(entries, python)
     lock.direct -= lock.members
     return lock
 
 
+# What evaluating a marker can raise. InvalidVersion: packaging before 26 compares
+# ``platform_release >= '5'`` as versions, and Linux's "6.5.0-1025-azure" is none.
+_MARKER_ERRORS = (InvalidMarker, InvalidVersion, UndefinedComparison, UndefinedEnvironmentName)
+
+
 def _pick_forked(entries: list[tuple[Version, str, list[str]]], python: str | None) -> str:
-    """uv locks one version per environment fork; pick the one for the project's Python."""
+    """A lockfile can lock one version per environment fork (uv's ``resolution-markers``,
+    Poetry's and PDM's markers); pick the newest one for the project's Python on any of the
+    platforms (_PLATFORMS), not only on the one the scan runs on."""
     if len(entries) == 1 or python is None:
         return max(entries)[1]
     env = {"python_version": python, "python_full_version": f"{python}.0"}
     matching = []
     for parsed, raw, markers in entries:
         try:
-            ok = not markers or any(Marker(m).evaluate(env) for m in markers)
-        except InvalidMarker:
+            ok = not markers or any(
+                Marker(m).evaluate({**env, **platform}) for m in markers for platform in _PLATFORMS
+            )
+        except _MARKER_ERRORS:
             ok = True
         if ok:
             matching.append((parsed, raw, markers))
@@ -477,9 +520,11 @@ def _parse_pipfile_lock(path: Path) -> _Lock:
         data = json.loads(_read_text(path))
     except (OSError, ValueError) as exc:
         raise ProjectError(f"could not parse {path.name}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ProjectError(f"could not parse {path.name}: not a JSON object")
     lock = _Lock()
     for section in ("default", "develop"):
-        for name, spec in (data.get(section) or {}).items():
+        for name, spec in _table(data.get(section)).items():
             if not isinstance(spec, dict):
                 continue
             key = canonicalize_name(name)
@@ -527,7 +572,7 @@ def _declared_dependencies(root: Path, python: str | None = None) -> _Declared:
     pyproject = root / "pyproject.toml"
     if pyproject.is_file():
         data = _load_toml(pyproject)
-        project_name = canonicalize_name(str(data.get("project", {}).get("name", "")))
+        project_name = canonicalize_name(str(_table(data.get("project")).get("name", "")))
         for name, reason in _local_sources(data).items():
             local[name] = reason
         for req in _pyproject_requirements(data):
@@ -539,7 +584,11 @@ def _declared_dependencies(root: Path, python: str | None = None) -> _Declared:
         try:
             data = _load_toml(pipfile)
             for section in ("packages", "dev-packages"):
-                for name, spec in data.get(section, {}).items():
+                for name, spec in _table(data.get(section)).items():
+                    if _is_root(root, spec):
+                        # The project itself, installed for its tests (Pipenv names it after a
+                        # hash: ``e1839a8 = {path = ".", editable = true}``), is not a dependency.
+                        continue
                     if isinstance(spec, dict) and spec.keys() & {"git", "path", "file", "editable"}:
                         local[canonicalize_name(name)] = "local or git"
                     else:
@@ -584,18 +633,28 @@ def _declared_dependencies(root: Path, python: str | None = None) -> _Declared:
 # than any a marker compares with, so the declarations for the newest Python count, as the
 # newest version does in a uv.lock fork (_pick_forked).
 _NEWEST_PYTHON = "3.99"
-# The platforms a declaration's environment markers are tried on (see _applies).
-_PLATFORMS = (
-    {"sys_platform": "linux", "platform_system": "Linux", "os_name": "posix"},
-    {"sys_platform": "win32", "platform_system": "Windows", "os_name": "nt"},
-    {"sys_platform": "darwin", "platform_system": "Darwin", "os_name": "posix"},
+# The platforms that environment markers are tried on (_applies, _pick_forked), machine
+# included, rather than the machine the scan runs on: a project scanned on a Windows laptop,
+# a Mac and a Linux CI runner gets the same versions.
+_PLATFORMS = tuple(
+    {
+        "sys_platform": platform,
+        "platform_system": system,
+        "os_name": os_name,
+        "platform_machine": cpu,
+    }
+    for platform, system, os_name, cpu in (
+        ("linux", "Linux", "posix", "x86_64"),
+        ("win32", "Windows", "nt", "AMD64"),
+        ("darwin", "Darwin", "posix", "arm64"),
+    )
 )
 
 
 def _applies(req: Requirement, python: str | None) -> bool:
     """Whether a declaration applies to Python ``python`` (the newest one when None) on
-    Linux, Windows or macOS. Always true for markers it cannot evaluate, such as those on
-    extras."""
+    Linux (x86-64), Windows (x64) or macOS (Apple silicon). Always true for markers it cannot
+    evaluate, such as those on extras."""
     marker = req.marker
     if marker is None or "extra" in str(marker):
         return True
@@ -604,8 +663,17 @@ def _applies(req: Requirement, python: str | None) -> bool:
     env.update(python_version=python, python_full_version=f"{python}.0")
     try:
         return any(marker.evaluate({**env, **platform}) for platform in _PLATFORMS)
-    except (InvalidMarker, UndefinedComparison, UndefinedEnvironmentName):
+    except _MARKER_ERRORS:
         return True
+
+
+def _is_root(root: Path, spec: object) -> bool:
+    """Whether a Pipfile entry installs the project's own directory (``path = "."``)."""
+    path = spec.get("path") if isinstance(spec, dict) else None
+    try:
+        return isinstance(path, str) and (root / path).resolve() == root
+    except (OSError, ValueError):
+        return False
 
 
 def _pipfile_requirement(name: str, spec: object) -> Requirement | None:
@@ -632,7 +700,7 @@ def _public_url(url: str) -> str:
 def _local_sources(data: dict[str, Any]) -> dict[str, str]:
     """Names that [tool.uv.sources] / Poetry tables point at workspaces, paths, git or URLs."""
     out: dict[str, str] = {}
-    sources = data.get("tool", {}).get("uv", {}).get("sources") or {}
+    sources = _table(_table(_table(data.get("tool")).get("uv")).get("sources"))
     for name, spec in sources.items():
         specs = spec if isinstance(spec, list) else [spec]
         for s in specs:
@@ -640,10 +708,7 @@ def _local_sources(data: dict[str, Any]) -> dict[str, str]:
                 hit = next((k for k in ("workspace", "path", "git", "url") if k in s), None)
                 if hit:
                     out[canonicalize_name(name)] = hit
-    poetry = data.get("tool", {}).get("poetry", {})
-    groups = [poetry.get("dependencies", {}), poetry.get("dev-dependencies", {})]
-    groups += [g.get("dependencies", {}) for g in (poetry.get("group") or {}).values()]
-    for group in groups:
+    for group in _poetry_groups(data):
         for name, spec in group.items():
             if isinstance(spec, dict):
                 hit = next((k for k in ("path", "git", "url") if k in spec), None)
@@ -652,17 +717,20 @@ def _local_sources(data: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def _poetry_groups(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Poetry's dependency tables: main, the old dev-dependencies, and each group's."""
+    poetry = _table(_table(data.get("tool")).get("poetry"))
+    groups = [_table(poetry.get("dependencies")), _table(poetry.get("dev-dependencies"))]
+    groups += [_table(_table(g).get("dependencies")) for g in _table(poetry.get("group")).values()]
+    return groups
+
+
 def _pyproject_requirements(data: dict[str, Any]) -> Iterator[Requirement]:
-    project = data.get("project", {})
-    specs: list[str] = list(project.get("dependencies", []))
-    for group in (project.get("optional-dependencies") or {}).values():
-        specs.extend(group)
-    for group in (data.get("dependency-groups") or {}).values():
-        specs.extend(s for s in group if isinstance(s, str))
-    poetry = data.get("tool", {}).get("poetry", {})
-    poetry_groups = [poetry.get("dependencies", {}), poetry.get("dev-dependencies", {})]
-    poetry_groups += [g.get("dependencies", {}) for g in (poetry.get("group") or {}).values()]
-    for group in poetry_groups:
+    project = _table(data.get("project"))
+    groups = [project.get("dependencies"), *_table(project.get("optional-dependencies")).values()]
+    groups += _table(data.get("dependency-groups")).values()
+    specs = [s for group in groups for s in _array(group) if isinstance(s, str)]
+    for group in _poetry_groups(data):
         for name, spec in group.items():
             if name.lower() == "python":
                 continue
@@ -836,7 +904,7 @@ def python_version(root: Path, *, explicit_only: bool = False) -> str | None:
             data = _load_toml(pyproject)
         except ProjectError:
             return None
-        rp = str(data.get("project", {}).get("requires-python", ""))
+        rp = str(_table(data.get("project")).get("requires-python", ""))
         m = re.search(r">=\s*(\d+)\.(\d+)", rp)
         if m:
             return f"{m.group(1)}.{m.group(2)}"
@@ -920,7 +988,8 @@ def scan_sources(root: Path) -> SourceScan:
                 tree = ast.parse(
                     path.read_text(encoding="utf-8", errors="replace"), filename=str(path)
                 )
-        except (OSError, SyntaxError, ValueError):
+        # Python 3.13 cannot parse some generated code either: 3000 strings joined with "+".
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
             continue
         use = scan_file(tree)
         modules.update(p for p in use.paths if "." not in p)

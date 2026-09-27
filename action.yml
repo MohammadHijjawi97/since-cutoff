@@ -86,7 +86,7 @@ runs:
     - name: Restore the since-cutoff cache
       id: cache
       if: inputs.cache == 'true'
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/since-cutoff-cache
         key: since-cutoff-${{ runner.os }}-${{ inputs.since-cutoff-version }}-${{ hashFiles('**/uv.lock', '**/poetry.lock', '**/pdm.lock', '**/pylock*.toml', '**/Pipfile.lock', '**/requirements*.txt', '**/pyproject.toml') }}
@@ -162,7 +162,7 @@ runs:
 
     - name: Save the since-cutoff cache
       if: inputs.cache == 'true' && steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/since-cutoff-cache
         key: ${{ steps.cache.outputs.cache-primary-key }}

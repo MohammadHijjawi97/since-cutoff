@@ -715,6 +715,7 @@ def _symbol_terms(symbol: str, *, keep_case: bool = False) -> list[list[str]]:
             break
         text = stripped
     text = re.sub(r"\([^,]*", "", text)  # an unclosed call
+    text = text.replace(")", "")  # and one closed once too often: "create(model=m))"
     terms = []
     for term in text.split(","):
         term = re.sub(r"^\s*await\s+", "", term)

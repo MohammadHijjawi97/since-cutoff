@@ -5,12 +5,9 @@ from __future__ import annotations
 import io
 import json
 import sys
-import threading
 import zipfile
 from datetime import date
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
 
@@ -20,7 +17,7 @@ from since_cutoff.errors import ProviderError
 from since_cutoff.providers import make_provider, split_spec
 from since_cutoff.providers.claude_code import ClaudeCodeProvider
 from since_cutoff.pypi import PyPI, _extract_zip, _pick_artifact, _wheel_import_names
-from tests.conftest import FakePyPI
+from tests.conftest import FakePyPI, Reply
 
 
 # ----------------------------------------------------------------------- PyPI
@@ -119,84 +116,59 @@ def test_unknown_provider_and_missing_keys(monkeypatch):
         make_provider("openai")
 
 
-class _Handler(BaseHTTPRequestHandler):
-    requests: ClassVar[list[tuple[str, dict[str, str], dict]]] = []
-    reply: ClassVar[dict] = {}
-
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        type(self).requests.append(
-            (self.path, {k.lower(): v for k, v in self.headers.items()}, body)
-        )
-        data = json.dumps(type(self).reply).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def log_message(self, *args):
-        pass
-
-
-@pytest.fixture
-def server():
-    _Handler.requests = []
-    httpd = HTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{httpd.server_port}"
-    httpd.shutdown()
-
-
-def test_anthropic_provider_protocol(server, monkeypatch):
+def test_anthropic_provider_protocol(http_server, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    _Handler.reply = {
+    reply = {
         "model": "claude-x",
         "content": [{"type": "text", "text": "hi"}],
         "usage": {"input_tokens": 3, "output_tokens": 1},
     }
-    p = make_provider("anthropic:claude-x", base_url=server)
+    http_server.routes["/v1/messages"] = [Reply(body=reply)]
+    p = make_provider("anthropic:claude-x", base_url=http_server.url)
     out = p.complete("sys", "user")
-    path, headers, body = _Handler.requests[0]
+    seen = http_server.seen[0]
+    body = json.loads(seen.body)
     assert out.text == "hi" and out.output_tokens == 1
-    assert path == "/v1/messages" and headers["x-api-key"] == "sk-test"
+    assert seen.path == "/v1/messages" and seen.headers["x-api-key"] == "sk-test"
     assert body["system"] == "sys" and body["messages"] == [{"role": "user", "content": "user"}]
     assert "temperature" not in body
 
 
-def test_openai_compatible_provider_protocol(server, monkeypatch):
-    _Handler.reply = {
+def test_openai_compatible_provider_protocol(http_server, monkeypatch):
+    reply = {
         "model": "qwen",
         "choices": [{"message": {"content": "ok"}}],
         "usage": {"prompt_tokens": 2, "completion_tokens": 1},
     }
-    p = make_provider("ollama:qwen3:8b", base_url=server)
+    http_server.routes["/chat/completions"] = [Reply(body=reply)]
+    p = make_provider("ollama:qwen3:8b", base_url=http_server.url)
     assert p.complete("sys", "user").text == "ok"
-    path, headers, body = _Handler.requests[0]
-    assert path == "/chat/completions" and "authorization" not in headers
+    seen = http_server.seen[0]
+    body = json.loads(seen.body)
+    assert seen.path == "/chat/completions" and "authorization" not in seen.headers
     assert body["model"] == "qwen3:8b" and body["messages"][0] == {
         "role": "system",
         "content": "sys",
     }
 
 
-def test_openrouter_requests_carry_app_attribution(server, monkeypatch):
+def test_openrouter_requests_carry_app_attribution(http_server, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    _Handler.reply = {"model": "qwen", "choices": [{"message": {"content": "ok"}}]}
+    reply = {"model": "qwen", "choices": [{"message": {"content": "ok"}}]}
+    http_server.routes["/chat/completions"] = [Reply(body=reply)]
 
-    make_provider("openrouter:qwen/qwen3-coder", base_url=server).complete("sys", "user")
-    _path, headers, body = _Handler.requests[0]
-    assert headers["authorization"] == "Bearer or-test"
-    assert headers["http-referer"] == "https://github.com/MohammadHijjawi97/since-cutoff"
-    assert headers["x-openrouter-title"] == headers["x-title"] == "since-cutoff"
-    assert body["model"] == "qwen/qwen3-coder"
+    make_provider("openrouter:qwen/qwen3-coder", base_url=http_server.url).complete("sys", "user")
+    seen = http_server.seen[0]
+    assert seen.headers["authorization"] == "Bearer or-test"
+    assert seen.headers["http-referer"] == "https://github.com/MohammadHijjawi97/since-cutoff"
+    assert seen.headers["x-openrouter-title"] == seen.headers["x-title"] == "since-cutoff"
+    assert json.loads(seen.body)["model"] == "qwen/qwen3-coder"
 
     # Only OpenRouter gets them.
-    make_provider("openai:gpt-x", base_url=server).complete("sys", "user")
-    _path, headers, _body = _Handler.requests[1]
+    make_provider("openai:gpt-x", base_url=http_server.url).complete("sys", "user")
+    headers = http_server.seen[1].headers
     assert not {"http-referer", "x-title", "x-openrouter-title"} & set(headers)
 
 

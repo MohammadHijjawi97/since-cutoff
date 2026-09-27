@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import weakref
 from pathlib import Path
 
 from since_cutoff.errors import ProviderError
@@ -51,6 +52,8 @@ class ClaudeCodeProvider:
             )
         self.exe_command: list[str] = [exe]
         self._workdir = tempfile.mkdtemp(prefix="since-cutoff-claude-")
+        # Gone with the provider, or when Python exits (each run left an empty one behind).
+        weakref.finalize(self, shutil.rmtree, self._workdir, ignore_errors=True)
 
     @property
     def model_name(self) -> str | None:
@@ -132,7 +135,8 @@ class ClaudeCodeProvider:
                 )
             if not any(s.lower() in error.lower() for s in _RETRYABLE):
                 break
-            time.sleep(min(2.0 * 2**attempt, 30.0))
+            if attempt < self.retries - 1:
+                time.sleep(min(2.0 * 2**attempt, 30.0))
         raise ProviderError(f"claude call failed: {last_error[:500]}")
 
     def _parse(self, stdout: str, stderr: str, code: int) -> tuple[Completion | None, str]:

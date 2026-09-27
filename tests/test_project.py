@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import ast
 import json
 import textwrap
 from pathlib import Path
 
+import packaging.markers
 import pytest
+from packaging.markers import Marker
+from packaging.specifiers import Specifier
+from packaging.version import InvalidVersion, Version
 
+from since_cutoff import project as project_module
 from since_cutoff.errors import ProjectError
 from since_cutoff.project import load_project, parse_lockfile, parse_requirements, scan_sources
 
@@ -334,3 +340,140 @@ def test_scan_sources_keeps_the_projects_syntax_warnings_to_itself(tmp_path, rec
     write(tmp_path, "app.py", 'import re\nWORD = re.compile("\\W+")\n')
     assert scan_sources(tmp_path).modules == {"re"}
     assert not [w for w in recwarn if "escape" in str(w.message)]
+
+
+def test_a_list_or_string_where_a_table_belongs_is_read_as_missing(tmp_path):
+    # Hand-edited files that pip, uv and Poetry would reject: the scan reads what it can.
+    write(
+        tmp_path,
+        "pyproject.toml",
+        """
+        dependency-groups = ["pytest"]
+        [project]
+        name = "app"
+        dependencies = "requests"
+        optional-dependencies = ["httpx"]
+        [tool]
+        poetry = ["flask"]
+        """,
+    )
+    write(tmp_path, "requirements.txt", "attrs==23.1.0\n")
+    # "requests" is not six one-letter dependencies (r, e, q, u, s, t).
+    assert versions(load_project(tmp_path)) == {"attrs": ("23.1.0", True, "pinned")}
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "error"),
+    [
+        ("uv.lock", 'version = 1\npackage = { name = "attrs" }\n', None),
+        (
+            "uv.lock",
+            '[[package]]\nname = "app"\nsource = { editable = "." }\ndependencies = ["attrs"]\n',
+            None,
+        ),
+        ("poetry.lock", "[[package]]\nname = 1\nversion = 2\n", None),
+        ("pylock.toml", 'packages = "attrs"\n', None),
+        ("Pipfile.lock", '["attrs"]', "could not parse Pipfile.lock: not a JSON object"),
+        ("Pipfile.lock", '{"default": ["attrs"]}', None),
+    ],
+)
+def test_a_lockfile_laid_out_unlike_its_tool_is_read_or_refused_cleanly(
+    tmp_path, name, text, error
+):
+    # What a lockfile holds in the wrong shape counts as missing, and the requirements file
+    # pins attrs. Only a Pipfile.lock that is no JSON object at all is refused, in one line.
+    write(tmp_path, name, text)
+    write(tmp_path, "requirements.txt", "attrs==23.1.0\n")
+    if error:
+        with pytest.raises(ProjectError) as info:
+            load_project(tmp_path)
+        assert str(info.value) == error
+        return
+    project = load_project(tmp_path)
+    assert versions(project) == {"attrs": ("23.1.0", True, "pinned")}
+    assert project.version_source == f"{name}, requirements.txt for 1 not in it"
+
+
+def test_a_uv_lock_fork_whose_markers_cannot_be_compared_counts(tmp_path):
+    write(
+        tmp_path,
+        "uv.lock",
+        """
+        version = 1
+        [[package]]
+        name = "numpy"
+        version = "2.2.6"
+        resolution-markers = ["python_version ~= 'abc'"]
+        [[package]]
+        name = "numpy"
+        version = "2.3.1"
+        resolution-markers = [1, "python_full_version >= '3.11'"]
+        """,
+    )
+    # For Python 3.10: the first fork may apply, the second (a stray 1 aside) does not.
+    assert versions(load_project(tmp_path, python="3.10"))["numpy"][0] == "2.2.6"
+
+
+@pytest.mark.parametrize("packaging_release", ["installed", "25"])
+def test_markers_on_the_kernel_version_do_not_break_the_scan_on_linux(
+    tmp_path, monkeypatch, packaging_release
+):
+    # packaging before 26 compares these as versions, and "6.5.0-1025-azure" is not one: it
+    # raised InvalidVersion, which ended the scan. Packaging 26 finds them False instead, so
+    # for the "25" run the comparison raises as it did in packaging 22 to 25.
+    linux = {"platform_release": "6.5.0-1025-azure", "platform_version": "#1 SMP PREEMPT"}
+    for module in (project_module, packaging.markers):
+        real = module.default_environment
+        monkeypatch.setattr(module, "default_environment", lambda real=real: {**real(), **linux})
+    if packaging_release == "25":
+        contains = Specifier.contains
+
+        def contains_versions_only(self, item, prereleases=None):
+            Version(str(item))  # InvalidVersion: '6.5.0-1025-azure'
+            return contains(self, item, prereleases)
+
+        monkeypatch.setattr(Specifier, "contains", contains_versions_only)
+        with pytest.raises(InvalidVersion):  # the simulation is faithful
+            Marker("platform_release >= '5'").evaluate()
+
+    write(
+        tmp_path / "reqs",
+        "requirements.txt",
+        "attrs==23.1.0; platform_release >= '5'\nidna==3.7; platform_version >= '1'\n",
+    )
+    assert set(versions(load_project(tmp_path / "reqs"))) == {"attrs", "idna"}
+    write(  # and a uv.lock fork on the kernel's version
+        tmp_path / "lock",
+        "uv.lock",
+        """
+        version = 1
+        [[package]]
+        name = "numpy"
+        version = "2.2.6"
+        resolution-markers = ["python_full_version < '3.11'"]
+        [[package]]
+        name = "numpy"
+        version = "2.3.1"
+        resolution-markers = ["python_full_version >= '3.11' and platform_release >= '5'"]
+        """,
+    )
+    assert versions(load_project(tmp_path / "lock", python="3.12"))["numpy"][0] == "2.3.1"
+
+
+def test_project_code_python_itself_cannot_parse_is_skipped(tmp_path):
+    # Generated code: 5000 strings joined with "+" are too deep for the parser of Python 3.13
+    # (a RecursionError); 3.10 reads them.
+    generated = "import attrs\nTABLE = " + " + ".join(['"x"'] * 5000) + "\n"
+    try:
+        ast.parse(generated)
+    except (RecursionError, MemoryError):
+        readable = False
+    else:
+        readable = True
+    write(tmp_path, "requirements.txt", "requests==2.32.3\n")
+    write(tmp_path, "generated.py", generated)
+    # Too deep for every Python's parser (a MemoryError: "too complex to parse").
+    write(tmp_path, "nested.py", "import yarl\nX = " + "-" * 10_000 + "1\n")
+    write(tmp_path, "app.py", "import requests\n")
+    project = load_project(tmp_path)
+    assert project.imported_modules == ({"attrs", "requests"} if readable else {"requests"})

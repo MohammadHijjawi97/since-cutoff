@@ -260,20 +260,22 @@ def apply_block(path: Path, block: str) -> str:
     if span is not None:
         new, action = text[: span[0]] + body + text[span[1] :], "updated"
     else:
-        if not text or text.endswith(nl + nl):
-            sep = ""
-        elif text.endswith(nl):
-            sep = nl
-        else:
-            sep = nl + nl
-        new, action = text + sep + body, "appended to"
+        # One line break before the block, always, so that remove_block can take exactly
+        # that one away again: after a last line with its own line break, it makes a blank
+        # line.
+        new, action = text + (nl if text else "") + body, "appended to"
     if new != text:
         _write(path, new)
     return action
 
 
 def remove_block(path: Path) -> bool:
-    """Remove the since-cutoff block. Returns False (and leaves the file alone) if there is none."""
+    """Remove the since-cutoff block. Returns False (and leaves the file alone) if there is none.
+
+    Removing an appended block gives back the file as it was before, byte for byte. A block
+    with text after it (moved there by hand) leaves one blank line between the text before
+    and after it; every other line stays as it is.
+    """
     if not path.exists():
         return False
     text = _read(path)
@@ -282,7 +284,11 @@ def remove_block(path: Path) -> bool:
         return False
     nl = "\r\n" if "\r\n" in text else "\n"
     before, after = text[: span[0]], text[span[1] :]
-    new = before.rstrip() + (nl + nl + after.lstrip() if after.strip() else "")
-    new = new.rstrip() + nl if new.strip() else ""
+    if after.strip(" \t\r\n"):
+        before = re.sub(r"(?m)(?:^[ \t]*\r?\n)+\Z", "", before)  # the blank lines around it
+        after = re.sub(r"\A(?:[ \t]*\r?\n)+", "", after)
+        new = before + (nl if before else "") + after
+    else:  # the block ends the file, as apply_block leaves it, after the line break it added
+        new = before[: -len(nl)] if before.endswith(nl) else before
     _write(path, new)
     return True

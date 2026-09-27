@@ -85,6 +85,11 @@ class CheckResult:
     other_errors: list[Diagnostic] = field(default_factory=list)
 
 
+# What parsing a model's answer can raise besides a SyntaxError: a NUL byte is a ValueError
+# before Python 3.12, and code nested too deeply a RecursionError or MemoryError.
+_UNPARSABLE = (SyntaxError, ValueError, RecursionError, MemoryError)
+
+
 def extract_code(text: str) -> str | None:
     """Pull the Python code out of a model answer (the longest fenced block, or bare code)."""
     blocks: list[str] = _CODE_BLOCK.findall(text or "")
@@ -95,7 +100,7 @@ def extract_code(text: str) -> str | None:
         return None
     try:
         ast.parse(stripped)
-    except SyntaxError:
+    except _UNPARSABLE:
         return None
     return stripped + "\n"
 
@@ -107,7 +112,9 @@ def sanitize(code: str) -> str:
         tokens = list(tokenize.generate_tokens(io.StringIO(code).readline))
     except (tokenize.TokenError, SyntaxError, IndentationError):
         return code
-    lines = code.splitlines(keepends=True)
+    # The lines as the tokenizer numbers them: str.splitlines() also splits at a form feed or
+    # U+2028, which moved every comment after one to the wrong line, and kept it.
+    lines = io.StringIO(code).readlines()
     for tok in reversed(tokens):
         if tok.type == tokenize.COMMENT and _CHECKER_COMMENT.search(tok.string):
             row, col = tok.start
@@ -239,7 +246,7 @@ class _Snippet:
         self.tree: ast.Module | None
         try:
             self.tree = ast.parse(code)
-        except SyntaxError:
+        except _UNPARSABLE:
             self.tree = None
         self.bound: set[str] = set()
         self.imports_target = False

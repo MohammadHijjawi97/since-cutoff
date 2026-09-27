@@ -16,6 +16,7 @@ Model specs on the command line look like ``provider:model``:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Collection
 
 from since_cutoff.errors import ProviderError
@@ -99,6 +100,8 @@ def make_provider(
         if not model:
             raise ProviderError(f"{provider} needs a model, e.g. {provider}:<model-id>")
         default_url, key_env = OPENAI_COMPATIBLE.get(provider, (None, "OPENAI_API_KEY"))
+        if provider == "openai-compatible" and not os.environ.get("OPENAI_API_KEY"):
+            key_env = None  # optional: a local server (vLLM, LM Studio) takes no key
         url = base_url or default_url
         if not url:
             raise ProviderError("openai-compatible needs --base-url")

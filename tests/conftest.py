@@ -1,21 +1,49 @@
-"""Shared fixtures: a toy library with two versions, a fake PyPI and a scripted model."""
+"""Shared fixtures: a toy library with two versions, a fake PyPI, a scripted model and a local
+HTTP server."""
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
+import tempfile
 import textwrap
+import threading
+import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from hypothesis import settings
 
-from since_cutoff import cli, hosts
+from since_cutoff import cli, hosts, net
 from since_cutoff.cache import DiskCache
 from since_cutoff.engine import Engine, Settings
 from since_cutoff.providers.base import Completion
 from since_cutoff.pypi import PyPI, Release, SourceTree
+
+# ------------------------------------------------------------ property tests
+# The property tests (test_properties.py, test_parser_fuzz.py) try a modest number of
+# generated examples, with no time limit per example, so a slow machine cannot fail them. In
+# CI they try the same examples every run (derandomize): a red build reproduces. Locally each
+# run tries new ones; HYPOTHESIS_PROFILE=thorough tries 40 times as many. A failure prints the
+# example and how to replay it; no example database is kept, and Hypothesis's own files go to
+# the temporary folder, not to a .hypothesis folder in the checkout.
+os.environ.setdefault(
+    "HYPOTHESIS_STORAGE_DIRECTORY", str(Path(tempfile.gettempdir()) / "since-cutoff-hypothesis")
+)
+settings.register_profile("dev", max_examples=50, deadline=None, database=None, print_blob=True)
+settings.register_profile("ci", settings.get_profile("dev"), derandomize=True)
+settings.register_profile("thorough", settings.get_profile("dev"), max_examples=2000)
+settings.load_profile(
+    os.environ.get("HYPOTHESIS_PROFILE") or ("ci" if os.environ.get("CI") else "dev")
+)
 
 
 # ------------------------------------------------------------ agent settings
@@ -388,3 +416,124 @@ def scripted_cli(
 
     monkeypatch.setattr(cli, "Engine", engine)
     return models
+
+
+# ---------------------------------------------------------- local HTTP server
+@dataclass
+class Reply:
+    """One scripted HTTP response. A dict or list body is sent as JSON. ``cut`` sends only that
+    many bytes of the body, although Content-Length announces all of it, then hangs up;
+    ``delay`` waits that many seconds before answering."""
+
+    status: int = 200
+    body: bytes | str | dict[str, Any] | list[Any] = b""
+    headers: dict[str, str] = field(default_factory=dict)
+    cut: int | None = None
+    delay: float = 0.0
+
+    def data(self) -> bytes:
+        if isinstance(self.body, bytes):
+            return self.body
+        if isinstance(self.body, str):
+            return self.body.encode("utf-8")
+        return json.dumps(self.body).encode("utf-8")
+
+
+@dataclass
+class Seen:
+    """A request the server received."""
+
+    method: str
+    path: str
+    headers: dict[str, str]  # lower-cased names
+    body: bytes
+
+
+class LocalServer:
+    """An HTTP server on 127.0.0.1 for code that talks to PyPI or a model API.
+
+    ``routes`` maps a path to its replies, given in order; the last one repeats. A reply can
+    be a callable that returns the Reply, to act at the moment the request arrives. Any other
+    path gets a 404. ``seen`` logs every request, and ``errors`` what went wrong in answering
+    one (the fixture fails the test on those).
+    """
+
+    def __init__(self) -> None:
+        self.routes: dict[str, list[Reply | Callable[[], Reply]]] = {}
+        self.seen: list[Seen] = []
+        self.errors: list[BaseException] = []
+        self._lock = threading.Lock()  # requests arrive on several threads
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                server._answer(self)
+
+            do_POST = do_GET
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._httpd.daemon_threads = True
+        self._httpd.block_on_close = False
+        self._httpd.handle_error = self._failed
+        self.url = f"http://127.0.0.1:{self._httpd.server_port}"
+        # A short poll interval: shutdown() waits for it, after every test.
+        self._thread = threading.Thread(
+            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True
+        )
+        self._thread.start()
+
+    def _failed(self, request: object, address: object) -> None:
+        # A client that gave up (a timeout test) makes the late answer fail: not an error here.
+        # Anything else, such as a reply callable that raised, would otherwise only show as a
+        # dropped connection, which the code under test retries.
+        exc = sys.exc_info()[1]
+        if exc is not None and not isinstance(exc, ConnectionError):
+            self.errors.append(exc)
+
+    def paths(self, prefix: str = "/") -> list[str]:
+        return [s.path for s in self.seen if s.path.startswith(prefix)]
+
+    def _answer(self, handler: BaseHTTPRequestHandler) -> None:
+        length = int(handler.headers.get("Content-Length") or 0)
+        body = handler.rfile.read(length) if length else b""
+        headers = {k.lower(): v for k, v in handler.headers.items()}
+        with self._lock:
+            self.seen.append(Seen(handler.command, handler.path, headers, body))
+            queue = self.routes.get(handler.path) or [Reply(404, b"not found")]
+            item = queue.pop(0) if len(queue) > 1 else queue[0]
+        reply = item() if callable(item) else item
+        if reply.delay:
+            time.sleep(reply.delay)
+        data = reply.data()
+        handler.send_response(reply.status)
+        for name, value in reply.headers.items():
+            handler.send_header(name, value)
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data if reply.cut is None else data[: reply.cut])
+        handler.close_connection = True
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+@pytest.fixture
+def http_server() -> Iterator[LocalServer]:
+    server = LocalServer()
+    try:
+        yield server
+    finally:
+        server.close()
+    assert not server.errors, f"the local server could not answer: {server.errors!r}"
+
+
+@pytest.fixture
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """HTTP retries back off without waiting; this lists the delays they asked for."""
+    delays: list[float] = []
+    monkeypatch.setattr(net, "time", SimpleNamespace(sleep=delays.append))
+    return delays

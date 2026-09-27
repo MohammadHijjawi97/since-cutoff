@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import os
+import time
 from datetime import date
 
 import pytest
 
+from since_cutoff import models
 from since_cutoff.cache import DiskCache
 from since_cutoff.errors import ModelLookupError
 from since_cutoff.models import ModelRegistry, normalize_model_id, parse_cutoff, slim_models_dev
+from tests.conftest import Reply
 
 DATA = {
     "anthropic": {
@@ -102,3 +106,29 @@ def test_bundled_snapshot_is_usable_offline(tmp_path):
     registry = ModelRegistry(DiskCache(tmp_path), offline=True)
     info = registry.require("claude-sonnet-4-5", "anthropic")
     assert info.knowledge is not None and info.knowledge.year == 2025
+
+
+def test_models_dev_is_asked_once_a_day_with_fallbacks_when_it_is_down(
+    tmp_path, http_server, monkeypatch, slept
+):
+    monkeypatch.setattr(models, "MODELS_DEV_URL", f"{http_server.url}/api.json")
+    http_server.routes["/api.json"] = [Reply(body=DATA)]
+    cache = DiskCache(tmp_path / "cache")
+
+    def source(registry: ModelRegistry) -> str:
+        assert registry.lookup("claude-haiku-4-5").knowledge == date(2025, 2, 28)
+        return registry.source
+
+    assert source(ModelRegistry(cache)) == "models.dev"
+    assert source(ModelRegistry(cache)) == "models.dev (cached)"
+    assert len(http_server.seen) == 1
+    # A day later, with models.dev down (or answering something else): the older copy.
+    day_old = time.time() - models.REGISTRY_TTL - 60
+    os.utime(cache.path("models", "models-dev"), (day_old, day_old))
+    for reply in (Reply(503, "down"), Reply(body=["not", "models.dev"]), Reply(body="<html>")):
+        http_server.routes["/api.json"] = [reply]
+        assert source(ModelRegistry(cache)) == "models.dev (older cached copy)"
+    # With no copy at all: the snapshot that ships with since-cutoff.
+    registry = ModelRegistry(DiskCache(tmp_path / "empty"))
+    assert registry.require("claude-sonnet-4-5", "anthropic").knowledge is not None
+    assert registry.source == "bundled models.dev snapshot"

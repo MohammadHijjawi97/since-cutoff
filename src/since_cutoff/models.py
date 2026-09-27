@@ -91,24 +91,31 @@ def bare_model_id(model_id: str) -> str:
     return mid.split("@", 1)[0]
 
 
+# A dated snapshot: Anthropic's "-20250929", OpenAI's "-2025-04-14".
+_SNAPSHOT_DATE = re.compile(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$")
+
+
 def normalize_model_id(model_id: str) -> list[str]:
-    """Candidate spellings of a model id, most specific first."""
+    """Candidate spellings of a model id, most specific first.
+
+    Each spelling's own variants are among them too, so "claude-sonnet-4.6-20260101" leads
+    to "claude-sonnet-4-6", with its dots as dashes and without its date.
+    """
     mid = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())  # "claude-opus-4-6[1m]"
     if "/" in mid:  # openrouter style "anthropic/claude-sonnet-4.5"
         mid = mid.split("/", 1)[1]
-    candidates = [mid]
     no_tag = mid.split(":", 1)[0]  # ollama style "qwen3:32b"
-    candidates.append(no_tag)
-    candidates.append(bare_model_id(model_id))  # Bedrock, Vertex AI, nested router prefixes
-    for c in list(candidates):
-        candidates.append(c.replace(".", "-"))
-        candidates.append(re.sub(r"-\d{8}$", "", c))  # dated snapshot suffix
-        candidates.append(re.sub(r"-latest$", "", c))
-    seen: list[str] = []
-    for c in candidates:
-        if c and c not in seen:
-            seen.append(c)
-    return seen
+    bare = bare_model_id(model_id)  # Bedrock, Vertex AI, nested router prefixes
+    candidates = list(dict.fromkeys([mid, no_tag, bare]))
+    for c in candidates:  # the list grows while it is read: variants of variants
+        for variant in (
+            c.replace(".", "-"),
+            _SNAPSHOT_DATE.sub("", c),
+            re.sub(r"-latest$", "", c),
+        ):
+            if variant not in candidates:
+                candidates.append(variant)
+    return [c for c in candidates if c]
 
 
 class ModelRegistry:

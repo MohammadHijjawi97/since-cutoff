@@ -7,6 +7,7 @@ extracted, with path and size checks. Nothing is installed and no package code i
 from __future__ import annotations
 
 import ast
+import contextlib
 import email.parser
 import io
 import json
@@ -212,6 +213,11 @@ class PyPI:
         filename = artifact["filename"]
         try:
             blob = net.request(artifact["url"], timeout=300, max_bytes=self.max_download_bytes + 1)
+        except net.ResponseTooLarge as exc:  # PyPI understated its size
+            raise PackageIndexError(
+                f"{name}=={version} is above the {self.max_download_mb:g} MB download limit "
+                "(--max-download-mb)"
+            ) from exc
         except net.HTTPError as exc:
             raise PackageIndexError(f"could not download {filename}: {exc.reason}") from exc
 
@@ -265,7 +271,10 @@ class PyPI:
             except OSError:
                 if _read_marker(root) is None:  # a stale or broken tree: replace it
                     shutil.rmtree(root, ignore_errors=True)
-                    package_root.rename(root)
+                    # Unless another process replaced it first, or the rename is refused (a
+                    # virus scanner holding a file): the marker below tells which.
+                    with contextlib.suppress(OSError):
+                        package_root.rename(root)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         cached = _read_marker(root)
@@ -290,7 +299,7 @@ def is_placeholder(tree: SourceTree, *, max_files: int = 20) -> bool:
     for f in files:
         try:
             body = ast.parse(f.read_text(encoding="utf-8", errors="replace")).body
-        except (OSError, SyntaxError, ValueError):
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False
         for node in body:
             if isinstance(node, ast.Pass) or (
@@ -390,11 +399,13 @@ def _safe_target(dest: Path, member: str, resolved: dict[Path, Path] | None = No
     """
     name = member.replace("\\", "/")
     parts = PurePosixPath(name).parts
+    # Windows drops a trailing dot or space from a name ("pkg." is "pkg") or refuses it, and
+    # cannot delete a "..." or ".. " it made: no module or package is named like that.
     if (
         not parts
         or PurePosixPath(name).is_absolute()
         or PureWindowsPath(name).drive
-        or any(p in ("", ".", "..") or ":" in p for p in parts)
+        or any(p in ("", ".", "..") or ":" in p or p.endswith((".", " ")) for p in parts)
     ):
         return None
     target = dest.joinpath(*parts)
@@ -479,6 +490,13 @@ def _extract_tar(blob: bytes, dest: Path) -> list[str]:
     return names
 
 
+def _read_member(zf: zipfile.ZipFile, name: str, limit: int) -> str:
+    """The first ``limit`` bytes of a metadata file in an archive, as text: however far the
+    member expands, no more of it is decompressed."""
+    with zf.open(name) as fh:
+        return fh.read(limit).decode("utf-8", "replace")
+
+
 def _parse_requires(metadata: str) -> list[str]:
     msg = email.parser.Parser().parsestr(metadata, headersonly=True)
     return [r.strip() for r in msg.get_all("Requires-Dist") or [] if r.strip()]
@@ -488,7 +506,7 @@ def _requires_from_zip(blob: bytes, pattern: str) -> list[str]:
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         for n in zf.namelist():
             if re.fullmatch(pattern, n):
-                return _parse_requires(zf.read(n)[:1_000_000].decode("utf-8", "replace"))
+                return _parse_requires(_read_member(zf, n, 1_000_000))
     return []
 
 
@@ -510,7 +528,7 @@ def _pth_dirs(blob: bytes) -> list[str]:
         for name in zf.namelist():
             if "/" in name or not name.endswith(".pth"):
                 continue
-            for line in zf.read(name)[:100_000].decode("utf-8", "replace").splitlines():
+            for line in _read_member(zf, name, 100_000).splitlines():
                 line = line.strip().replace("\\", "/").strip("/")
                 if line and not line.startswith(("#", "import ", "import\t")) and ".." not in line:
                     dirs.append(line)
@@ -562,7 +580,7 @@ def _wheel_import_names(
         if top:
             listed = [
                 _on_path(line.strip().replace("\\", "/"), dirs or [])
-                for line in zf.read(top[0]).decode("utf-8", "replace").splitlines()
+                for line in _read_member(zf, top[0], 1_000_000).splitlines()
             ]
             names = [n.replace("/", ".") for n in listed if _is_public_top(n)]
             names = [n for n in names if n.lower() not in on_path]

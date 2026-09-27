@@ -1,5 +1,84 @@
 # Changelog
 
+## Unreleased
+
+- A wheel whose METADATA, top_level.txt or .pth file expands to gigabytes no longer fills the
+  memory: as with the sources, only the start of each file is read (they were decompressed
+  whole, and deflate shrinks a gigabyte of padding to about a megabyte).
+- A TLS connection that drops in the middle of a download (`ssl.SSLEOFError: EOF occurred in
+  violation of protocol`) is retried like any other network error, instead of ending the scan
+  with a traceback.
+- When the extracted sources cannot be moved into the cache (a virus scanner holding a file on
+  Windows, or another since-cutoff process replacing the same broken copy at the same moment),
+  the dependency is skipped with "could not publish the sources", or the other process's copy
+  is used, instead of the scan ending with a traceback.
+- A download that turns out larger than `--max-download-mb` says "is above the 80 MB download
+  limit (--max-download-mb)", as when PyPI lists the size, instead of "network error (response
+  larger than 83886081 bytes)".
+- `openai-compatible:<model>` works without `OPENAI_API_KEY`, as the README says: a local
+  server (vLLM, LM Studio, llama.cpp) needs no key. It failed with "OPENAI_API_KEY is not set".
+- A model API that answers with something other than JSON (a web page at a wrong `--base-url`,
+  a proxy's error page), or with JSON of another shape (`"message": null` or a list of
+  content parts from an OpenAI-compatible server; a list or `"content": null` from a gateway
+  in front of the Anthropic API), fails that model call with a clear error instead of ending
+  the whole run with a JSONDecodeError, AttributeError or TypeError traceback.
+- Claude Code calls that stay overloaded or rate-limited fail right after the third attempt,
+  instead of waiting 8 more seconds first.
+- A run with a `claude-code` model no longer leaves an empty `since-cutoff-claude-*` folder
+  behind in the temporary directory.
+- `--model gpt-4.1-2025-04-14`, `o3-2025-04-16` and OpenAI's other dated snapshots find
+  their model's training cutoff instead of failing with "unknown model" when models.dev does
+  not list that snapshot, and so does an id with both dots and a date
+  (`claude-sonnet-4.6-20260101` is `claude-sonnet-4-6`).
+- `since-cutoff unapply` gives back the file as it was before `--apply`, byte for byte: it
+  added a line break after a last line without one, and dropped trailing spaces (a Markdown
+  line break) and blank lines at the end. For that, `--apply` now puts the block right on the
+  line after a last line without a line break. A block moved into the middle of the file by
+  hand is removed without taking the indentation of the line after it or leaving blank lines
+  at the top of the file.
+- A hand-edited or damaged uv.lock, poetry.lock, pdm.lock, pylock.toml, Pipfile.lock,
+  pyproject.toml or Pipfile with a string, list or number where a table or list belongs is
+  read as far as it makes sense, or refused with "could not parse ...", instead of ending the
+  scan with an AttributeError or TypeError traceback. `dependencies = "requests"` was read
+  as six one-letter dependencies (`r`, `e`, `q`, ...). A uv.lock fork whose markers cannot
+  be compared counts, as other markers that cannot be evaluated do.
+- With packaging older than 26 on Linux, a requirement marker on the kernel's version
+  (`platform_release >= '5'`) no longer ends the scan with `InvalidVersion: '6.5.0-1025-azure'`.
+- Code that Python itself cannot parse because it nests too deeply (generated code that joins
+  thousands of strings with `+`), in the project or in a package, is skipped like a file with a
+  syntax error, instead of ending the scan with a RecursionError.
+- Archive members whose names end in a dot or a space (`pkg./x.py`, `.../x.py`) are left out:
+  on Windows the first overwrote `pkg/x.py`, and the second made a folder in the cache that
+  nothing could delete. No module or package is named like that.
+- A model's answer that Python cannot parse, because of a NUL byte (Python 3.10 and 3.11) or
+  code nested too deeply (3.13), counts as an answer without valid code, instead of ending the
+  run with a ValueError or RecursionError, and again on every later run, since the answer was
+  cached before it was read.
+- `# type: ignore` and `# pyright: ignore` comments in a model's code are always removed before
+  it is type-checked. After a form feed or a U+2028 character anywhere in the code, they stayed
+  (and another line could be cut short instead), so they could hide the very error the check
+  looks for.
+- In results.json, the Wilson interval of 0 of n is exactly `[0, ...]` and that of n of n
+  `[..., 1]`: rounding gave 2.8e-17 and 0.9999999999999999, which leave out the rate itself.
+- MCP `api_changes` reads a symbol with one closing parenthesis too many
+  (`client.messages.create(model=m))`) as the call without it, instead of matching nothing.
+- A project gets the same versions whatever machine scans it. Environment markers and
+  uv.lock forks were resolved for the machine running the scan: with `--python 3.11`,
+  private-gpt's uv.lock gave onnxruntime 1.20.1 (its Windows fork) on Windows and 1.25.1
+  elsewhere, and on ARM machines unsloth's declarations for Windows on ARM narrowed the
+  ranges. Markers are now tried for Linux (x86-64), Windows (x64) and macOS (Apple silicon)
+  alike, and of the forks that match, the newest counts.
+- A poetry.lock or pdm.lock that locks a package once per Python range is read as uv.lock
+  is: the version for the project's Python (`--python` or `.python-version`). With
+  python-poetry's own lock and Python 3.12, rapidfuzz was 3.14.6, the version for Python 3.15
+  and later, because the last entry won.
+- The project itself, installed for its tests from a Pipfile (Pipenv names it after a hash:
+  `e1839a8 = {path = ".", editable = true}`), is no longer reported as a dependency that
+  could not be checked.
+- The GitHub Action runs `actions/cache` pinned to a commit (v6.1.0), as it already did
+  `astral-sh/setup-uv`: moving the `v6` tag can no longer change the code that runs in your
+  workflow.
+
 ## 0.3.1 - 2026-09-27
 
 - The CLI no longer crashes on its own output. On Windows, stdout or stderr sent to NUL (`> NUL`,

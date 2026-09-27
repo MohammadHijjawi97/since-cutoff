@@ -44,13 +44,14 @@ welcome, and first-time contributors are very welcome.
 git clone https://github.com/MohammadHijjawi97/since-cutoff
 cd since-cutoff
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e . pytest ruff mypy
+pip install -e . pytest pytest-cov hypothesis ruff mypy
 ```
 
 ## Checks
 
 ```bash
 pytest -m "not network"     # fast, offline; uses a fake PyPI and a scripted model
+pytest -m "not network" --cov=since_cutoff --cov-branch   # CI fails below its coverage floor
 pytest -m network           # talks to PyPI
 ruff check src tests && ruff format --check src tests
 mypy
@@ -60,7 +61,25 @@ The offline suite needs no API keys: `tests/conftest.py` defines a toy library w
 and a scripted model that "knows" only the old one, so the whole pipeline (scan, probe, notes,
 held-out verification) runs end to end in CI. It never reads your own coding-agent settings
 either: an autouse fixture clears the model variables (`SINCE_CUTOFF_MODEL`, `CLAUDECODE`,
-`ANTHROPIC_MODEL`, ...) and gives each test an empty home folder.
+`ANTHROPIC_MODEL`, ...) and gives each test an empty home folder. Code that talks to PyPI or a
+model API is tested against `http_server`, an HTTP server on 127.0.0.1 with scripted replies
+(errors, slow or cut-off answers, hostile archives), so no test needs the internet.
+
+`test_properties.py` and `test_parser_fuzz.py` are property tests
+([Hypothesis](https://hypothesis.readthedocs.io)): they state a rule, such as "unapply gives
+back the file byte for byte" or "a lockfile is read or refused with a clear error, never a
+traceback", and check it on generated inputs. Each run tries 50 new ones; CI tries the same
+50 every time. To hunt for more, run them with `HYPOTHESIS_PROFILE=thorough` (2000 each).
+When one fails, it prints the smallest input it found: fix the bug, and pin that input with
+`@example(...)` on the test.
+
+`test_real_lockfiles.py` holds golden tests on real projects: each folder in
+`tests/fixtures/lockfiles` is an excerpt of one project's dependency files at a fixed commit
+(its `SOURCE.md` names the repository, the commit and the license, and says what was kept),
+and the test pins every dependency the scan reads from it. To add a project, fetch its files
+at a commit (not a branch), cut them down to what makes the project hard to read (keeping each
+kept line as it is), write the `SOURCE.md`, and add its table to `GOLDEN`. The fixtures ship in
+the sdist, so keep them small (the test allows 300 KB for all of them).
 
 Run one file or one test while you work: `pytest tests/test_project.py -k conda -q`.
 CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so keep paths
@@ -77,7 +96,8 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
 
 ## Good first contributions
 
-- **More lockfile formats** (`project.py`), with a test in `tests/test_project.py`.
+- **More lockfile formats** (`project.py`), with a test in `tests/test_project.py`, or a
+  real project that since-cutoff reads wrong, as a fixture in `tests/fixtures/lockfiles`.
 - **More providers** (`providers/`): anything that turns a system + user prompt into text.
   Providers must call the model **without tools, retrieval or project context**.
 - **False positives or negatives in the API diff**: please include the package, both versions

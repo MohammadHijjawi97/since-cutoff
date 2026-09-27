@@ -319,6 +319,90 @@ def test_action_saves_its_cache_before_it_fails() -> None:
     assert 'exit "$SC_STATUS"' in report and "::error title=since-cutoff::" in report
 
 
+# ------------------------------------------ workflows (OpenSSF Scorecard checks)
+_USES = re.compile(r"^ *(?:- )?uses: ([^@\s]+)@?(\S*)(.*)$", re.M)  # action, ref, comment
+
+
+def _workflows() -> dict[str, str]:
+    folder = ROOT / ".github" / "workflows"
+    if not folder.is_dir():
+        pytest.skip(".github/workflows is not part of this checkout")
+    return {path.name: path.read_text(encoding="utf-8") for path in sorted(folder.glob("*.yml"))}
+
+
+def _jobs(workflow: str) -> dict[str, str]:
+    """Each job of a workflow, by name, with its lines."""
+    parts = re.split(r"^  ([\w-]+):\n", workflow.split("\njobs:\n", 1)[1], flags=re.M)
+    return dict(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def test_every_action_is_pinned_to_a_commit() -> None:
+    # A tag or a branch can be moved to other code, a commit cannot (Pinned-Dependencies). The
+    # composite action matters most: it runs in other people's jobs, with their token.
+    files = {**_workflows(), "action.yml": _read("action.yml")}
+    pins: dict[str, set[str]] = {}
+    for name, text in files.items():
+        for action, ref, comment in _USES.findall(text):
+            if action.startswith("./"):
+                continue  # this checkout's own action
+            assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{name}: {action}@{ref} is not a commit"
+            # The release it is, which Dependabot updates along with the commit.
+            assert re.fullmatch(r" +# v\d+\.\d+\.\d+", comment), f"{name}: {action} has no version"
+            pins.setdefault("/".join(action.split("/")[:2]), set()).add(ref + comment.strip())
+    assert {"actions/checkout", "actions/cache", "pypa/gh-action-pypi-publish"} <= pins.keys()
+    # One commit per repository everywhere: no file is left behind by an update.
+    assert {repo: len(refs) for repo, refs in pins.items()} == dict.fromkeys(pins, 1)
+
+
+def test_tokens_are_read_only_unless_a_job_needs_to_write() -> None:
+    # Token-Permissions: a workflow's default token only reads, and the few jobs that write say so.
+    writes: set[tuple[str, str, str]] = set()
+    for name, text in _workflows().items():
+        top = re.search(r"^permissions:(.*)\n((?:  .*\n)*)", text, re.M)
+        assert top is not None, f"{name} leaves its token's permissions to the repository settings"
+        assert "write" not in top.group(0), f"{name}: {top.group(0)}"
+        for job, lines in _jobs(text).items():
+            scopes = re.findall(r"^ +([\w-]+): write$", lines, re.M)
+            writes |= {(name, job, scope) for scope in scopes}
+    assert writes == {
+        ("release.yml", "publish", "id-token"),  # PyPI trusted publishing
+        ("release.yml", "mcp-registry", "id-token"),  # mcp-publisher login github-oidc
+        ("release.yml", "github-release", "contents"),  # gh release create
+        ("scorecard.yml", "analysis", "id-token"),  # publish_results
+        ("scorecard.yml", "analysis", "security-events"),  # the SARIF upload to code scanning
+    }
+    # The pending publisher on pypi.org trusts release.yml in the `pypi` environment only.
+    publish = _jobs(_workflows()["release.yml"])["publish"]
+    assert "\n    environment: pypi\n" in publish
+    assert "uses: pypa/gh-action-pypi-publish@" in publish
+
+
+def test_scorecard_can_publish_its_results() -> None:
+    # The Scorecard API refuses the results (and the badge goes stale) unless the workflow has
+    # no env, defaults or write permissions of its own, and the job runs approved actions only,
+    # no `run` step, no env, defaults, container or services, on an Ubuntu runner.
+    workflow = _workflows()["scorecard.yml"]
+    assert re.findall(r"^([\w-]+):", workflow, re.M) == ["name", "on", "permissions", "jobs"]
+    assert "\npermissions: read-all\n" in workflow
+    # Branch-Protection is checked when a rule changes, and Maintained at least once a week.
+    assert re.search(r"^  push:\n    branches: \[main\]\n", workflow, re.M)
+    assert "\n  branch_protection_rule:\n" in workflow and "\n  schedule:\n    - cron: " in workflow
+    [job] = _jobs(workflow).values()
+    assert "\n    runs-on: ubuntu-latest\n" in job
+    assert not re.search(r"^    (env|defaults|container|services):", job, re.M)
+    assert not re.search(r"^ +(- )?run:", job, re.M)
+    actions = {action for action, _, _ in _USES.findall(job)}
+    assert "ossf/scorecard-action" in actions
+    assert actions <= {
+        "actions/checkout",
+        "actions/upload-artifact",
+        "github/codeql-action/upload-sarif",
+        "ossf/scorecard-action",
+        "step-security/harden-runner",
+    }
+    assert "\n          publish_results: true\n" in job
+
+
 @pytest.mark.parametrize(
     ("path", "hit"),
     [
