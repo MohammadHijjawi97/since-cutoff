@@ -183,11 +183,19 @@ def render_block(notes: Iterable[Note], *, model: str, cutoff: date, version_sou
     for (pkg, version), items in sorted(by_pkg.items()):
         lines += ["", f"**{pkg} {version}**"]
         seen: set[str] = set()
+        seen_changes: set[tuple[str, str, str, str | None]] = set()
         for n in items:
             bullet = n.bullet.replace("<!--", "").replace("-->", "")
             bullet = " ".join(bullet.split())
             if not bullet or bullet in seen:
                 continue
+            c = n.change
+            change_key = (c.package, c.kind, c.name, c.parameter)
+            if change_key in seen_changes:
+                # A parameter change is the same concept whether it hits the module
+                # function or the class method that mirrors it; keep one bullet.
+                continue
+            seen_changes.add(change_key)
             seen.add(bullet)
             lines.append(f"- {bullet}")
     lines.append(BLOCK_END)
