@@ -390,7 +390,7 @@ jobs:
 | `step-summary` | `true` | add the Markdown summary to the job summary |
 | `cache` | `true` | keep PyPI metadata, package sources and API diffs between runs (also when `fail-on-changes` fails the job) |
 | `args` | | more `since-cutoff scan` arguments, e.g. `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.3.1` | the since-cutoff release to run, or `latest` |
+| `since-cutoff-version` | `0.3.2` | the since-cutoff release to run, or `latest` |
 
 Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `deprecations`,
 `markdown` (the summary's path, for example to post it as a pull request comment) and `report`
@@ -402,7 +402,7 @@ Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `de
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.3.1
+    rev: v0.3.2
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # add --fail-on-changes to block the commit

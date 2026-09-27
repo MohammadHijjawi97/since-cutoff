@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 - 2026-09-27
 
 - A wheel whose METADATA, top_level.txt or .pth file expands to gigabytes no longer fills the
   memory: as with the sources, only the start of each file is read (they were decompressed

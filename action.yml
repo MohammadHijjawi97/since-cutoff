@@ -52,7 +52,7 @@ inputs:
       The since-cutoff release to run: a version on PyPI, "latest", or "local" to build the
       action's own source (this repository's CI tests its checkout that way).
     required: false
-    default: "0.3.1"
+    default: "0.3.2"
 
 outputs:
   changed-packages:
