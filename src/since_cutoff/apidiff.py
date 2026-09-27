@@ -107,8 +107,15 @@ class APIChange:
 
     @property
     def concept_key(self) -> str:
-        """Coarser identity used to avoid probing near-duplicates (e.g. beta mirrors of an API)."""
+        """Coarser identity used to avoid probing near-duplicates (e.g. beta mirrors of an API).
+
+        For parameter changes the owner is dropped: a module function and the class method
+        that mirrors it (``hf_hub_download`` vs ``HfApi.hf_hub_download``) removing the same
+        parameter are one concept and should be probed once.
+        """
         kind = REMOVED if self.kind == MOVED else self.kind
+        if kind in (PARAM_REMOVED, PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY):
+            return f"{self.package}:{kind}:{self.name}:{self.parameter or ''}"
         owner = _OWNER_NORMALIZE.sub("", self.owner or "")
         return f"{self.package}:{kind}:{owner}.{self.name}:{self.parameter or ''}"
 

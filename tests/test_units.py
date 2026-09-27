@@ -184,6 +184,66 @@ def test_selection_dedupes_concepts():
     assert len(select({"anthropic": twins}, set(), 10)) == 1
 
 
+def _hub_twin(param, owner=None):
+    """A `param_removed` change on huggingface_hub.hf_hub_download (module fn or HfApi method)."""
+    return change(pkg="huggingface-hub", owner=owner, name="hf_hub_download", param=param)
+
+
+def test_concept_key_ignores_owner_for_parameter_changes():
+    func = _hub_twin("resume_download")
+    method = _hub_twin("resume_download", owner="HfApi")
+    assert func.concept_key == method.concept_key
+    # removed objects keep their owner: the module object and the method are different
+    a = change(kind=REMOVED, name="X", owner="mod")
+    b = change(kind=REMOVED, name="X", owner="Other")
+    assert a.concept_key != b.concept_key
+
+
+def test_selection_probes_function_method_param_twins_once():
+    picked = select(
+        {"huggingface-hub": [_hub_twin("resume_download"), _hub_twin("resume_download", "HfApi")]},
+        set(),
+        10,
+    )
+    assert len(picked) == 1
+
+
+def test_render_block_merges_param_twins_across_owners():
+    notes = [
+        Note(
+            _hub_twin("resume_download"), "module fn lost `resume_download`.", None, True, "model"
+        ),
+        Note(
+            _hub_twin("resume_download", "HfApi"),
+            "method lost `resume_download`.",
+            None,
+            True,
+            "model",
+        ),
+        Note(
+            _hub_twin("local_dir_use_symlinks"),
+            "module fn lost `local_dir_use_symlinks`.",
+            None,
+            True,
+            "model",
+        ),
+        Note(
+            _hub_twin("local_dir_use_symlinks", "HfApi"),
+            "method lost `local_dir_use_symlinks`.",
+            None,
+            True,
+            "model",
+        ),
+    ]
+    block = render_block(
+        notes, model="m", cutoff=__import__("datetime").date(2025, 1, 1), version_source="uv.lock"
+    )
+    bullets = [ln for ln in block.splitlines() if ln.startswith("- ")]
+    # two parameters, not four: the function/method twins collapse to one bullet each
+    assert len(bullets) == 2
+    assert "resume_download" in block and "local_dir_use_symlinks" in block
+
+
 # ---------------------------------------------------------------- stats/cache
 def test_wilson_interval_bounds():
     lo, hi = wilson_interval(0, 10)
