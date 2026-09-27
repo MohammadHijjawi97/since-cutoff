@@ -5,13 +5,13 @@
     "url": "https://github.com/MohammadHijjawi97"
   },
   "metadata": {
-    "description": "Measure and fix what your coding model gets wrong about your exact Python dependency versions."
+    "description": "Which dependency APIs your code uses changed after your coding model's training cutoff, with short AGENTS.md notes from the API diff."
   },
   "plugins": [
     {
       "name": "since-cutoff",
       "source": "./",
-      "description": "Find which of your exact dependency versions your coding model writes wrong, and fix it with a small, verified AGENTS.md note.",
+      "description": "Find which dependency APIs your code uses changed after your coding model's training cutoff, and write short AGENTS.md notes from the API diff, each with its source.",
       "version": "0.3.2",
       "author": {
         "name": "Mohammad Hijjawi",

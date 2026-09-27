@@ -1,7 +1,7 @@
 {
   "name": "since-cutoff",
   "version": "0.3.2",
-  "description": "Find which of your exact dependency versions your coding model writes wrong, and fix it with a small, verified AGENTS.md note.",
+  "description": "Find which dependency APIs your code uses changed after your coding model's training cutoff, and write short AGENTS.md notes from the API diff, each with its source.",
   "author": {
     "name": "Mohammad Hijjawi",
     "url": "https://github.com/MohammadHijjawi97"

@@ -194,10 +194,10 @@ FLOW = {
             "Scan, with no model calls: read the lockfile, find each dependency's release at the "
             "model's training cutoff, and diff the public API statically with griffe. Probe: write "
             "short tasks that need a changed API, let the model answer with no tools and no docs, "
-            "and type-check the answer with basedpyright against both versions. Fix and verify: "
-            "keep a model-written note only if its example type-checks, otherwise state the change "
-            "from the API diff; then compare held-out tasks without and with the notes, and write "
-            "the block into AGENTS.md with --apply."
+            "and type-check the answer with basedpyright against both versions. Write and test "
+            "notes: keep a model-written note only if its example type-checks, otherwise state the "
+            "change from the API diff; then compare held-out tasks without and with the notes, and "
+            "write the block into AGENTS.md with --apply."
         ),
         stages=[
             Stage(
@@ -219,7 +219,7 @@ FLOW = {
                 ],
             ),
             Stage(
-                "3  Fix and verify",
+                "3  Write and test notes",
                 "the type checker decides",
                 [
                     "Notes: type-checked, or from the diff",
@@ -236,7 +236,7 @@ FLOW = {
             "dependencia en la fecha de corte de entrenamiento del modelo y se compara la API "
             "pública de forma estática con griffe. Sondeo: tareas breves que requieren una API "
             "modificada, el modelo responde sin herramientas ni documentación y basedpyright "
-            "comprueba la respuesta con ambas versiones. Corrección y verificación: una nota "
+            "comprueba la respuesta con ambas versiones. Escribir y probar las notas: una nota "
             "escrita por el modelo solo se conserva si su ejemplo pasa la verificación de tipos; "
             "si no, se usa una descripción del cambio tomada del diff de la API. Después se "
             "comparan las tareas reservadas sin las notas y con ellas, y --apply escribe el bloque "
@@ -262,10 +262,10 @@ FLOW = {
                 ],
             ),
             Stage(
-                "3  Corrección y verificación",
+                "3  Escribir y probar las notas",
                 "decide el verificador de tipos",
                 [
-                    "Notas verificadas, o tomadas del diff",
+                    "Notas: tipos comprobados, o del diff",
                     "Tareas reservadas: sin las notas y con ellas",
                     "--apply escribe un bloque en AGENTS.md",
                 ],
@@ -279,8 +279,8 @@ FLOW = {
             "since-cutoff trouve la version de chaque dépendance à la date limite d'entraînement du "
             "modèle et compare l'API publique de façon statique avec griffe. Sonde : de courtes "
             "tâches qui nécessitent une API modifiée, le modèle répond sans outils ni "
-            "documentation, et basedpyright vérifie la réponse avec les deux versions. Correction "
-            "et vérification : une note rédigée par le modèle n'est conservée que si son exemple "
+            "documentation, et basedpyright vérifie la réponse avec les deux versions. Rédaction "
+            "et test des notes : une note rédigée par le modèle n'est conservée que si son exemple "
             "passe la vérification de types ; sinon, un constat du changement tiré du diff d'API "
             "la remplace. Le modèle répond ensuite aux tâches réservées sans puis avec les notes, "
             "et --apply écrit le bloc dans AGENTS.md."
@@ -307,10 +307,10 @@ FLOW = {
                 ],
             ),
             Stage(
-                "3  Correction et vérification",
+                "3  Rédaction et test des notes",
                 "le vérificateur de types tranche",
                 [
-                    f"Notes{NBSP}: vérifiées, ou tirées du diff",
+                    f"Notes{NBSP}: typage vérifié, ou tirées du diff",
                     f"Tâches réservées{NBSP}: sans puis avec les notes",
                     "--apply écrit un bloc dans AGENTS.md",
                 ],

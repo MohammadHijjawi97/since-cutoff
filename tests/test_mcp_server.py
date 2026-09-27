@@ -230,7 +230,7 @@ def test_api_changes_with_explicit_versions(tools: Tools) -> None:
 def test_api_changes_for_a_package_newer_than_the_model(tools: Tools) -> None:
     out = tools.api_changes("toylib", cutoff="2024-01")
     assert "no release on or before the cutoff" in out
-    assert "Its whole API is newer than your training data" in out
+    assert "Its whole API was released after your reported training cutoff" in out
 
 
 def test_api_changes_errors_are_clear(tools: Tools) -> None:
@@ -263,7 +263,8 @@ def test_project_changes_puts_what_the_code_uses_first(tools: Tools, tmp_path: P
     assert second.endswith("[your code uses `send`]")
 
     one = tools.project_changes(str(tmp_path / "app"), cutoff="2025-07", limit_per_package=1)
-    listed = [line for line in one.splitlines() if line.startswith("- `")]
+    section = one.split("## toylib 1.0")[1]  # after "Your code uses these changed APIs"
+    listed = [line for line in section.splitlines() if line.startswith("- `")]
     assert len(listed) == 1 and "temperature" in listed[0]  # the change the code hits
     assert 'more: api_changes("toylib", from_version="1.0", to_version="2.0"' in one
 

@@ -9,12 +9,21 @@ import textwrap
 from datetime import date
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
-from since_cutoff.apidiff import DEPRECATED, PARAM_REMOVED, REMOVED, APIChange
+from since_cutoff.apidiff import (
+    DEPRECATED,
+    HINT_PARAM_DOC,
+    HINT_WARNING,
+    PARAM_REMOVED,
+    REMOVED,
+    APIChange,
+    diff_sources,
+)
 from since_cutoff.cache import DiskCache
 from since_cutoff.engine import CHANGED, KNOWN, Engine, ModelTarget, ScanResult, Settings
-from since_cutoff.mcp_server import Tools
+from since_cutoff.mcp_server import Tools, _matching, _sections, change_line
 from since_cutoff.models import ModelRegistry
 from since_cutoff.project import FileUse, load_project, scan_file
 from since_cutoff.pypi import PyPI, Release, SourceTree
@@ -25,7 +34,14 @@ from since_cutoff.report import (
     render_scan_markdown,
     to_json,
 )
-from since_cutoff.selection import used_names
+from since_cutoff.selection import (
+    NAME_MATCH,
+    PATH_MATCH,
+    collapse,
+    match,
+    used_names,
+    uses_text,
+)
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
 
 CUTOFF = date(2025, 7, 31)
@@ -445,3 +461,187 @@ def test_deprecated_changes_can_be_marked_too() -> None:
     files = code("import toylib\nclient = toylib.Client()\nclient.close()\n")
     close = APIChange("toylib", "1", "2", DEPRECATED, "toylib.Client.close", "close", "Client")
     assert used_names(close, files) == ("close",)
+
+
+# ------------------------------------------------ re-exports and every path (0.4)
+# ``tp/__init__.py`` re-exports what ``tp/dl.py`` defines; 2.0 drops ``fetch(resume=)`` and
+# ``Client.send(retries=)``. The diff records them at tp.dl, where they are defined.
+TP_INIT = 'from .dl import Client, fetch\n\n__all__ = ["Client", "fetch"]\n'
+TP_V1 = "def fetch(url, resume=False):\n    pass\n\n\nclass Client:\n"
+TP_V1 += "    def send(self, x, retries=0):\n        pass\n"
+TP_V2 = "def fetch(url):\n    pass\n\n\nclass Client:\n    def send(self, x):\n        pass\n"
+
+
+def _tp_changes(tmp_path: Path) -> dict[str, APIChange]:
+    old = write_tree(tmp_path / "tp-1", {"tp/__init__.py": TP_INIT, "tp/dl.py": TP_V1})
+    new = write_tree(tmp_path / "tp-2", {"tp/__init__.py": TP_INIT, "tp/dl.py": TP_V2})
+    raw = diff_sources("tp", "1", old, "2", new, ["tp"])
+    changes = {c.name: c for c in map(APIChange.from_dict, raw)}
+    assert {(c.path, c.parameter) for c in changes.values()} == {
+        ("tp.dl.fetch", "resume"),
+        ("tp.dl.Client.send", "retries"),
+    }
+    return changes
+
+
+@pytest.mark.parametrize(
+    ("text", "name", "used"),
+    [
+        ("from tp import fetch\nfetch('u', resume=True)\n", "fetch", ("fetch", "resume")),
+        ("import tp\ntp.fetch('u', resume=True)\n", "fetch", ("fetch", "resume")),
+        ("from tp.dl import fetch\nfetch('u', resume=True)\n", "fetch", ("fetch", "resume")),
+        ("from tp import Client\nClient().send(1, retries=2)\n", "send", ("send", "retries")),
+        ("from tp.dl import Client\nClient().send(1, retries=2)\n", "send", ("send", "retries")),
+        ("import tp\nc = tp.Client()\nc.send(1)\n", "send", ("send",)),
+    ],
+)
+def test_names_a_package_re_exports_are_used_names(tmp_path: Path, text, name, used) -> None:
+    # 0.3.1 found only the last two forms: the change's own path, not the re-export.
+    changes = _tp_changes(tmp_path)
+    assert used_names(changes[name], code(text)) == used
+    assert match(changes[name], code(text)) == PATH_MATCH
+    other = changes["send" if name == "fetch" else "fetch"]
+    assert used_names(other, code(text)) == ()
+
+
+def test_a_collapsed_change_is_matched_under_every_path(tmp_path: Path) -> None:
+    # One removed Thing under 8 paths: collapse keeps 5 of them to show, and matching the
+    # project's code still sees all 8 (0.3.1 missed `pkg.m7.Thing`).
+    old = {"pkg/__init__.py": ""}
+    old |= {f"pkg/m{i}.py": "class Thing:\n    pass\n" for i in range(8)}
+    new = {"pkg/__init__.py": ""} | {f"pkg/m{i}.py": "" for i in range(8)}
+    raw = diff_sources(
+        "pkg", "1", write_tree(tmp_path / "a", old), "2", write_tree(tmp_path / "b", new), ["pkg"]
+    )
+    changes = [APIChange.from_dict(c) for c in raw]
+    (thing,) = collapse(changes)
+    assert (thing.path, thing.occurrences, len(thing.also)) == ("pkg.m0.Thing", 8, 5)
+    assert "pkg.m7.Thing" not in thing.also
+    files = code("from pkg.m7 import Thing\nThing()\n")
+    assert used_names(thing, files) == ("Thing",)
+    assert uses_text(thing, files) == "`Thing`"
+    # Changes without import paths (made by hand): each change collapsed is still matched.
+    legacy = [change(f"pkg.m{i}.Thing") for i in range(8)]
+    (thing,) = collapse(legacy)
+    assert thing.import_paths is None and "pkg.m7.Thing" not in thing.also
+    assert (used_names(thing, files), match(thing, files)) == (("Thing",), PATH_MATCH)
+    assert "_merged" not in thing.to_dict()
+
+
+def test_a_collapsed_change_is_matched_as_each_change_it_merged() -> None:
+    # The same parameter removed from `Messages.create` and its async mirror in another
+    # module: one concept, shown once under the async one (its path sorts first), and
+    # `client.messages.create(temperature=...)` is the sync one's use.
+    mirror = change("anthropic.a.AsyncMessages.create", "AsyncMessages", "temperature")
+    sync = change("anthropic.b.Messages.create", "Messages", "temperature")
+    (create,) = collapse([sync, mirror])
+    assert (create.owner, create.also) == ("AsyncMessages", ["anthropic.b.Messages.create"])
+    files = code("import anthropic\nclient.messages.create(model=m, temperature=0.2)\n")
+    assert used_names(create, files) == ("create", "temperature")
+    assert used_names(mirror, files) == ()  # 0.3.1 matched the collapsed change as this one
+
+
+def test_a_constructor_counts_under_each_name_of_its_class() -> None:
+    # A change merged with its async twin's (apidiff groups them) and a class re-exported
+    # under another name: the call names the class as the file imported it.
+    init = change("toylib.Client.__init__", "Client", "timeout")
+    init.also = ["toylib.AsyncClient.__init__"]
+    init.import_paths = [
+        "toylib.AsyncClient.__init__",
+        "toylib.Client.__init__",
+        "toylib.HubClient.__init__",
+    ]
+    for cls in ("Client", "AsyncClient", "HubClient"):
+        files = code(f"from toylib import {cls}\n{cls}(timeout=5)\n")
+        assert used_names(init, files) == (cls, "timeout"), cls
+    # The class not imported, named but not called, or another class called: no use of it.
+    assert used_names(init, code("import toylib\nClient(timeout=5)\n")) == ()
+    assert used_names(init, code("from toylib import Client\nc: Client = make()\n")) == ()
+    assert used_names(init, code("from toylib import Client\nfrom x import Other\nOther()\n")) == ()
+
+
+def test_without_import_paths_the_package_and_name_count(tmp_path: Path) -> None:
+    # A change from a diff cached before DIFF_SCHEMA 12 (no import paths): the same import
+    # root and the same last name count too, and the mark says it matched by name only.
+    fetch = change("tp.dl.fetch", parameter="resume")
+    assert fetch.import_paths is None
+    files = code("from tp import fetch\nfetch('u', resume=True)\n")
+    assert used_names(fetch, files) == ("fetch", "resume")
+    assert match(fetch, files) == NAME_MATCH
+    assert uses_text(fetch, files) == "`fetch` and `resume`, matched by name"
+    send = change("tp.dl.Client.send", "Client", "retries")
+    assert used_names(send, code("from tp import Client\nClient().send(1, retries=2)\n")) == (
+        "send",
+        "retries",
+    )
+    # Another package's name is never taken for it: `asdict` of dataclasses is not copier's.
+    asdict = code("import copier\nfrom dataclasses import asdict\nasdict(settings)\n")
+    assert used_names(change("copier.asdict"), asdict) == ()
+    assert used_names(change("copier.utils.asdict"), asdict) == ()
+    # With import paths from the diff, a path must match: the name alone is not enough.
+    fetch.import_paths = ["tp.dl.fetch"]
+    assert (used_names(fetch, files), match(fetch, files), uses_text(fetch, files)) == (
+        (),
+        None,
+        None,
+    )
+
+
+def test_a_lazy_init_like_huggingface_hubs_is_resolved(tmp_path: Path) -> None:
+    # `from huggingface_hub import hf_hub_download` with resume_download=: hub's __init__
+    # lists the name in __all__, imports it under `if TYPE_CHECKING:` and serves it from a
+    # module __getattr__. The change is recorded at file_download, where it is defined.
+    init = (
+        "from typing import TYPE_CHECKING\n\n"
+        '__all__ = ["hf_hub_download"]\n\n\n'
+        "def __getattr__(name):\n"
+        "    from . import file_download\n\n"
+        "    return getattr(file_download, name)\n\n\n"
+        "if TYPE_CHECKING:  # pragma: no cover\n"
+        "    from .file_download import hf_hub_download\n"
+    )
+    old = {
+        "hub/__init__.py": init,
+        "hub/file_download.py": "def hf_hub_download(repo_id, filename, resume_download=None):\n"
+        "    pass\n",
+    }
+    new = {
+        "hub/__init__.py": init,
+        "hub/file_download.py": "def hf_hub_download(repo_id, filename):\n    pass\n",
+    }
+    a, b = write_tree(tmp_path / "a", old), write_tree(tmp_path / "b", new)
+    (removed,) = [APIChange.from_dict(c) for c in diff_sources("hub", "1", a, "2", b, ["hub"])]
+    assert removed.path == "hub.file_download.hf_hub_download"
+    files = code(
+        "from hub import hf_hub_download\n"
+        "hf_hub_download('gpt2', 'config.json', resume_download=True)\n"
+    )
+    assert used_names(removed, files) == ("hf_hub_download", "resume_download")
+    assert match(removed, files) == PATH_MATCH
+
+
+def test_a_name_match_is_labelled_in_every_report(tmp_path: Path) -> None:
+    legacy = change("toylib.helpers.fetch", parameter="retries")
+    files = code("from toylib import fetch\nfetch(url, retries=2)\n")
+    assert "[your code uses `fetch` and `retries`, matched by name]" in "\n".join(
+        _sections([legacy], files)
+    )
+
+
+def test_mcp_finds_a_change_under_any_of_its_paths() -> None:
+    # api_changes(symbol=...) looks in import_paths too, so a class past the five that
+    # `also` keeps is found (a method removed from a base class that eight classes inherit).
+    legacy = change("pkg.base.Base.legacy", "Base")
+    legacy.also = [f"pkg.models.M{i}.legacy" for i in range(5)]
+    assert _matching([legacy], "M7.legacy") == ([legacy], True)  # by `legacy` alone: loose
+    legacy.import_paths = [legacy.path, *(f"pkg.models.M{i}.legacy" for i in range(8))]
+    assert _matching([legacy], "M7.legacy") == ([legacy], False)
+
+
+def test_mcp_says_where_a_hint_comes_from() -> None:
+    removed = change("pkg.fetch", parameter="resume")
+    removed.hint = "`resume` is deprecated. Use `force=True` instead."
+    removed.hint_source = HINT_WARNING
+    assert "the old version warned: `resume` is deprecated" in change_line(removed)
+    removed.hint_source = HINT_PARAM_DOC
+    assert "the old docs said: `resume` is deprecated" in change_line(removed)

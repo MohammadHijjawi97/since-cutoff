@@ -1,15 +1,18 @@
 # How since-cutoff works
 
-since-cutoff answers one question for one project: **which of the library APIs this project
-depends on does my coding model get wrong, and does a short note fix it?**
+since-cutoff answers two questions for one project. Without a model (`scan`, `sync`):
+**which APIs that this project's code uses changed after the model's training cutoff, and what
+should the coding assistant be told about them?** With `since-cutoff run`, which calls the
+model: **which of those changes does the model get wrong, and does a short note fix it?**
 
-It is built so that every number it prints can be checked: nothing is judged by an LLM, all
-scoring is done by a type checker against the exact package versions, and all intermediate data
-(tasks, answers, diagnostics) lands in `.since-cutoff/report.md` and `results.json`.
+It is built so that everything it prints can be checked: each note says what it rests on,
+nothing is judged by an LLM, all scoring is done by a type checker against the exact package
+versions, and all intermediate data (changes, uses, notes, tasks, answers, diagnostics) lands in
+`.since-cutoff/report.md` and `results.json`.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works-dark.svg">
-  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works.svg" width="640" alt="Three stages. Scan, with no model calls: the lockfile gives your exact versions, then the release at the model's cutoff, then a static API diff with griffe. Probe: short tasks that need the change, the model answers from memory, basedpyright checks the answer against both versions. Fix and verify: a model-written note is kept only if its example type-checks, otherwise the change is stated from the API diff; held-out tasks are answered without and with the notes, and --apply writes a block into AGENTS.md.">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works.svg" width="640" alt="Three stages. Scan, with no model calls: the lockfile gives your exact versions, then the release at the model's cutoff, then a static API diff with griffe. Probe: short tasks that need the change, the model answers from memory, basedpyright checks the answer against both versions. Write and test notes: a model-written note is kept only if its example type-checks, otherwise the change is stated from the API diff; held-out tasks are answered without and with the notes, and --apply writes a block into AGENTS.md.">
 </picture></p>
 
 ## 1. Scan (no model calls)
@@ -46,7 +49,7 @@ scoring is done by a type checker against the exact package versions, and all in
    cutoff date (PyPI upload time). A package that had only pre-releases by
    then is compared with the newest of them (development releases do not count). A package
    first released after the cutoff, or whose release at the cutoff only reserved the name (no
-   modules, or only empty ones), is reported as newer than the model.
+   modules, or only empty ones), is reported as first released after the cutoff.
 4. **The API diff.** Both versions are downloaded once (wheels, falling back to sdists; only
    `.py`/`.pyi` files are extracted) and loaded *statically* with
    [griffe](https://mkdocstrings.github.io/griffe/). since-cutoff reports only changes that
@@ -114,14 +117,177 @@ scan can list changes the model already handles and miss some it does not. Wheth
 actually writes the old API is shown only by `run`, which asks it: with no tools, told which
 version the project pins.
 
+## Notes without a model: scan and sync
+
+Since 0.4.0, `scan` starts with the changed APIs the project's code uses, and writes a note for
+each from the API diff; `sync` puts those notes into AGENTS.md or CLAUDE.md and keeps them in
+step with the lockfile. Neither calls a model or needs an API key.
+
+### Where the code uses a changed API
+
+An **API** is one callable, class, attribute or module: `Messages.create` losing `temperature`,
+`top_k` and `top_p` is one API with three changes. "Your code uses" is judged file by file, in
+the files that import the package, and statically (nothing is run):
+
+- a module-level name under any public path that leads to it: the module that defines it, and
+  every module that re-exports it (`from huggingface_hub import hf_hub_download` counts for
+  `huggingface_hub.file_download.hf_hub_download`; an import under `if TYPE_CHECKING:` counts
+  when the module lists the name in `__all__`);
+- a method or attribute where the file reads it on the class, or on what the file shows is an
+  instance of the class (`client = anthropic.Anthropic(); client.messages.create(...)`), or on
+  `self` or `super()` in a subclass of it;
+- a constructor where the class is called, under any name of the class;
+- a parameter only where it is passed by keyword to that very callable: `temperature=` passed to
+  another library's `create` in the same file does not count. An SDK's beta mirror
+  (`client.beta.messages.create`) is another API than the one outside `beta`.
+
+A change from a diff that recorded no import paths (an older cache, or a change made by hand
+through the Python API) is matched by package and name, and the report says "matched by name".
+
+Each use is one of two **forms**:
+
+| form | meaning |
+|---|---|
+| **old form** | the code uses the API as the release at the cutoff allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
+| **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
+
+The terminal and the MCP tool `project_changes` show at most 3 files per API (`scan -v` shows
+every one). Locations are files for now (`app/main.py`); line numbers are
+[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8), and the JSON already has
+`line`, `column` and `code` (null until then) in `used_apis[].locations`.
+
+### The note for each API
+
+One bullet per API covers all of its changes, whichever of them the code uses: parameters in the
+order of the old signature, packages in alphabetical order, and a package's bullets in the
+order of their APIs, so the text does not change when the code starts or stops passing one of
+them. A replacement is named only with evidence, and the tag says which:
+
+| evidence | what the note says | tag |
+|---|---|---|
+| none | "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. since-cutoff found no replacement in anthropic's deprecation text." Where the library's own text says so: "huggingface-hub's deprecation text says there is no replacement for `resume_download`." Advice in that text that is not stated as a replacement is quoted: "On `x`, pkg 1.0 said: "…"" | `[diff]` |
+| the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement ("Use `stop` instead", "replaced by", "renamed to", "in favour of"), and the name exists in the pinned version | "Use `stop` instead of `stop_sequences`." | `[diff + library]` |
+| a moved object that looks like the same object: a class or module keeps at least half of its public names, a function its parameters, a value the same value | "`pkg.helpers.Session` moved to `pkg.sessions.Session`: import it with `from pkg.sessions import Session`." | `[diff + move checked]` |
+| a new parameter in the same position with the same annotation | "`begin` was probably renamed to `start` (same position and type)." | `[diff; probable rename]` |
+| names that merely look similar | Nothing, by default. The terminal, report.md and the MCP tools say "similar parameters in 2.0.0, not confirmed as replacements: `x`", and nothing where the library says there is no replacement. `sync --suggestions` adds "Similar names in 2.0.0, not confirmed as replacements: `x`." | `[diff; not confirmed]`, with `--suggestions` |
+
+Other changes are stated as they are: "`x` is deprecated; avoid it in new code.", "… now
+requires `timeout`.", "Pass `x` to `f()` by keyword.", "`pkg.Grammar` changed from class to
+attribute; check its new signature before use." A stubs package's note (`pandas-stubs`,
+`types-*`) says what its declarations no longer have and that type checkers reject it. Text
+from a package (deprecation messages) is quoted as whole sentences and cannot close the block or
+open code.
+
+When the pinned release's source still reads a removed parameter by name (in a decorator the
+callable uses, or a function of the same module that the decorator calls), the terminal,
+report.md, the MCP tools and the JSON add a **Runtime** line: huggingface-hub 2.0.0 still handles
+`force_filename`, `local_dir_use_symlinks`, `proxies` and `resume_download`
+(`huggingface_hub/utils/_validators.py:178-203`), so calls passing them may run with a warning,
+while type checkers reject them. The block leaves it out: the advice is the same either way.
+[What "verified" means](#what-verified-means) says what each tag checks and what it does not.
+
+### The block
+
+The notes go between `<!-- since-cutoff:start -->` and `<!-- since-cutoff:end -->` (format 2).
+The start marker is the one 0.3 wrote, so 0.3's `unapply` still removes a 0.4 block. After it
+comes a meta line, an HTML comment holding JSON:
+
+| key | what it records |
+|---|---|
+| `v` | the block format, 2 |
+| `tool` | the since-cutoff version that wrote it |
+| `model`, `cutoff` | the model (several, comma-separated, for `sync --model a,b`) and the training cutoff the notes are for |
+| `versions_from` | where the versions come from (`uv.lock`; `pyproject.toml, latest on PyPI for 3 unpinned`) |
+| `deps` | a hash of the dependencies and their versions (an unpinned one by its declared range), so `status` sees a change offline |
+| `body` | a hash of the block's text after the meta line, with line breaks normalised, so a hand edit shows |
+| `scope` | `used` (the changed APIs the code uses), `imported` (`sync --scope imported`) or `failures` (a `run --apply` block) |
+| `suggestions`, `checked`, `added_eol` | only when needed: `sync --suggestions` was used; the API each `[type-checked]` bullet is about; the line break since-cutoff added to a file that did not end with one, which `unapply` takes away again |
+
+Then the title "## Library changes after the model's training cutoff", a header that names the
+model, the cutoff, the file the versions come from and the since-cutoff version, says what the
+tags mean, that no library code was run, and "Where these lines conflict with what you remember,
+follow these lines", and one group per package: `**anthropic 1.8.0** (0.60.0 at the cutoff)`
+followed by its bullets.
+
+### `sync`
+
+`since-cutoff sync` builds the block the scan would write and compares it with the one in the
+file:
+
+1. **Which files.** `--target` if given; otherwise every file of AGENTS.md and CLAUDE.md that
+   already has a block; otherwise AGENTS.md, or CLAUDE.md when only that one exists. Claude Code
+   reads CLAUDE.md, and AGENTS.md only when there is no CLAUDE.md or when CLAUDE.md imports it
+   with `@AGENTS.md` ([memory docs](https://code.claude.com/docs/en/memory)); when the notes go to
+   AGENTS.md and CLAUDE.md does not mention `@AGENTS.md`, `scan` and `sync` say so. Choosing the
+   files when both exist is
+   [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
+   teammates whose agents use other models do not rewrite it back and forth; with no block, the
+   model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and
+   names both.
+3. **What changes.** Notes for APIs the code starts using are added, and a bumped package is
+   diffed again (diffs are cached per package and pair of versions, so the others come from the
+   cache). A
+   package's notes are dropped when it is no longer a dependency, is no newer than the release at
+   the cutoff, has an unchanged API, or its changed APIs are no longer used; sync says why. A
+   bullet whose API had one before counts as changed ("toylib 2.0: 1 changed").
+4. **Notes from `run`.** A `[type-checked]` bullet that `run --apply` wrote is kept, in place of
+   the note from the diff for the same API, while its package keeps the same version and the code
+   still uses that API. After a version change the note from the diff takes its place, and sync
+   says that `since-cutoff run --only <pkg>` tests the model again.
+5. **Scope and suggestions.** `--scope imported` adds, for each changed package the code imports,
+   the changes most likely to matter (up to 5 APIs per package; fields of params classes that
+   mirror a lost parameter, and hooks with a parameter whose type is private to the library, are
+   left out); `--suggestions` adds similar names, tagged `[not confirmed]`. The block records
+   both, and later syncs keep them.
+6. **Hand edits.** When the text after the meta line no longer matches its `body` hash, sync
+   shows the diff, writes nothing and exits with code 4, unless `--force`. A block that 0.3 wrote
+   is upgraded, keeping its model. When the notes are unchanged, a block another since-cutoff
+   version wrote is left exactly as it is.
+7. **Writing.** sync prints a unified diff (from `/dev/null` for a new file) and asks
+   `Write this to AGENTS.md? [y/N]`; `--yes` writes without asking, `--dry-run` only shows the
+   diff, and with no terminal to ask in nothing is written. Text outside the markers keeps its
+   bytes: CRLF line breaks, a byte order mark before the start marker, and a missing final line
+   break. A new block is appended after a blank line. When nothing changed, the file is not
+   touched (its bytes and modification time stay the same).
+
+| exit code | `sync` | `sync --check` | `status` |
+|---|---|---|---|
+| 0 | written, or up to date (`--dry-run`: also when out of date or edited by hand) | up to date | current, or no block (`--hook`: always) |
+| 1 | error: a package the notes are about could not be checked (PyPI unreachable), a file cannot be written, broken markers | same | broken markers |
+| 3 | out of date and not written (you said no, or there is no terminal to ask in) | out of date; nothing written | out of date |
+| 4 | the block was edited by hand; nothing written without `--force` | same | – |
+
+What it prints, from the sample project:
+
+- up to date: "AGENTS.md is up to date: 2 notes for claude-sonnet-4-5 (cutoff 2025-07-31),
+  versions from pyproject.toml, latest on PyPI for 3 unpinned. Nothing written."
+- `--check`, out of date: "AGENTS.md is out of date: anthropic 0.60.0 in pyproject.toml is the
+  latest release at the cutoff. Run `since-cutoff sync`."
+- a hand edit: "The since-cutoff block in AGENTS.md was edited by hand; sync would replace it
+  (diff above). Move your text below `<!-- since-cutoff:end -->`, or run
+  `since-cutoff sync --force`."
+
+### `status`
+
+`since-cutoff status` compares the block with the project's dependencies as they are, with no
+network and without reading the code (`sync --check` does that): per package, the version the
+notes are for and the version the lockfile has; whether other dependencies changed (the `deps`
+hash); where the versions come from; and whether the model your coding agent is set up with has
+an earlier training cutoff than the notes, which may then miss changes (it prints the
+`sync --model` command for it; this is not a failure, since sync keeps the block's model). A
+block that 0.3 or `run --apply` wrote is out of date, as `sync --check` would find it. No block
+is not a failure: a project whose code uses no changed API never gets one. `--json` prints the
+same for scripts. `--hook` prints one line only when the notes are out of date and always exits
+with 0; the Claude Code plugin runs `uvx since-cutoff==<version> status --hook` when a session
+starts (0.4.0 and later).
+
 ## 2. Probe
 
 1. **Selection.** Changes are ranked (symbols the project's own code already uses first, hard
    breaks before soft ones, top-level API before internals) and near-duplicates are dropped.
-   "Your code uses" is judged file by file, in the files that import the package: a
-   module-level name under the change's own import path, a method or attribute where the file
-   reads it on the class or on what it shows is an instance of it, a constructor where the
-   class is called, a parameter where it is passed by keyword to its own callable.
+   "Your code uses" is judged as in
+   [Where the code uses a changed API](#where-the-code-uses-a-changed-api).
    The probe budget (`--max-probes`, default 30) is shared round-robin across packages.
 2. **Tasks.** A task-writer model (the tested model unless `--task-model` is given) gets the old
    and new signatures and docstrings and writes three short tasks that a developer who knows
@@ -170,21 +336,25 @@ version the project pins.
 
    Generated code is never executed.
 
-## 3. Fix and verify
+## 3. Write and test notes
 
 1. **Notes.** For every failure, a note-writer model gets the change, the failing code and the
-   type-checker errors, and returns one bullet plus a complete example. The note is kept only if
-   basedpyright reports no error attributed to the package for the example, checked against your
-   version, *and* every API the bullet recommends appears in that example. Otherwise a plain
-   statement of the change, derived only from the diff, is used instead.
-2. **The block.** Notes are grouped by package into a block between
-   `<!-- since-cutoff:start -->` and `<!-- since-cutoff:end -->`. `--apply` writes it into
-   `AGENTS.md` (or `CLAUDE.md` if that is what the project uses); re-running replaces the block,
-   and `since-cutoff unapply` removes it.
-3. **Held-out verification.** For each failure, the held-out tasks are answered twice, without
-   and with the block in the system prompt, and scored the same way. A sample of APIs the model
-   got right is re-checked with the block too, to catch notes that make things worse. With
-   `--compare`, the same tasks are also answered with baseline blocks (see below).
+   type-checker errors, and returns one bullet plus a complete example. The note is kept, tagged
+   `[type-checked]`, only if basedpyright reports no error attributed to the package for the
+   example, checked against your version, *and* every library name the bullet puts in backticks
+   appears in that example or in the API-diff entry (see
+   [What "verified" means](#what-verified-means)). Otherwise the note from the API diff, with its
+   tag, is used instead.
+2. **The block.** The notes go into a block in format 2 (see [The block](#the-block)), whose
+   header says they are the changes the model got wrong when tested. `--apply` writes it into
+   AGENTS.md or CLAUDE.md, the files `sync` would choose, in place of the block that is there;
+   a later `since-cutoff sync` adds the notes from the diff for the other changed APIs the code
+   uses and keeps the run's `[type-checked]` notes while their package keeps its version.
+   `since-cutoff unapply` removes the block.
+3. **Held-out test of the notes.** For each failure, the held-out tasks are answered twice,
+   without and with the block in the system prompt, and scored the same way. A sample of APIs
+   the model got right is re-checked with the block too, to catch notes that make things worse.
+   With `--compare`, the same tasks are also answered with baseline blocks (see below).
 
 ### Held-out statistics
 
@@ -229,12 +399,14 @@ tasks, the baselines compared, and the date.
 ### Baselines (`--compare`)
 
 `run --compare template,signatures` (or either one; 0.3.0 and later) measures simpler
-notes next to since-cutoff's own (the `verified` arm in results.json), so a run shows how much
-its notes add instead of assuming they are best. Neither baseline calls a model, and both use the
-same block header:
+notes next to since-cutoff's own (the arm with the id `verified` in results.json), so a run
+shows how much its notes add instead of assuming they are best. Neither baseline calls a model,
+and both keep 0.3's block and wording, so that their numbers stay comparable with 0.3's; the
+run's own block has the header that says what its tags mean:
 
-- **template** states each failing change in one sentence from the API diff: the text a
-  model-written note falls back to when its example does not type-check.
+- **template** states each failing change in one sentence from the API diff: the text 0.3 fell
+  back to when a model-written note's example did not type-check (0.4 falls back to the note
+  from the API diff, with its tag).
 - **signatures** gives the new signature and first docstring paragraph of each changed API, or
   of the replacement its library names (for a removed object, also a line saying it is gone).
   It shows what the new version offers, not what changed.
@@ -255,8 +427,68 @@ with an exact sign test; results.json adds `arms`, and each held-out answer reco
 it saw. `--compare` needs held-out tasks, so it cannot be combined with `--no-fix` or
 `--heldout 0`.
 
+## What "verified" means
+
+since-cutoff does not use the word "verified" on its own. Each note carries a tag that says what
+was checked, and nothing else is claimed:
+
+| tag | what was checked | what was not |
+|---|---|---|
+| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release on or before the model's training cutoff, and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
+| `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
+| `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
+| `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name. A guess, labelled as one. | That it is the same parameter. |
+| `[type-checked]` | Written by a model during `since-cutoff run` and kept because its example passed the type check below. | Behaviour; that the bullet's explanation is true beyond the names it shows. |
+| `[not confirmed]` | Only with `sync --suggestions`: names in the pinned version that look similar to what was removed (the bullet's tag then reads `[diff; not confirmed]`). | That any of them replaces it. |
+
+Tags combine: evidence is joined with `+` (`[diff + library]`), and a guess comes after `;`
+(`[diff; probable rename]`, `[diff; not confirmed]`).
+
+Names that merely look similar are never written into the notes by default. The terminal,
+report.md and the MCP tools show them as "not confirmed as replacements", and not at all where
+the library says there is no replacement; `sync --suggestions` adds them, tagged
+`[not confirmed]`.
+
+**The type check behind `[type-checked]`.** A model-written note is kept only when all of these
+hold (the model gets two tries):
+
+- its complete example parses and imports the package;
+- basedpyright (standard mode, deprecations reported as errors, `# type: ignore` and `# pyright:`
+  comments removed) reports no error attributed to that package, and no deprecation of it, when
+  the example is checked against the sources of the exact version in your lockfile plus that
+  version's runtime dependencies, in an otherwise empty environment;
+- every library name the bullet puts in backticks appears in that example or in the API-diff entry
+  the note is about;
+- the bullet has at most 60 words.
+
+So `[type-checked]` means the imports, names, parameters and argument counts the example uses
+exist in your version and are not marked `@deprecated` (PEP 702). Errors outside the package (the
+standard library, other libraries) do not block a note. It does not mean that the code behaves
+correctly at run time, that the replacement is the one the maintainers recommend, or that the
+note helps the model. When a note fails the check, since-cutoff writes the note from the API diff
+instead, with its tag.
+
+**Measured** is separate: `since-cutoff run` answers held-out tasks without and with the notes
+and reports the counts. Nothing else in since-cutoff says whether a note helps.
+
+**In `run`, an answer counts as correct** when it imports the package, uses the changed API, and
+has no "knowledge" error attributed to the package on your version (unknown name, import or
+parameter; missing required argument; wrong number of arguments). Pure type-strictness complaints
+are ignored. No answer is executed.
+
+The block in AGENTS.md holds the bullets with their tags, and for each package the version its
+notes apply to and the release at the cutoff. The rest is in `scan --json` and `results.json`:
+`used_apis[]` (each changed API the code uses, where, its changes, its replacements with their
+source, and its note with `tags`, `applies_to` and `checks`) and, after `run`, `notes_detail[]`
+(each note with the model's example and what the held-out test measured; `verified` is kept,
+meaning the same as `checks.example_type_checks`).
+
 ## What the numbers mean (and do not mean)
 
+- In `scan`, "**Your code uses N APIs**" counts APIs, not changes: `Messages.create` losing three
+  parameters is one API. "**Old form**" is a static name match in the project's files (see
+  [Where the code uses a changed API](#where-the-code-uses-a-changed-api)); nothing is run, and a
+  file that only calls the API is "uses this API".
 - In `scan`, "**breaking**" and "**deprecated**" count each change once, however many import
   paths reach it. "**Imported by your code**" means a file of the project imports the package
   (by its import names); dependencies whose API changed come first, the imported ones first
@@ -297,4 +529,6 @@ it saw. `--compare` needs held-out tasks, so it cannot be combined with `--no-fi
   `.py`/`.pyi` files are extracted, archive paths are validated).
 - No model-generated code is executed; it is only type-checked.
 - Nothing is written into your project except `.since-cutoff/` (git-ignored by its own
-  `.gitignore`) and, only with `--apply`, the marked block in `AGENTS.md`/`CLAUDE.md`.
+  `.gitignore`) and, only with `sync` (after it shows the diff and you agree, or with `--yes`)
+  or `run --apply`, the marked block in `AGENTS.md`/`CLAUDE.md`. Text outside the markers keeps
+  its bytes.

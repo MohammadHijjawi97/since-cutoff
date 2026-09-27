@@ -1,4 +1,4 @@
-"""The since-cutoff pipeline: scan -> select -> tasks -> probe -> fix -> verify.
+"""The since-cutoff pipeline: scan -> select -> tasks -> probe -> notes -> test.
 
 1. **Scan.** For each dependency, find the version that was current at the model's training
    cutoff and statically diff its public API against the version the project uses.
@@ -11,8 +11,10 @@
    is **stale** when a statement that is valid for the cutoff version is invalid for yours and
    the error involves an API that changed; **wrong** when the package API errors are not
    explained by a change; **untouched** when the answer never exercises the changed API.
-5. **Fix.** For each failure a short AGENTS.md note is written and verified with the checker.
-6. **Verify.** Held-out tasks are answered again with and without the notes and compared as
+5. **Notes.** For each failure the task writer writes a short AGENTS.md note with an example; it
+   is kept only when the example type-checks against the pinned version (``[type-checked]``),
+   and the note from the API diff (:func:`notes.diff_note`) takes its place otherwise.
+6. **Test.** Held-out tasks are answered again with and without the notes and compared as
    pairs, and a sample of previously-correct APIs checks that the notes do not hurt. A change
    counts as fixed when more than half of its counted pairs are wrong without the notes and
    right with them (:meth:`RunResult.pairing`, :attr:`ChangePairs.outcome`). With
@@ -63,11 +65,37 @@ from since_cutoff.cache import DiskCache, stable_hash
 from since_cutoff.checker import Checker, CheckResult, Diagnostic, extract_code
 from since_cutoff.errors import CheckerError, NoCodeError, PackageIndexError, ProviderError
 from since_cutoff.models import PROVIDER_ALIASES, ModelInfo, ModelRegistry
-from since_cutoff.notes import Note, bullet_is_grounded, clean_bullet, render_block, template_bullet
+from since_cutoff.notes import (
+    NOTE_MODEL,
+    SCOPE_FAILURES,
+    SCOPE_IMPORTED,
+    SCOPE_USED,
+    TAG_TYPE_CHECKED,
+    Note,
+    bullet_is_grounded,
+    clean_bullet,
+    deps_hash,
+    diff_note,
+    diff_notes,
+    render_block,
+    render_legacy_block,
+)
 from since_cutoff.project import Dependency, FileUse, Project
 from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
 from since_cutoff.pypi import PyPI, Release, SourceTree, is_placeholder
-from since_cutoff.selection import collapse, project_rank, select
+from since_cutoff.selection import (
+    NAME_MATCH,
+    OLD_FORM,
+    PATH_MATCH,
+    USES_API,
+    Use,
+    collapse,
+    ordered,
+    project_rank,
+    select,
+    used_names,
+    uses,
+)
 from since_cutoff.taskfile import TaskFile
 
 log = logging.getLogger(__name__)
@@ -99,6 +127,69 @@ SKIPPED = "skipped"
 # A release at the cutoff with files this small and nothing in its modules only reserved the
 # name (see Engine._placeholder); a compiled extension would not fit.
 _PLACEHOLDER_BYTES = 64 * 1024
+# ``sync --scope imported``: the APIs noted per changed package the code imports (at least all
+# those it uses), in the order of ScanResult.ranked.
+IMPORTED_APIS = 5
+# A class whose fields mirror a callable's parameters (the SDKs' ``MessageCreateParamsBase``).
+_PARAMS_CLASS = re.compile(r"Params\w*$")
+# A name private to a library, in a type annotation: ``_ClassScanMapperConfig``,
+# ``orm._ClassScanMapperConfig`` (not a dunder).
+_PRIVATE_TYPE = re.compile(r"(?:^|\W)_(?!_)[A-Za-z]\w*")
+
+
+def _not_worth_a_note(change: APIChange, lost: set[str]) -> bool:
+    """For ``sync --scope imported``, a change the code does not use that a note would only
+    spend a slot on: a field of a params class that mirrors a parameter a callable of the same
+    package lost (``lost``; the callable's note says it), or a change to an internal hook,
+    one of whose parameters has a type private to the library (sqlalchemy's
+    ``MappedColumn.declarative_scan_for_composite(decl_scan: _ClassScanMapperConfig)``)."""
+    if (
+        change.owner
+        and not change.parameter
+        and change.name in lost
+        and _PARAMS_CLASS.search(change.owner)
+    ):
+        return True
+    if not change.parameter:
+        return False
+    new_side = change.kind in (PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
+    signature = (change.new_signature if new_side else change.old_signature) or ""
+    name = re.escape(change.parameter.lstrip("*"))
+    annotation = re.search(rf"(?<![\w.]){name}\s*:\s*([^,=)]*)", signature)
+    return annotation is not None and _PRIVATE_TYPE.search(annotation.group(1)) is not None
+
+
+def scanned_dependencies(
+    project: Project,
+    *,
+    all_deps: bool = False,
+    include: Iterable[str] = (),
+    exclude: Iterable[str] = (),
+) -> list[Dependency]:
+    """The dependencies a scan checks: the direct ones, and a dependency of a dependency that
+    the code imports itself (alembic, pinned by pip-compile "via flask-migrate"), which is used
+    like a direct one; every one with ``all_deps``; only those in ``include`` when given; none
+    in ``exclude``. No network: ``since-cutoff status`` needs the same list offline."""
+    wanted = {canonicalize_name(s) for s in include}
+    skip = {canonicalize_name(s) for s in exclude}
+    imported = {canonicalize_name(m) for m in project.imported_modules}
+    deps = [
+        d
+        for d in project.dependencies
+        if d.direct or all_deps or d.key in wanted or d.key in imported
+    ]
+    if wanted:
+        deps = [d for d in deps if d.key in wanted]
+    return [d for d in deps if d.key not in skip]
+
+
+def dependency_pairs(deps: Iterable[Dependency]) -> list[tuple[str, str]]:
+    """What the notes block's ``deps`` hash is made of: each dependency with the version the
+    project's own files give it (a lockfile, a pin, the virtual environment). One they leave
+    open counts with its declared range (``numpy``: ``unpinned <2.3``), not with the release
+    PyPI has today, so that ``since-cutoff status`` can compute the hash without the network;
+    ``sync``, which asks PyPI, sees a new release of it."""
+    return [(d.key, d.version or f"unpinned {d.specifier}".rstrip()) for d in deps]
 
 
 def _claude_settings_model() -> str | None:
@@ -145,7 +236,7 @@ class Settings:
     today: date = field(default_factory=date.today)
     # Tasks to use instead of calling the task writer (``run --tasks-from``).
     tasks_from: TaskFile | None = None
-    # Baseline notes blocks verified next to the verified notes (``run --compare``).
+    # Baseline notes blocks tested next to the run's notes (``run --compare``).
     compare: list[str] = field(default_factory=list)
 
 
@@ -181,6 +272,9 @@ class PackageScan:
     import_names: list[str] = field(default_factory=list)
     changes: list[APIChange] = field(default_factory=list)
     reason: str | None = None
+    # NEW (no release by the cutoff): the day of its first release, from the release list the
+    # scan read anyway.
+    first_released: str | None = None
 
     @property
     def breaking(self) -> list[APIChange]:
@@ -214,6 +308,35 @@ class PackageScan:
         d = {k: v for k, v in self.__dict__.items() if k != "changes" and not k.startswith("_")}
         d["changes"] = [c.to_dict() for c in self.changes]
         return d
+
+
+@dataclass
+class UsedAPI:
+    """A changed API the project's code uses (:meth:`ScanResult.used_apis`): its package, the
+    note from the API diff for it (which lists its changes), where the code uses it and how.
+
+    ``uses`` is file-level for now (``Use.line`` is None): the lines are issue #8's.
+    """
+
+    package: PackageScan
+    note: Note
+    uses: list[Use]  # most specific first (selection.uses)
+    forms: dict[str, str]  # change id -> OLD_FORM or USES_API (selection.form)
+    match: str | None  # PATH_MATCH, or NAME_MATCH when only a name matched
+
+    @property
+    def changes(self) -> list[APIChange]:
+        return self.note.covered
+
+    @property
+    def form(self) -> str:
+        """OLD_FORM when the code uses any of its changes in the old form, else USES_API."""
+        return OLD_FORM if OLD_FORM in self.forms.values() else USES_API
+
+    @property
+    def files(self) -> list[str]:
+        """The files that use it, in the order of ``uses``."""
+        return list(dict.fromkeys(u.file for u in self.uses if u.file))
 
 
 @dataclass
@@ -251,6 +374,135 @@ class ScanResult:
         files = self.uses(package)
         return sorted(package.distinct, key=lambda c: project_rank(c, files))
 
+    def used_changes(self, package: PackageScan) -> list[APIChange]:
+        """The package's distinct changes that the project's code uses
+        (:func:`selection.used_names`), in the order of :meth:`ranked`."""
+        files = self.uses(package)
+        if not files:
+            return []
+        return [c for c in self.ranked(package) if used_names(c, files)]
+
+    def diff_notes(self, *, suggestions: bool = False) -> list[Note]:
+        """A note from the API diff (:func:`notes.diff_note`) for each changed API the project's
+        code uses, package by package in the order of the reports. No model is called, and
+        nothing of the libraries is run."""
+        return [
+            note
+            for p in self.changed
+            for note in diff_notes(self.used_changes(p), suggestions=suggestions)
+        ]
+
+    def used_apis(self) -> list[UsedAPI]:
+        """Each changed API the project's code uses, with its note, where the code uses it and
+        whether in the old form (selection.form). No model is called, and nothing is run.
+
+        Packages in the order of the reports, those the code uses in the old form first; in a
+        package, the APIs used in the old form first, then in the order of :meth:`diff_notes`.
+        """
+        key = self._used_key()
+        cached = self.__dict__.get("_used")
+        if cached is not None and cached[0] == key:
+            return list(cached[1])
+        by_package: dict[str, list[UsedAPI]] = {}
+        for note in self.diff_notes():
+            p = self.package(note.change.package)
+            files = self.uses(p)
+            per_change = {c.id: uses(c, files) for c in note.covered}
+            forms = {
+                cid: OLD_FORM if any(u.form == OLD_FORM for u in its) else USES_API
+                for cid, its in per_change.items()
+            }
+            found = ordered(u for its in per_change.values() for u in its)
+            how = {u.how for u in found}
+            match = PATH_MATCH if PATH_MATCH in how else NAME_MATCH if how else None
+            by_package.setdefault(p.name, []).append(UsedAPI(p, note, found, forms, match))
+        order = [p.name for p in self.packages if p.name in by_package]
+        order.sort(key=lambda name: all(u.form != OLD_FORM for u in by_package[name]))
+        used = [
+            u for name in order for u in sorted(by_package[name], key=lambda u: u.form != OLD_FORM)
+        ]
+        self.__dict__["_used"] = (key, used)
+        return list(used)
+
+    def _used_key(self) -> tuple[Any, ...]:
+        """What :meth:`used_apis` depends on, to know when to compute it again."""
+        return (
+            id(self.project.files),
+            len(self.project.files),
+            tuple((p.name, p.status, id(p.changes), len(p.changes)) for p in self.packages),
+        )
+
+    def versions_from(self, package: PackageScan) -> str:
+        """Where the version of a dependency comes from: its lockfile (``uv.lock``), the file
+        that pins it (``pyproject.toml``), ``installed``, or PyPI's latest release."""
+        dep = next((d for d in self.project.dependencies if d.key == package.name), None)
+        if dep is not None and dep.pinned_in:
+            return dep.pinned_in
+        return package.version_source
+
+    def new_imported(self) -> list[PackageScan]:
+        """The dependencies first released after the cutoff that the project's code imports:
+        by their import names when the scan read them (a placeholder release at the cutoff),
+        else by the dependency's own name (``foo-bar`` for ``import foo_bar``)."""
+        modules = {canonicalize_name(m) for m in self.project.imported_modules}
+        return [
+            p
+            for p in self.packages
+            if p.status == NEW and (p.imported if p.imported is not None else p.name in modules)
+        ]
+
+    def deps_hash(self) -> str:
+        """:func:`notes.deps_hash` of every dependency scanned, at the version the project's
+        own files give it (:func:`dependency_pairs`), so that ``since-cutoff status`` can
+        compute it again without the network."""
+        scanned = {p.name for p in self.packages}
+        return deps_hash(dependency_pairs(d for d in self.project.dependencies if d.key in scanned))
+
+    def scope_notes(self, scope: str = SCOPE_USED, *, suggestions: bool = False) -> list[Note]:
+        """The notes from the API diff that a block of ``scope`` holds: for the changed APIs
+        the code uses (SCOPE_USED, :meth:`diff_notes`), or, for each changed package the code
+        imports, for those and the next most likely to matter, up to :data:`IMPORTED_APIS`
+        APIs in all (SCOPE_IMPORTED, ``sync --scope imported``; :meth:`ranked`'s order). Of
+        the APIs the code does not use, a params class's field that mirrors a callable's lost
+        parameter and an internal hook get no note (:func:`_not_worth_a_note`)."""
+        if scope != SCOPE_IMPORTED:
+            return self.diff_notes(suggestions=suggestions)
+        notes: list[Note] = []
+        for p in self.changed:
+            if not p.imported:
+                continue
+            ranked = self.ranked(p)  # the changes the code uses first
+            used = {c.api_key for c in self.used_changes(p)}
+            by_key: dict[str, list[APIChange]] = {}
+            for c in ranked:
+                by_key.setdefault(c.api_key, []).append(c)
+            # The parameters callables lost: a params class's field of the same name
+            # (anthropic's ``MessageCreateParamsBase.temperature``) is a mirror of that change.
+            lost = {c.parameter for c in ranked if c.parameter and c.kind == PARAM_REMOVED}
+            chosen: list[str] = []
+            for key, changes in by_key.items():
+                if len(chosen) >= max(IMPORTED_APIS, len(used)):
+                    break
+                if key in used or not all(_not_worth_a_note(c, lost) for c in changes):
+                    chosen.append(key)
+            notes += diff_notes(
+                [c for c in ranked if c.api_key in set(chosen)], suggestions=suggestions
+            )
+        return notes
+
+    def notes_block(self, notes: list[Note], scope: str = SCOPE_USED) -> str | None:
+        """The AGENTS.md block (format 2) for ``notes``, or None when there are none."""
+        if not notes:
+            return None
+        return render_block(
+            notes,
+            model=self.target.model_id,
+            cutoff=self.target.cutoff,
+            version_source=self.project.version_source,
+            deps=self.deps_hash(),
+            scope=scope,
+        )
+
 
 @dataclass
 class Attempt:
@@ -264,7 +516,7 @@ class Attempt:
     errors: list[str] = field(default_factory=list)
     error: str | None = None
     cached: bool = False
-    # The notes block a with-notes answer saw: the verified notes, or a --compare baseline.
+    # The notes block a with-notes answer saw: the run's notes, or a --compare baseline.
     arm: str = ARM_VERIFIED
 
     @property
@@ -425,7 +677,7 @@ class RunResult:
     tasks: dict[str, list[str]] = field(default_factory=dict)
     # What produced these results (versions, models, budgets): see Engine.run_settings.
     settings: dict[str, Any] = field(default_factory=dict)
-    # The notes block of each arm, the verified notes first; empty unless ``--compare`` gave
+    # The notes block of each arm, the run's notes first; empty unless ``--compare`` gave
     # baselines and some probe failed.
     arms: dict[str, str] = field(default_factory=dict)
 
@@ -449,7 +701,7 @@ class RunResult:
     def pairing(self, role: str, arm: str = ARM_VERIFIED, *, common: bool = False) -> Pairing:
         """Pair each held-out task's two answers, and group the pairs by API change.
 
-        The answer with notes is the one that saw ``arm``'s block (the verified notes unless
+        The answer with notes is the one that saw ``arm``'s block (the run's notes unless
         asked otherwise); every arm is paired against the same answer without notes.
 
         A pair counts only when the answer *without* notes is scorable (pass, stale, wrong or
@@ -719,17 +971,12 @@ class Engine:
                 "environment (.venv), the transitive dependencies are unknown, so only the "
                 "declared ones are checked"
             )
-        # A dependency of a dependency that the code imports itself (alembic, pinned by
-        # pip-compile "via flask-migrate") is used like a direct one.
-        imported = {canonicalize_name(m) for m in project.imported_modules}
-        deps = [
-            d
-            for d in project.dependencies
-            if d.direct or self.settings.all_deps or d.key in include or d.key in imported
-        ]
-        if include:
-            deps = [d for d in deps if d.key in include]
-        deps = [d for d in deps if d.key not in exclude]
+        deps = scanned_dependencies(
+            project,
+            all_deps=self.settings.all_deps,
+            include=self.settings.include,
+            exclude=self.settings.exclude,
+        )
         for w in warnings:
             self.reporter.warn(w)
 
@@ -773,6 +1020,9 @@ class Engine:
             at_cutoff = self.pypi.version_at(dep.key, cutoff)
             if at_cutoff is None:
                 scan.status, scan.reason = NEW, "first released after the cutoff"
+                # From the release list version_at just read (cached): no request of its own.
+                first = min((r.uploaded for r in self.pypi.releases(dep.key)), default=None)
+                scan.first_released = first.date().isoformat() if first else None
                 return scan
             scan.cutoff_version = at_cutoff.version
             scan.cutoff_version_date = at_cutoff.uploaded.date().isoformat()
@@ -908,7 +1158,10 @@ class Engine:
         s.changes = [APIChange.from_dict(c) for c in result]
         # Module metadata alone (``__version__``) is not an API change worth flagging.
         s.status = CHANGED if s.distinct else UNCHANGED
-        self.reporter.advance(label=s.name)
+        # A diff taken from the cache is instant: in a log, only a diff that was computed says
+        # how far the stage got ("diffed 3/8 (openai)"), so a warm scan's log goes straight
+        # from the stage line to the results.
+        self.reporter.advance(label=s.name if store else None)
 
     # ---------------------------------------------------------------- run
     def run_settings(self, scan: ScanResult) -> dict[str, Any]:
@@ -986,9 +1239,10 @@ class Engine:
         if not fix or not failing:
             return result
 
-        # Fix ---------------------------------------------------------------
+        # Notes -------------------------------------------------------------
         self.reporter.stage(
-            f"Writing and verifying notes for {len(failing)} failures", len(failing)
+            f"Writing notes for {len(failing)} failures and type-checking their examples",
+            len(failing),
         )
         result.notes = self._map(lambda a: self._note(task_spec, a, scan), failing)
         result.block = block = render_block(
@@ -996,9 +1250,11 @@ class Engine:
             model=scan.target.model_id,
             cutoff=scan.target.cutoff,
             version_source=scan.project.version_source,
+            deps=scan.deps_hash(),
+            scope=SCOPE_FAILURES,
         )
 
-        # Verify on held-out tasks --------------------------------------------
+        # Test on held-out tasks ----------------------------------------------
         if self.settings.heldout > 0:
             blocks = {ARM_VERIFIED: block}
             compare = list(dict.fromkeys(self.settings.compare))
@@ -1025,7 +1281,7 @@ class Engine:
             baselines = len(blocks) - 1
             also = f" and {baselines} baseline{'' if baselines == 1 else 's'}" if baselines else ""
             self.reporter.stage(
-                f"Verifying the notes{also} on {len(attempts)} held-out answers", len(attempts)
+                f"Testing the notes{also} on {len(attempts)} held-out tasks", len(attempts)
             )
             self._answer_all(attempts, blocks=blocks)
             self._score(attempts, scan)
@@ -1036,7 +1292,7 @@ class Engine:
     def _warn_fewer_heldout(self, used: list[int]) -> None:
         """Say so when failing changes have fewer held-out tasks than ``--heldout`` asks for.
 
-        ``used`` is the number of held-out tasks of each failing change. They are verified on
+        ``used`` is the number of held-out tasks of each failing change. They are tested on
         the held-out tasks they have (from a tasks file written with a smaller ``--heldout``, or
         from a task writer some of whose tasks were repeats), so "changes fixed" rests on fewer
         tasks there. The run records the numbers it used (``heldout_used`` in the settings).
@@ -1050,19 +1306,20 @@ class Engine:
         advice = f"; write it with --heldout {wanted} to use {wanted}" if source is not None else ""
         self.reporter.warn(
             f"{who} fewer than {wanted} held-out tasks for {len(short)} of {len(used)} failing "
-            f"API changes (as few as {min(short)}); those are verified on the ones there "
+            f"API changes (as few as {min(short)}); those are tested on the ones there "
             f"are{advice}"
         )
 
     def _baseline_block(self, arm: str, changes: list[APIChange], scan: ScanResult) -> str:
-        """The notes block of a ``--compare`` baseline for the failing changes (no model call)."""
+        """The notes block of a ``--compare`` baseline for the failing changes (no model call),
+        in 0.3's format, so that the baselines stay what 0.3 measured."""
         if arm == ARM_TEMPLATE:
             notes = template_notes(changes)
         elif arm == ARM_SIGNATURES:
             notes = signature_notes(changes, lambda c: self._new_api(c, scan))
         else:
             raise ValueError(f"unknown notes arm: {arm}")
-        return render_block(
+        return render_legacy_block(
             notes,
             model=scan.target.model_id,
             cutoff=scan.target.cutoff,
@@ -1082,7 +1339,7 @@ class Engine:
             try:
                 self._apis[key] = load_api(name, self.source(ps.name, ps.locked).root)
             except Exception as exc:  # griffe fails in many ways on unusual code
-                log.debug("cannot load %s %s for the signatures baseline: %s", *key[:2], exc)
+                log.debug("cannot load the API of %s %s: %s", *key[:2], exc)
                 self._apis[key] = None
         return self._apis[key]
 
@@ -1275,6 +1532,7 @@ class Engine:
         ps = scan.package(change.package)
         assert ps.locked
         feedback: str | None = None
+        checked = False  # an example of the model's reached the type checker
         for _round in range(2):
             user = prompts.note_prompt(change, attempt.code or "", attempt.errors, feedback)
             key = stable_hash("note", prompts.PROMPT_VERSION, spec, user)
@@ -1298,6 +1556,7 @@ class Engine:
                 check = self.checker.check(tree, {"ex": example}, extra_roots=deps)["ex"]
             except (CheckerError, PackageIndexError):
                 break
+            checked = True
             problems = [d.short() for d in check.api_errors + check.deprecations]
             if not check.syntax_ok:
                 problems.append("the example is not valid Python")
@@ -1312,8 +1571,20 @@ class Engine:
             if len(bullet.split()) > 60:
                 feedback = "the bullet is too long"
                 continue
-            return Note(change, bullet, example, True, "model")
-        return Note(change, template_bullet(change), None, False, "template")
+            return Note(
+                change,
+                bullet,
+                example,
+                True,
+                NOTE_MODEL,
+                (TAG_TYPE_CHECKED,),
+                writer=spec,
+                example_type_checks=True,
+            )
+        # No example that type-checks: the note from the diff, which says only what it shows.
+        note = diff_note([change], lambda c: self._new_api(c, scan))
+        note.example_type_checks = False if checked else None
+        return note
 
 
 def _verify_attempts(

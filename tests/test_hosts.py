@@ -15,8 +15,10 @@ from since_cutoff.engine import Engine, Settings
 from since_cutoff.errors import ProviderError
 from since_cutoff.hosts import (
     CLAUDE_CODE_NOT_FOUND_HINT,
+    CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF,
     DEFAULT_SOURCE,
     NOT_FOUND_HINT,
+    NOT_FOUND_HINT_CUTOFF,
     Detected,
     detect_model,
     hosted_spec,
@@ -138,6 +140,10 @@ def test_inside_claude_code_only_its_own_settings_count(root: Path, home: Path) 
     assert detect(root, home, **inside, AIDER_MODEL="4o") is None
     assert not_found_hint(inside) == CLAUDE_CODE_NOT_FOUND_HINT
     assert not_found_hint({}) == NOT_FOUND_HINT
+    # scan and sync test no model: they use its cutoff.
+    assert not_found_hint(inside, probes=False) == CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF
+    assert not_found_hint({}, probes=False) == NOT_FOUND_HINT_CUTOFF
+    assert "tests" not in NOT_FOUND_HINT_CUTOFF + CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF
 
     write(home / ".claude" / "settings.json", '{"model": "opus"}')
     assert detect(root, home, **inside) == ("claude-code:opus", "~/.claude/settings.json")
@@ -458,7 +464,9 @@ def test_scan_maps_a_detected_alias_and_says_so(app, capsys, offline_cli, agent_
 def test_without_any_setting_the_default_is_named_as_a_guess(app, capsys, offline_cli) -> None:
     assert cli.main(["scan", str(app)]) == 0
     out = " ".join(capsys.readouterr().out.split())
-    assert NOT_FOUND_HINT in out
+    # scan tests nothing: it says it uses the default model's cutoff ("so this tests Claude
+    # Code's default model" was run's wording).
+    assert NOT_FOUND_HINT_CUTOFF in out and NOT_FOUND_HINT not in out
     assert f"model from {DEFAULT_SOURCE}, assuming 'sonnet' = claude-sonnet-" in out
 
 
@@ -470,7 +478,7 @@ def test_inside_claude_code_a_leftover_codex_setting_is_not_tested(
     assert cli.main(["scan", str(app)]) == 0
     out = " ".join(capsys.readouterr().out.split())
     assert "gpt-5.5" not in out
-    assert CLAUDE_CODE_NOT_FOUND_HINT in out
+    assert CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF in out
     assert f"model from {DEFAULT_SOURCE}, assuming 'sonnet' = claude-sonnet-" in out
 
 

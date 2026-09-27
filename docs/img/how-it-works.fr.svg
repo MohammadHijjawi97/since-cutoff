@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="508" viewBox="0 0 640 508" role="img" aria-labelledby="title desc" xml:lang="fr">
 <title id="title">Fonctionnement de since-cutoff</title>
-<desc id="desc">Analyse, sans appel au modèle : le fichier de verrouillage donne vos versions exactes, since-cutoff trouve la version de chaque dépendance à la date limite d&#x27;entraînement du modèle et compare l&#x27;API publique de façon statique avec griffe. Sonde : de courtes tâches qui nécessitent une API modifiée, le modèle répond sans outils ni documentation, et basedpyright vérifie la réponse avec les deux versions. Correction et vérification : une note rédigée par le modèle n&#x27;est conservée que si son exemple passe la vérification de types ; sinon, un constat du changement tiré du diff d&#x27;API la remplace. Le modèle répond ensuite aux tâches réservées sans puis avec les notes, et --apply écrit le bloc dans AGENTS.md.</desc>
+<desc id="desc">Analyse, sans appel au modèle : le fichier de verrouillage donne vos versions exactes, since-cutoff trouve la version de chaque dépendance à la date limite d&#x27;entraînement du modèle et compare l&#x27;API publique de façon statique avec griffe. Sonde : de courtes tâches qui nécessitent une API modifiée, le modèle répond sans outils ni documentation, et basedpyright vérifie la réponse avec les deux versions. Rédaction et test des notes : une note rédigée par le modèle n&#x27;est conservée que si son exemple passe la vérification de types ; sinon, un constat du changement tiré du diff d&#x27;API la remplace. Le modèle répond ensuite aux tâches réservées sans puis avec les notes, et --apply écrit le bloc dans AGENTS.md.</desc>
 <style>
     .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
@@ -37,11 +37,11 @@
 <text x="64" y="298" font-size="20" class="sans text">basedpyright vérifie les deux versions</text>
 <line x1="46" y1="313" x2="46" y2="332" stroke="#59636e" stroke-width="2" marker-end="url(#head)"/>
 <rect x="16" y="336" width="608" height="156" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="36" y="369" font-size="22" class="sans b accent">3  Correction et vérification</text>
+<text x="36" y="369" font-size="22" class="sans b accent">3  Rédaction et test des notes</text>
 <text x="36" y="393" font-size="17" class="sans muted">le vérificateur de types tranche</text>
 <line x1="46" y1="416" x2="46" y2="474" stroke="#d0d7de" stroke-width="2"/>
 <circle cx="46" cy="416" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
-<text x="64" y="422" font-size="20" class="sans text">Notes : vérifiées, ou tirées du diff</text>
+<text x="64" y="422" font-size="20" class="sans text">Notes : typage vérifié, ou tirées du diff</text>
 <circle cx="46" cy="445" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
 <text x="64" y="451" font-size="20" class="sans text">Tâches réservées : sans puis avec les notes</text>
 <circle cx="46" cy="474" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>

@@ -14,6 +14,7 @@ import pytest
 from since_cutoff import cli, net
 from since_cutoff.cache import DiskCache
 from since_cutoff.errors import ProviderError
+from since_cutoff.notes import block_targets
 from since_cutoff.providers import make_provider, split_spec
 from since_cutoff.providers.claude_code import ClaudeCodeProvider
 from since_cutoff.pypi import PyPI, _extract_zip, _pick_artifact, _wheel_import_names
@@ -262,9 +263,10 @@ def test_cli_unapply(tmp_path, capsys):
 
 
 def test_target_file_choice(tmp_path):
-    assert cli._target_file(tmp_path, None).name == "AGENTS.md"
+    # As 0.3 chose the file for a first block (both files: AGENTS.md, until issue #13).
+    assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md"]
     (tmp_path / "CLAUDE.md").write_text("x")
-    assert cli._target_file(tmp_path, None).name == "CLAUDE.md"
+    assert [p.name for p in block_targets(tmp_path)] == ["CLAUDE.md"]
     (tmp_path / "AGENTS.md").write_text("y")
-    assert cli._target_file(tmp_path, None).name == "AGENTS.md"
-    assert cli._target_file(tmp_path, "docs/RULES.md") == tmp_path / "docs/RULES.md"
+    assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md"]
+    assert block_targets(tmp_path, "docs/RULES.md") == [tmp_path / "docs/RULES.md"]

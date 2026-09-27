@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "since-cutoff",
   "version": "0.3.2",
-  "description": "Find which of your exact Python dependency versions your coding model writes wrong, and fix it with a small AGENTS.md note verified by a type checker.",
+  "description": "Find which dependency APIs your code uses changed after your coding model's training cutoff, and write short AGENTS.md notes from the API diff, each with its source.",
   "author": {
     "name": "Mohammad Hijjawi",
     "url": "https://github.com/MohammadHijjawi97"

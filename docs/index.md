@@ -10,14 +10,18 @@ description: Measuring which pinned library APIs a coding model gets wrong becau
 <p align="center"><img src="img/hero.svg" width="640" alt="Your coding model learned your libraries before they changed. Claude Opus 4.6 on one sample project, measured with since-cutoff 0.1.0: on 7 of 16 probed API changes it used a name or parameter that has since been removed; with the notes, 5% to 65% of 20 held-out tasks were correct. Try it: uvx since-cutoff scan (no model calls, no API key)."></p>
 
 **since-cutoff** is an open-source command-line tool and MCP server for Python projects written
-with coding agents. It lists the public API changes in your pinned dependencies since the
-model's training cutoff, measures which of them the model gets wrong, and writes short
-AGENTS.md notes, each with an example that type-checks against your version or stated directly
-from the API diff.
+with coding agents. It shows where your code uses a dependency API that changed after the
+model's training cutoff, writes short AGENTS.md notes about those changes from the API diff and
+keeps them in step with your lockfile, and can measure which of the changes the model gets wrong
+and whether the notes help. Each note is tagged with what was checked: stated from the API diff,
+or written by the model and kept only if its example type-checks against your version.
 
 ```bash
-# what changed since your model's cutoff (no model calls, no API key)
+# the changed APIs your code uses, with a note for each (no model calls, no API key)
 uvx since-cutoff scan
+
+# write the notes into AGENTS.md and keep them current (no model calls)
+uvx since-cutoff sync
 
 # measure the model, write notes, add them to AGENTS.md
 uvx since-cutoff run --apply
@@ -70,7 +74,7 @@ Two models were tested: **Claude Haiku 4.5** (training cutoff February 2025) and
    - **stale**: valid for the comparison release, invalid for the pinned one
    - **wrong**: invalid, and not explained by the version change
    - **deprecated**: valid, but uses an API marked `@deprecated` in the pinned version
-5. **Fix and verify.** For each failure, a one-line note is written for AGENTS.md. A note
+5. **Write and test notes.** For each failure, a one-line note is written for AGENTS.md. A note
    written by the model is kept only if its example type-checks against the pinned version and
    every API it recommends appears in that example; otherwise the note is a plain statement of
    the change taken from the API diff. Then the held-out tasks are answered again, without and
@@ -148,8 +152,11 @@ experiment with a very practical payoff: the answer is a list of lines to put in
 ## Try it
 
 ```bash
-# what changed since your model's cutoff (no model calls)
+# the changed APIs your code uses, with a note for each (no model calls)
 uvx since-cutoff scan
+
+# write the notes into AGENTS.md and keep them current (no model calls)
+uvx since-cutoff sync
 
 # measure, write notes, apply them to AGENTS.md
 uvx since-cutoff run --apply
@@ -160,7 +167,7 @@ any OpenAI-compatible server.
 `since-cutoff mcp` lets any MCP client (Codex, Cursor, VS Code, Gemini CLI) look up a library's
 changes before writing code, and a
 [GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff#github-action) runs the scan on
-pull requests. It is Python-only for now; TypeScript is next. Feedback on the method is very
+pull requests and can check that the notes are current. It is Python-only for now; TypeScript is next. Feedback on the method is very
 welcome in the [issues](https://github.com/MohammadHijjawi97/since-cutoff/issues), and results
 from your own projects in
 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6). If you

@@ -25,12 +25,13 @@ welcome, and first-time contributors are very welcome.
 | `models.py` | Training cutoffs (models.dev plus a bundled snapshot) and model-id normalisation |
 | `hosts.py` | Which model the user's coding agent runs, read from Claude Code, Codex, OpenCode and Aider settings (the default for `--model`) |
 | `apidiff.py` | The static API diff between two versions (griffe): removals, moves, parameters, deprecations |
-| `selection.py` | Ranks the changes and picks which ones to probe |
+| `selection.py` | Where the project's code uses each change, in the old form or not, and which changes to probe |
 | `prompts.py` | Task, solver and note prompts, and the leak filter for tasks |
 | `checker.py` | Type-checks answers with basedpyright against a version, in an isolated environment |
-| `engine.py` | Ties it together: scan, probe, classify (stale / wrong / deprecated / correct), notes, held-out tests |
+| `engine.py` | Ties it together: scan and the changed APIs the code uses, probe, classify (stale / wrong / deprecated / correct), notes, held-out tests |
 | `taskfile.py` | Reads and writes the tasks files of `run --tasks-out` / `--tasks-from` |
-| `notes.py` | Renders, applies and removes the notes block in `AGENTS.md` / `CLAUDE.md` |
+| `notes.py` | The notes from the API diff and their evidence tags; renders, parses, applies and removes the notes block in `AGENTS.md` / `CLAUDE.md` |
+| `sync.py` | `since-cutoff sync` (what the block should be, and why it changes) and `since-cutoff status` (offline) |
 | `baselines.py` | The baseline notes of `run --compare` (`template`, `signatures`), built without a model |
 | `stats.py` | Wilson intervals, the cluster bootstrap, the sign test and token estimates |
 | `report.py` | Terminal, Markdown and JSON reports |
@@ -58,8 +59,8 @@ mypy
 ```
 
 The offline suite needs no API keys: `tests/conftest.py` defines a toy library with two versions
-and a scripted model that "knows" only the old one, so the whole pipeline (scan, probe, notes,
-held-out verification) runs end to end in CI. It never reads your own coding-agent settings
+and a scripted model that "knows" only the old one, so the whole pipeline (scan, sync, probe,
+notes, the held-out test of the notes) runs end to end in CI. It never reads your own coding-agent settings
 either: an autouse fixture clears the model variables (`SINCE_CUTOFF_MODEL`, `CLAUDECODE`,
 `ANTHROPIC_MODEL`, ...) and gives each test an empty home folder. Code that talks to PyPI or a
 model API is tested against `http_server`, an HTTP server on 127.0.0.1 with scripted replies
@@ -122,10 +123,13 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
    - the README pins: the pre-commit `rev: vX.Y.Z` in `README.md` and `README.zh-CN.md`, and
      the `since-cutoff-version` default in the action's input table;
+   - for 0.4.0 only: rename `hooks/hooks.json.in` to `hooks/hooks.json` (the plugin's
+     SessionStart hook runs `since-cutoff status`, which 0.4.0 added), and from then on keep
+     its `since-cutoff==X.Y.Z` pin current;
    - turn the changelog's "Unreleased" section into `## X.Y.Z - YYYY-MM-DD`.
 
-   `python scripts/check_versions.py` lists every field that still differs, and `pytest` runs
-   the same check. The user configs in the README (`uvx since-cutoff@latest mcp`) and the
+   `python scripts/check_versions.py` lists every field that still differs, and the plugin hook
+   when it is missing or pinned to another release; `pytest` runs the same check. The user configs in the README (`uvx since-cutoff@latest mcp`) and the
    `Dockerfile` (`since-cutoff>=...`) need no change.
 2. Tag `vX.Y.Z` and push the tag. `.github/workflows/release.yml` runs only for full `vX.Y.Z`
    tags, and then:
@@ -147,3 +151,8 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
 The social preview images (`docs/img/og.png`, `docs/img/social-preview.png`) are rendered from
 `scripts/social-card.html`; the file says how. Upload `social-preview.png` under the repository's
 Settings, "Social preview".
+
+The README's images are rendered too: `python scripts/readme_images.py` writes the hero card and
+the "How it works" diagram in each language, and `python scripts/demo_svg.py scan
+examples/agent-app` writes `docs/img/scan.svg` from a real scan of the sample project (no model
+is called). Update the scan output quoted in the READMEs when the scan's output changes.

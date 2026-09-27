@@ -8,7 +8,10 @@ account, no server of its own and no telemetry, and it collects no personal data
 - Your project's dependency files (lockfiles, `requirements*.txt`, `pyproject.toml`, `.venv`
   metadata) and its Python files, to see which dependencies you pin and which of their names
   your code uses. This stays on your machine.
-- With the default model (`claude-code`), the `model` setting in `~/.claude/settings.json`.
+- The notes block in `AGENTS.md` or `CLAUDE.md`, for `sync`, `status` and `unapply`.
+- Without `--model`, the model fields of your coding agent's settings (Claude Code, Codex,
+  OpenCode, Aider) and the `SINCE_CUTOFF_MODEL`, `ANTHROPIC_MODEL` and `AIDER_MODEL` variables,
+  to know which model to use. Only the model fields are read.
 
 ## What it sends, and where
 
@@ -21,8 +24,14 @@ account, no server of its own and no telemetry, and it collects no personal data
   and, for notes, the model's own answers. Never your source code. With `--model claude-code`
   the prompts go through your local `claude` CLI. Requests to OpenRouter carry headers that
   name since-cutoff (`HTTP-Referer`, `X-OpenRouter-Title`), not you or your project.
-- `scan`, the MCP server, the GitHub Action and the pre-commit hook call no model and send no
-  prompts.
+- `scan`, `sync`, `status`, the MCP server, the GitHub Action and the pre-commit hooks call no
+  model and send no prompts. `status` sends nothing at all.
+
+Locations and code snippets shown by `scan` stay on your machine; `run` prompts never contain
+your project's code. (For now `scan` shows file names, not lines or code.) They leave it only
+where you send them: `scan --markdown` and `--annotate github` write them for a CI job's summary
+and annotations, and the MCP tool `project_changes` returns them to the coding agent that called
+it, which passes tool results on to its model like any others.
 
 Requests carry a `since-cutoff/<version>` user agent. Each service's own privacy policy applies
 to what it receives.
@@ -33,8 +42,9 @@ to what it receives.
   ignores itself).
 - A local cache of PyPI data, package sources, API diffs and model answers. `since-cutoff cache
   path` shows where it is; `since-cutoff cache clear` removes it.
-- With `--apply` only: one marked block in `AGENTS.md` or `CLAUDE.md`. `since-cutoff unapply`
-  removes it.
+- With `sync` (after it shows you the diff and you agree, or with `--yes`) or `run --apply`
+  only: one marked block in `AGENTS.md` or `CLAUDE.md`. Text outside it is left as it is, and
+  `since-cutoff unapply` removes the block.
 
 ## Contact
 

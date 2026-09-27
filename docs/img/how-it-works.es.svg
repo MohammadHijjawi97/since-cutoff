@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="640" height="508" viewBox="0 0 640 508" role="img" aria-labelledby="title desc" xml:lang="es">
 <title id="title">Cómo funciona since-cutoff</title>
-<desc id="desc">Análisis, sin llamadas al modelo: se lee el lockfile, se busca la versión de cada dependencia en la fecha de corte de entrenamiento del modelo y se compara la API pública de forma estática con griffe. Sondeo: tareas breves que requieren una API modificada, el modelo responde sin herramientas ni documentación y basedpyright comprueba la respuesta con ambas versiones. Corrección y verificación: una nota escrita por el modelo solo se conserva si su ejemplo pasa la verificación de tipos; si no, se usa una descripción del cambio tomada del diff de la API. Después se comparan las tareas reservadas sin las notas y con ellas, y --apply escribe el bloque en AGENTS.md.</desc>
+<desc id="desc">Análisis, sin llamadas al modelo: se lee el lockfile, se busca la versión de cada dependencia en la fecha de corte de entrenamiento del modelo y se compara la API pública de forma estática con griffe. Sondeo: tareas breves que requieren una API modificada, el modelo responde sin herramientas ni documentación y basedpyright comprueba la respuesta con ambas versiones. Escribir y probar las notas: una nota escrita por el modelo solo se conserva si su ejemplo pasa la verificación de tipos; si no, se usa una descripción del cambio tomada del diff de la API. Después se comparan las tareas reservadas sin las notas y con ellas, y --apply escribe el bloque en AGENTS.md.</desc>
 <style>
     .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
@@ -37,11 +37,11 @@
 <text x="64" y="298" font-size="20" class="sans text">basedpyright comprueba ambas versiones</text>
 <line x1="46" y1="313" x2="46" y2="332" stroke="#59636e" stroke-width="2" marker-end="url(#head)"/>
 <rect x="16" y="336" width="608" height="156" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="36" y="369" font-size="22" class="sans b accent">3  Corrección y verificación</text>
+<text x="36" y="369" font-size="22" class="sans b accent">3  Escribir y probar las notas</text>
 <text x="36" y="393" font-size="17" class="sans muted">decide el verificador de tipos</text>
 <line x1="46" y1="416" x2="46" y2="474" stroke="#d0d7de" stroke-width="2"/>
 <circle cx="46" cy="416" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
-<text x="64" y="422" font-size="20" class="sans text">Notas verificadas, o tomadas del diff</text>
+<text x="64" y="422" font-size="20" class="sans text">Notas: tipos comprobados, o del diff</text>
 <circle cx="46" cy="445" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
 <text x="64" y="451" font-size="20" class="sans text">Tareas reservadas: sin las notas y con ellas</text>
 <circle cx="46" cy="474" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>

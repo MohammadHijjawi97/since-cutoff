@@ -33,6 +33,14 @@ inputs:
     description: Fail the step when any dependency changed its API after the cutoff.
     required: false
     default: "false"
+  check-notes:
+    description: >-
+      Also run `since-cutoff sync --check`, and fail the job when the since-cutoff notes in
+      AGENTS.md / CLAUDE.md are out of date for the lockfile and the code (exit code 3), or
+      the block was edited by hand (exit code 4). It writes nothing. The notes keep the model
+      they were written for; `model` is used when there are none yet.
+    required: false
+    default: "false"
   step-summary:
     description: Add the Markdown summary to the job summary.
     required: false
@@ -72,6 +80,11 @@ outputs:
   report:
     description: Path to the full Markdown report (results.json is in the same directory).
     value: ${{ steps.scan.outputs.report }}
+  notes:
+    description: >-
+      With check-notes: up-to-date, out-of-date, edited-by-hand or error (empty without
+      check-notes).
+    value: ${{ steps.scan.outputs.notes }}
 
 runs:
   using: composite
@@ -104,6 +117,7 @@ runs:
         SC_EXCLUDE: ${{ inputs.exclude }}
         SC_CUTOFF: ${{ inputs.cutoff }}
         SC_FAIL: ${{ inputs.fail-on-changes }}
+        SC_CHECK_NOTES: ${{ inputs.check-notes }}
         SC_STEP_SUMMARY: ${{ inputs.step-summary }}
         SC_ARGS: ${{ inputs.args }}
         SC_VERSION: ${{ inputs.since-cutoff-version }}
@@ -158,6 +172,27 @@ runs:
           echo "markdown=$summary" >> "$GITHUB_OUTPUT"
           if [ "$SC_STEP_SUMMARY" = "true" ]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
         fi
+
+        # The notes: sync --check writes nothing. A block keeps its model and cutoff; the model
+        # input is for a project with no block yet (sync reads it from SINCE_CUTOFF_MODEL), and
+        # so is the cutoff input, as for the scan above. only and exclude do not apply: the
+        # notes are for the whole project.
+        notes_status=0
+        if [ "$SC_CHECK_NOTES" = "true" ]; then
+          notes_args=(sync "$SC_WORKDIR" --check)
+          if [ -n "$SC_CUTOFF" ] && ! grep -qs -- '<!-- since-cutoff:start -->' "$SC_WORKDIR/AGENTS.md" "$SC_WORKDIR/CLAUDE.md"; then
+            notes_args+=(--model "$SC_MODEL" --cutoff "$SC_CUTOFF")
+          fi
+          SINCE_CUTOFF_MODEL="$SC_MODEL" uvx "${from[@]}" since-cutoff "${notes_args[@]}" || notes_status=$?
+          case "$notes_status" in
+            0) notes=up-to-date ;;
+            3) notes=out-of-date ;;
+            4) notes=edited-by-hand ;;
+            *) notes=error ;;
+          esac
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+        fi
+        echo "notes-exit-code=$notes_status" >> "$GITHUB_OUTPUT"
         exit 0
 
     - name: Save the since-cutoff cache
@@ -168,14 +203,23 @@ runs:
         key: ${{ steps.cache.outputs.cache-primary-key }}
 
     - name: Report the result
-      if: ${{ !cancelled() && steps.scan.outputs.exit-code != '' && steps.scan.outputs.exit-code != '0' }}
+      if: ${{ !cancelled() && steps.scan.outputs.exit-code != '' && (steps.scan.outputs.exit-code != '0' || steps.scan.outputs.notes-exit-code != '0') }}
       shell: bash
       env:
         SC_STATUS: ${{ steps.scan.outputs.exit-code }}
+        SC_NOTES_STATUS: ${{ steps.scan.outputs.notes-exit-code }}
         SC_MODEL: ${{ inputs.model }}
         SC_CHANGED: ${{ steps.scan.outputs.changed-packages }}
       run: |
         if [ "$SC_STATUS" = "3" ]; then
           echo "::error title=since-cutoff::API changes since the training cutoff of $SC_MODEL in: ${SC_CHANGED//,/, }"
         fi
-        exit "$SC_STATUS"
+        if [ "$SC_NOTES_STATUS" = "3" ]; then
+          echo "::error title=since-cutoff::The since-cutoff notes in AGENTS.md / CLAUDE.md are out of date: run since-cutoff sync and commit the file"
+        elif [ "$SC_NOTES_STATUS" = "4" ]; then
+          echo "::error title=since-cutoff::The since-cutoff notes block was edited by hand: move your text below it, or run since-cutoff sync --force"
+        fi
+        if [ "$SC_STATUS" != "0" ]; then
+          exit "$SC_STATUS"
+        fi
+        exit "${SC_NOTES_STATUS:-0}"

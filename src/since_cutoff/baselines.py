@@ -1,10 +1,11 @@
-"""Baseline notes for ``run --compare``: what the verified notes are measured against.
+"""Baseline notes for ``run --compare``: what a run's notes are measured against.
 
-Each baseline turns the failing API changes into a block in the same format as the verified
-notes (:func:`notes.render_block`, same header), with no model call:
+Each baseline turns the failing API changes into a block with no model call, in the format 0.3
+wrote (:func:`notes.render_legacy_block`, same header), so that the numbers measured with them
+stay comparable with 0.3's:
 
 - **template**: one plain sentence per change from the API diff (:func:`notes.template_bullet`),
-  the text a verified note falls back to when it cannot be verified.
+  the text 0.3 fell back to when a model's note did not type-check.
 - **signatures**: what the new version's own API says about the API to use, and nothing about
   what changed: the signature and first docstring paragraph of the changed callable (a moved
   object at its new path, a changed ``__init__`` as its class). For a removal or a deprecation
@@ -14,14 +15,12 @@ notes (:func:`notes.render_block`, same header), with no model call:
   say about it.
 
 The engine answers every held-out task once without notes and once per block, so every
-baseline is paired against the same answers without notes as the verified notes
+baseline is paired against the same answers without notes as the run's notes
 (:meth:`engine.RunResult.pairing`).
 """
 
 from __future__ import annotations
 
-import keyword
-import re
 from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
@@ -31,13 +30,19 @@ from since_cutoff.apidiff import (
     MOVED,
     REMOVED,
     APIChange,
+    candidate_paths,
     doc_summary,
     find_object,
+    is_callable_api,
     signature_of,
+)
+from since_cutoff.apidiff import (  # where it lived before 0.4.0
+    replacement_candidates as replacement_candidates,
 )
 from since_cutoff.notes import Note, safe_text, template_bullet
 
-# The notes blocks a run can verify (``run --compare``). The verified notes are always one.
+# The notes blocks a run can test (``run --compare``). The run's own notes are always one;
+# their id is still ``verified`` (results.json), as it has been since 0.2.
 ARM_VERIFIED = "verified"
 ARM_TEMPLATE = "template"
 ARM_SIGNATURES = "signatures"
@@ -53,59 +58,6 @@ class Reference(NamedTuple):
     path: str  # public path, as the bullet names it
     signature: str | None  # apidiff.signature_of
     doc: str | None  # first docstring paragraph (apidiff.doc_summary)
-
-
-_CODE_SPAN = re.compile(r"`([^`]+)`")
-_ROLE = re.compile(r":(?:\w+:)+(?=`)")  # Sphinx roles: :func:`x`, :py:meth:`x`
-_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
-# Words of deprecation notes that are never the replacement's name.
-_PROSE = {
-    "use",
-    "using",
-    "prefer",
-    "instead",
-    "replace",
-    "replacement",
-    "alternative",
-    "deprecated",
-    "deprecation",
-    "removed",
-    "will",
-    "the",
-    "and",
-    "for",
-    "with",
-    "from",
-    "this",
-    "that",
-    "since",
-    "version",
-    "release",
-    "future",
-    "please",
-    "favor",
-    "favour",
-    "replaced",
-    "now",
-    "new",
-    "old",
-    "call",
-    "see",
-    "not",
-    "has",
-    "been",
-    "was",
-    "are",
-    "its",
-    "method",
-    "function",
-    "class",
-    "argument",
-    "parameter",
-    "attribute",
-    "module",
-    "warning",
-}
 
 
 def template_notes(changes: Iterable[APIChange]) -> list[Note]:
@@ -231,52 +183,11 @@ def replacement(change: APIChange, api: ApiLookup) -> Reference | None:
     root = api(change)
     if root is None:
         return None
-    for path in _candidate_paths(change, text, root.path):
+    for path in candidate_paths(change, text, root.path):
         obj = find_object(root, path)
-        if _is_callable_api(obj, root.path):
+        if is_callable_api(obj, root.path):
             return Reference(path, signature_of(obj), doc_summary(obj))
     return None
-
-
-def replacement_candidates(text: str) -> list[str]:
-    """Names a deprecation note may give as the replacement, the code-like ones first."""
-    text = _ROLE.sub(" ", text)
-    code: list[str] = []
-    for span in _CODE_SPAN.findall(text):
-        code += _NAME.findall(span.lstrip("~"))  # Sphinx's :func:`~pkg.name`
-    words: list[str] = []
-    prose = _CODE_SPAN.sub(" ", text)
-    for m in _NAME.finditer(prose):
-        name = m.group()
-        called = prose[m.end() : m.end() + 1] == "("
-        if called or "." in name or "_" in name or any(c.isupper() for c in name[1:]):
-            code.append(name)
-        elif len(name) > 2 and name.lower() not in _PROSE and not keyword.iskeyword(name):
-            words.append(name)
-    return list(dict.fromkeys(code + words))
-
-
-def _candidate_paths(change: APIChange, text: str, root: str) -> list[str]:
-    """Full paths to try for each candidate name: absolute, then in the owner, module, package."""
-    scopes = [f"{change.module}.{change.owner}"] if change.owner else []
-    scopes += [change.module, root]
-    paths: list[str] = []
-    for name in replacement_candidates(text):
-        if name in (change.name, change.owner) or any(p.startswith("_") for p in name.split(".")):
-            continue
-        if name == root or name.startswith(root + "."):
-            paths.append(name)
-        else:
-            paths += [f"{scope}.{name}" for scope in scopes]
-    return [p for p in dict.fromkeys(paths) if p != change.path]
-
-
-def _is_callable_api(obj: Any, root: str) -> bool:
-    """A function or class defined in the package itself (not a re-exported dependency)."""
-    if obj is None or not (getattr(obj, "is_function", False) or getattr(obj, "is_class", False)):
-        return False
-    top = root.split(".")[0]
-    return str(getattr(obj, "path", "")).split(".")[0] == top
 
 
 def _code(text: str) -> str:

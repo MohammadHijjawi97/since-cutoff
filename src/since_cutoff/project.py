@@ -92,6 +92,9 @@ class Dependency:
     # The range the project declares for a version nothing pins (``>=4.54,<5``): the scan
     # takes the newest release in it. Empty when any version goes.
     specifier: str = ""
+    # The file that pins it, for a version from the project's own files (source "pinned"):
+    # ``pyproject.toml``, ``requirements.txt``.
+    pinned_in: str | None = None
 
     @property
     def key(self) -> str:
@@ -126,6 +129,16 @@ class Project:
 
     def direct(self) -> list[Dependency]:
         return [d for d in self.dependencies if d.direct]
+
+    @property
+    def versions_word(self) -> str:
+        """Where the versions come from, for a sentence: the lockfile or the file that pins
+        them (``uv.lock``, ``pyproject.toml``), "your virtual environment", or "your
+        dependencies" when PyPI's latest releases stand in for pins."""
+        first = self.version_source.split(",")[0].strip()
+        if not first or first.startswith("latest on PyPI"):
+            return "your dependencies"
+        return "your virtual environment" if first in VENV_DIRS else first
 
     def imports(self, import_names: Iterable[str]) -> bool:
         """Whether the project's code imports any of a distribution's import names.
@@ -218,7 +231,10 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
         non_pypi = lock.non_pypi.get(key) or local.get(key)
         direct = key in direct_names or key in local
         specifier = "" if version else ranges.get(key, "")
-        deps.append(Dependency(key, version, direct, source or "unpinned", non_pypi, specifier))
+        where = pinned_in.get(key) if source == "pinned" else None
+        deps.append(
+            Dependency(key, version, direct, source or "unpinned", non_pypi, specifier, where)
+        )
 
     sources = scan_sources(root)
     if version_source:
@@ -957,6 +973,26 @@ class FileUse:
     # shows is an instance of one: ``app = Starlette(...)`` and ``app.routes``,
     # ``Client().send``, ``def f(c: Client): c.send``, ``self.routes`` in a subclass.
     members: frozenset[tuple[str, str]] = frozenset()
+    # The file, relative to the project root, with "/" on every system: ``app/main.py``
+    # (:func:`scan_sources`); "" when unknown. Where the code uses a change is file-level for
+    # now (selection.uses); the lines and columns are issue #8's.
+    file: str = ""
+    # Every chain of two or more names read with dots, from its first name (or the first
+    # attribute after a call): ``client.beta.messages.create``, ``get().messages.create`` as
+    # ``messages.create``. What ``pairs`` cannot tell: whether ``messages.create`` is reached
+    # through ``beta``.
+    chains: frozenset[str] = frozenset()
+    # ``(callable, keyword)`` of each keyword argument whose callable the file shows the path
+    # of: an imported name (``fetch(retries=1)`` after ``from toylib import fetch``:
+    # ``toylib.fetch``), a name read on an imported module or class (``toylib.fetch``,
+    # ``toylib.Client.send``), or a method of what the file shows is an instance of an
+    # imported class (``Client().send(...)``, ``c.send(...)`` after ``c = Client()``, and
+    # ``self.send(...)`` in a subclass: ``toylib.Client.send``). ``keywords`` has the same
+    # arguments by the callable's last name only, which any library's ``create`` shares.
+    keyword_paths: frozenset[tuple[str, str]] = frozenset()
+    # ``(chain, keyword)`` of each keyword argument passed to a method read at the end of a
+    # chain (``chains``): ``("client.messages.create", "temperature")``.
+    keyword_chains: frozenset[tuple[str, str]] = frozenset()
 
     def imports(self, import_names: Iterable[str]) -> bool:
         """Whether the file imports a distribution with these import names (``requests``,
@@ -991,14 +1027,16 @@ def scan_sources(root: Path) -> SourceScan:
         # Python 3.13 cannot parse some generated code either: 3000 strings joined with "+".
         except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
             continue
-        use = scan_file(tree)
+        # ``app/main.py``: relative to the project root, with "/" on every system.
+        use = scan_file(tree, path.relative_to(root).as_posix())
         modules.update(p for p in use.paths if "." not in p)
         files.append(use)
     return SourceScan(modules, files)
 
 
-def scan_file(tree: ast.AST) -> FileUse:
-    """What one parsed file reaches through its imports (see :class:`FileUse`).
+def scan_file(tree: ast.AST, file: str = "") -> FileUse:
+    """What one parsed file reaches through its imports (see :class:`FileUse`); ``file`` is
+    its path relative to the project root.
 
     Imports anywhere in the file count (in functions, under ``if TYPE_CHECKING:``), relative
     imports (the project's own modules) do not. After ``from pkg import *``, a name the file
@@ -1071,20 +1109,42 @@ def scan_file(tree: ast.AST) -> FileUse:
             holds(node.arg, classes(node.annotation))
 
     members: set[tuple[str, str]] = set()
+    keyword_paths: set[tuple[str, str]] = set()
     for node in nodes:
         bases = {p for p in map(resolve, node.bases) if p} if isinstance(node, ast.ClassDef) else ()
         for n in ast.walk(node) if bases else ():
             # ``self.routes`` or ``super().routes`` in a subclass of an imported class.
-            if isinstance(n, ast.Attribute) and (
-                (isinstance(n.value, ast.Name) and n.value.id in ("self", "cls"))
-                or (isinstance(n.value, ast.Call) and _dotted(n.value.func) == "super")
-            ):
+            if isinstance(n, ast.Attribute) and _on_self(n.value):
                 members.update((base, n.attr) for base in bases)
+            elif (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and _on_self(n.func.value)
+            ):
+                keyword_paths.update(
+                    (f"{base}.{n.func.attr}", k.arg) for base in bases for k in n.keywords if k.arg
+                )
+
+    def callee_paths(func: ast.expr) -> set[str]:
+        """The paths of what a call calls, as far as the file shows them (see keyword_paths)."""
+        if isinstance(func, ast.Name):
+            if func.id in bound:
+                return {bound[func.id]}
+            return {f"{module}.{func.id}" for module in star}
+        if not isinstance(func, ast.Attribute):
+            return set()
+        named = resolve(func.value)
+        if named:
+            return {f"{named}.{func.attr}"}
+        kinds = made(func.value) or instances.get(_dotted(func.value) or "", set())
+        return {f"{kind}.{func.attr}" for kind in kinds}
 
     attributes: set[str] = set()
     pairs: set[str] = set()
+    chains: set[str] = set()
     calls: set[str] = set()
     keywords: set[tuple[str, str]] = set()
+    keyword_chains: set[tuple[str, str]] = set()
     for node in nodes:
         if isinstance(node, ast.Attribute):
             attributes.add(node.attr)
@@ -1097,6 +1157,9 @@ def scan_file(tree: ast.AST) -> FileUse:
                 pairs.add(f"{inner.attr}.{node.attr}")
             elif isinstance(inner, ast.Name):
                 pairs.add(f"{inner.id}.{node.attr}")
+            names = _chain(node)
+            if names:
+                chains.add(names)
             named = resolve(inner)  # ``Starlette.routes``, or a module's attribute
             kinds = {named} if named else made(inner) or instances.get(_dotted(inner) or "", set())
             members.update((kind, node.attr) for kind in kinds)
@@ -1112,7 +1175,12 @@ def scan_file(tree: ast.AST) -> FileUse:
                 callee = bound.get(func.id, func.id).rsplit(".", 1)[-1]
             if callee:
                 calls.add(callee)
-                keywords.update((callee, k.arg) for k in node.keywords if k.arg)
+                passed = [k.arg for k in node.keywords if k.arg]
+                keywords.update((callee, k) for k in passed)
+                keyword_paths.update((p, k) for p in callee_paths(func) for k in passed)
+                names = _chain(func) if isinstance(func, ast.Attribute) else None
+                if names:
+                    keyword_chains.update((names, k) for k in passed)
     return FileUse(
         frozenset(paths),
         frozenset(attributes),
@@ -1120,7 +1188,31 @@ def scan_file(tree: ast.AST) -> FileUse:
         frozenset(calls),
         frozenset(keywords),
         frozenset(members),
+        file,
+        frozenset(chains),
+        frozenset(keyword_paths),
+        frozenset(keyword_chains),
     )
+
+
+def _on_self(node: ast.expr) -> bool:
+    """``self``, ``cls`` or ``super()``: what a method reads its own class's members on."""
+    return (isinstance(node, ast.Name) and node.id in ("self", "cls")) or (
+        isinstance(node, ast.Call) and _dotted(node.func) == "super"
+    )
+
+
+def _chain(node: ast.expr) -> str | None:
+    """``client.beta.messages.create`` for an attribute chain, from its first name, or from
+    the first attribute after anything else (``get().messages.create``: ``messages.create``);
+    None for fewer than two names."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts)) if len(parts) >= 2 else None
 
 
 def _dotted(node: ast.expr) -> str | None:

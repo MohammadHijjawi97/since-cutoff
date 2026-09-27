@@ -29,6 +29,7 @@ from packaging.utils import canonicalize_name
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
     DEPRECATED,
+    HINT_WARNING,
     KIND_CHANGED,
     MOVED,
     PARAM_KEYWORD_ONLY,
@@ -51,6 +52,7 @@ from since_cutoff.engine import (
     Reporter,
     ScanResult,
     Settings,
+    UsedAPI,
 )
 from since_cutoff.errors import ModelLookupError, PackageIndexError, SinceCutoffError
 from since_cutoff.models import (
@@ -59,10 +61,12 @@ from since_cutoff.models import (
     ModelRegistry,
     parse_cutoff,
 )
+from since_cutoff.notes import rename_text, runtime_text, similar_text
 from since_cutoff.project import FileUse, load_project
 from since_cutoff.providers import KNOWN_PROVIDERS
 from since_cutoff.pypi import PyPI, Release
-from since_cutoff.selection import other_paths_text, uses_text
+from since_cutoff.report import LOCATIONS_SHOWN, api_display, changes_text, places, use_text
+from since_cutoff.selection import FORM_LABELS, OLD_FORM, other_paths_text, uses_text
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -78,17 +82,20 @@ since-cutoff reports which public APIs of a Python library changed after your tr
 cutoff, so you do not write code for an API version the project no longer has.
 
 Call it before writing or fixing Python code that uses a third-party library whose installed \
-or pinned version may be newer than your training data (check the lockfile or requirements), \
-and when code fails on an unknown name, import or parameter of a library.
+or pinned version may have been released after your reported training cutoff (check the \
+lockfile or requirements), and when code fails on an unknown name, import or parameter of a \
+library.
 - Pass your own model id as `model` (for example "claude-sonnet-4-5" or "gpt-5.4"). If you \
 know your training cutoff instead, pass it as `cutoff` ("YYYY-MM").
-- project_changes: every dependency of a project at once, at the versions it pins. The first call on a large project can take several minutes; later calls are served from a cache.
+- project_changes: every dependency of a project at once, at the versions it pins, starting with the changed APIs the project's code uses and a note for each. The first call on a large project can take several minutes; later calls are served from a cache.
 - api_changes: one package; pass `symbol` to narrow it to the functions or classes you use.
 - model_cutoff: a model's training cutoff.
 
-Trust the removals, moves and new required parameters it reports over your memory of the \
-library. The tools read PyPI metadata and package sources statically; they never run package \
-code or call a model. Behaviour changes behind an unchanged signature are not visible to them."""
+Where your memory of a library disagrees, prefer the removals, moves and new required \
+parameters it reports; it does not see behaviour changes or runtime shims (a library may still \
+accept a removed argument, with a warning). The tools read PyPI metadata and package sources \
+statically; they never run package code or call a model. Names it calls "similar" are not \
+confirmed as replacements."""
 
 _PROVIDER_PREFIXES = frozenset({*KNOWN_PROVIDERS, *PROVIDER_ALIASES})
 _CLAUDE_FAMILIES = ("sonnet", "opus", "haiku", "fable")
@@ -153,7 +160,8 @@ class Tools:
 
     # ----------------------------------------------------------------- tools
     def model_cutoff(self, model: str) -> str:
-        """Look up a model's training cutoff: library releases after it are not in its data.
+        """Look up a model's training cutoff: library releases after it may be missing from
+        its training data.
 
         Use it to find or confirm your own cutoff. The other two tools do not need it first:
         they take `model` and look the cutoff up themselves.
@@ -186,9 +194,10 @@ class Tools:
         if note:
             lines.append(note)
         lines.append(
-            f"Library releases published after {info.knowledge.isoformat()} are not in this "
-            f'model\'s training data: check them with api_changes(package, model="{info.id}") '
-            f'or project_changes(project_dir, model="{info.id}").'
+            f"Library releases published after {info.knowledge.isoformat()} came after this "
+            "model's reported training cutoff, so they may be missing from its training data: "
+            f'check them with api_changes(package, model="{info.id}") or '
+            f'project_changes(project_dir, model="{info.id}").'
         )
         return "\n".join(lines)
 
@@ -206,8 +215,9 @@ class Tools:
     ) -> str:
         """List the public API changes of one PyPI package since a model's training cutoff.
 
-        Use it before writing code against a library version that may be newer than your
-        training data (check the lockfile or requirements for the version), or when code fails
+        Use it before writing code against a library version that may have been released
+        after your training cutoff (check the lockfile or requirements for the version), or
+        when code fails
         on a name, import or parameter of that library. Pass `symbol` to see only the functions
         or classes you are about to use. For all dependencies of a project in one call, use
         project_changes.
@@ -247,9 +257,11 @@ class Tools:
         kind; then sections "Removed or moved", "Parameters removed", "Parameters now
         required", "Changed kind", "Now keyword-only or positional-only" and "Deprecated", one
         line per change with what to use instead when the diff knows it (the new import, the
-        new signature, similar names). A change reachable under several import paths is listed
-        once. If the package had no release by the cutoff, a short note says its whole API is
-        newer than your training data.
+        new signature, a parameter probably renamed in place, what the old version's
+        deprecation text said), and names that merely look similar, labelled as not confirmed.
+        A change reachable under several import paths is listed once. If the package had no
+        release by the cutoff, a short note says its whole API was released after your
+        reported training cutoff.
         """
         name, pinned = _split_requirement(package)
         to_version = (to_version or "").strip() or pinned
@@ -373,15 +385,21 @@ class Tools:
         One of `model` or `cutoff` is required.
 
         Returns Markdown: a heading with the number of dependencies checked and where their
-        versions came from; bullets with the cutoff and how many dependencies changed, were
-        first released after the cutoff, are unchanged, or could not be checked; then one
-        "## <package> <old> (<date>) -> <new> (<date>)" section per changed dependency, those
-        the code imports first, with its counts and its top changes: first "Touching names your
-        code uses" (each marked "[your code uses ...]"), then the rest grouped as in
-        api_changes; then the dependencies released after the cutoff and those that could not
-        be checked. The answer stays under about 24,000 characters: past that, the remaining
-        changed dependencies get one line each, under "N more with API changes"; pass them in
-        `only` to see their changes.
+        versions came from; bullets with the cutoff, how many of the changed APIs the project's
+        code uses, and how many dependencies changed, were first released after the cutoff, are
+        unchanged, or could not be checked; then "## Your code uses these changed APIs": each
+        changed API the code uses, with what changed, "old form" (the code uses it as the
+        release at the cutoff allowed) or "uses this API", the files that use it (at most 3),
+        the note to follow with its tag ([diff]: from the static diff; [library]: the
+        replacement is named in the library's own deprecation text), the runtime caveat when
+        the pinned source still accepts a removed name, and similar names, not confirmed as
+        replacements; then one "## <package> <old> (<date>) -> <new> (<date>)" section per
+        changed dependency, those the code imports first, with its counts and its top changes:
+        first "Touching names your code uses" (each marked "[your code uses ...]"), then the
+        rest grouped as in api_changes; then the dependencies released after the cutoff and
+        those that could not be checked. The answer stays under about 24,000 characters: past
+        that, the remaining changed dependencies get one line each, under "N more with API
+        changes"; pass them in `only` to see their changes.
         """
         target = self._target(model, cutoff)
         project = load_project(_project_root(project_dir))
@@ -481,19 +499,30 @@ class Tools:
 
 # ------------------------------------------------------------------ rendering
 def change_line(change: APIChange) -> str:
-    """One actionable line: what changed, and what to use instead when the diff knows it."""
+    """One actionable line: what changed, and what to use instead when the diff knows it.
+
+    Names that merely look similar are labelled as not confirmed (and left out where the
+    library says there is no replacement); a parameter renamed in place is a probable rename.
+    """
     parts = [change.describe(versioned=False)]
     if change.kind == MOVED and change.moved_to:
         module, _, name = change.moved_to.rpartition(".")
         parts.append(f"import it with `from {module} import {name}`")
-    elif change.suggestions:
-        what = "parameters" if change.kind == PARAM_REMOVED else "names"
-        parts.append(f"similar {what} now: " + ", ".join(f"`{s}`" for s in change.suggestions))
+    else:
+        found = rename_text(change) or similar_text(change)
+        if found:
+            parts.append(found)
     signature = change.new_signature
     if signature and change.kind in _SIGNATURE_KINDS and signature.strip() != change.name:
         parts.append(f"now `{_clip(signature, 160)}`")
     if change.hint and change.kind != DEPRECATED:
-        parts.append(f"the old docs said: {_clip(change.hint.rstrip(' .;'), 200)}")
+        said = (
+            "the old version warned" if change.hint_source == HINT_WARNING else "the old docs said"
+        )
+        parts.append(f"{said}: {_clip(change.hint.rstrip(' .;'), 200)}")
+    runtime = runtime_text([change])
+    if runtime:
+        parts.append(runtime.rstrip("."))
     if change.occurrences > 1:
         parts.append(other_paths_text(change))
     return _clip("; ".join(parts), 480)
@@ -553,10 +582,15 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
     missing = sorted({canonicalize_name(s) for s in only} - known)
     if missing:
         out.append(f"- `only` names no dependency of this project: {', '.join(missing)}")
+    out += _used_section(scan)
 
     tail: list[str] = []
     if new:
-        tail += ["", "## First released after the cutoff (you have never seen their API)", ""]
+        tail += [
+            "",
+            "## First released after the cutoff (so they may be missing from your training data)",
+            "",
+        ]
         tail += _capped(
             [
                 f"- {p.name} {p.locked or ''} ({p.locked_date or 'date unknown'})"
@@ -593,6 +627,66 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
         room -= _size(section)
         shown += 1
     return "\n".join(out + _brief(changed[shown:]) + tail) + "\n"
+
+
+def _used_section(scan: ScanResult) -> list[str]:
+    """project_changes' first section: each changed API the project's code uses, with where
+    (at most LOCATIONS_SHOWN files; the lines are issue #8's) and its note, in at most half of
+    PROJECT_BUDGET, then the dependencies first released after the cutoff that the code
+    imports; the bullet before it says how many APIs there are."""
+    used = scan.used_apis()
+    imported = [
+        f"- Your code imports {p.name} {p.locked}, first released "
+        f"{p.first_released or 'after the cutoff'}: released after your reported training "
+        "cutoff, so its whole API may be missing from your training data."
+        for p in scan.new_imported()
+    ]
+    if not used:
+        none = ["- Your code uses none of the APIs that changed after the cutoff"]
+        return [*(none if scan.changed else []), *imported]
+    old = sum(u.form == OLD_FORM for u in used)
+    out = [
+        f"- Your code uses {_plural(len(used), 'API')} that changed after the cutoff, "
+        f"{old or 'none'} in the old form (as the release at the cutoff allowed; a static name "
+        "match)",
+        "",
+        "## Your code uses these changed APIs",
+    ]
+    room = PROJECT_BUDGET // 2
+    for i, u in enumerate(used):
+        entry = _used_entry(u)
+        if _size(entry) > room:
+            out += ["", f"- ... and {len(used) - i} more: pass `only` to see them"]
+            break
+        out += entry
+        room -= _size(entry)
+    for line in imported:
+        out += ["", line]
+    return out
+
+
+def _used_entry(u: UsedAPI) -> list[str]:
+    """One used API in project_changes."""
+    p = u.package
+    _, change = changes_text(u.changes, code=True)
+    shown = places(u)
+    wheres = [f"{w} ({use_text(here, code=True)})" for w, here in shown[:LOCATIONS_SHOWN]]
+    if len(shown) > LOCATIONS_SHOWN:
+        wheres.append(f"and {len(shown) - LOCATIONS_SHOWN} more")
+    out = [
+        "",
+        f"- `{api_display(u)}` ({p.name} {p.cutoff_version} -> {p.locked}): {change} "
+        f"[{FORM_LABELS[u.form]}]",
+        f"  - used in {'; '.join(wheres) or 'your code'}",
+        f"  - note: {_clip(u.note.line, 1200)}",
+    ]
+    runtime = runtime_text(u.changes)
+    if runtime:
+        out.append(f"  - runtime: {runtime}")
+    if u.note.not_confirmed:
+        names = ", ".join(f"`{n}`" for n in u.note.not_confirmed[:10])
+        out.append(f"  - similar names in {p.locked}, not confirmed as replacements: {names}")
+    return out
 
 
 def _brief(packages: list[PackageScan]) -> list[str]:
@@ -655,8 +749,8 @@ def _size(lines: list[str]) -> int:
 def _placeholder_note(old: Release, new: Release) -> str:
     return (
         f"{old.version} was an empty placeholder that only reserved the name: the API of "
-        f"{new.version} is newer than your training data. Read its documentation or source "
-        "before using it."
+        f"{new.version} was released after your reported training cutoff, so it may be missing "
+        "from your training data. Read its documentation or source before using it."
     )
 
 
@@ -664,8 +758,9 @@ def _newer_than_cutoff(name: str, latest: Release, target: Target) -> str:
     return (
         f"# {name}: no release on or before the cutoff\n\n"
         f"{name} had no release on or before {target.cutoff.isoformat()} "
-        f"({target.label}); {latest.version} was published {_day(latest)}. Its whole API is "
-        "newer than your training data: read its documentation or source before using it.\n"
+        f"({target.label}); {latest.version} was published {_day(latest)}. Its whole API was "
+        "released after your reported training cutoff, so it may be missing from your training "
+        "data: read its documentation or source before using it.\n"
     )
 
 
@@ -789,6 +884,7 @@ def _contains(change: APIChange, needle: str, *, whole: bool = False) -> bool:
     as ``Redis``, which is not ``RedisCluster``), must appear as whole segments.
     """
     fields = [change.path, change.short_path, change.moved_to, *change.also]
+    fields += change.import_paths or ()  # re-exports: ``huggingface_hub.hf_hub_download``
     parts = [_without_root(f).split(".") for f in fields if f]
     if change.parameter:
         parts.append([change.parameter])

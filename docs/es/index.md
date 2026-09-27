@@ -19,13 +19,19 @@ image:
 **since-cutoff** es una herramienta de línea de comandos de código abierto y un servidor MCP para
 proyectos de Python escritos con agentes de programación. Enumera los cambios que ha tenido la API
 pública de tus dependencias, en las versiones que tienes fijadas, desde la fecha de corte de
-entrenamiento del modelo; mide en cuáles se equivoca el modelo y escribe notas breves en
-AGENTS.md, cada una con un ejemplo que pasa el verificador de tipos para tu versión o redactada
-directamente a partir del diff de la API.
+entrenamiento del modelo, y muestra en qué lugares de tu código se usan las API que cambiaron;
+escribe notas breves en AGENTS.md sobre esos cambios a partir del diff de la API y las mantiene
+al día con tu lockfile, y puede medir en cuáles se equivoca el modelo y si las notas ayudan.
+Cada nota lleva una etiqueta que dice qué se comprobó: redactada a partir del diff de la API, o
+escrita por el modelo y conservada solo si su ejemplo pasa el verificador de tipos para tu
+versión.
 
 ```bash
-# qué ha cambiado desde la fecha de corte de tu modelo (sin llamadas al modelo, sin clave de API)
+# las API modificadas que usa tu código, con una nota para cada una (sin llamadas al modelo, sin clave de API)
 uvx since-cutoff scan
+
+# escribir las notas en AGENTS.md y mantenerlas al día (sin llamadas al modelo)
+uvx since-cutoff sync
 
 # medir el modelo, escribir notas y añadirlas a AGENTS.md
 uvx since-cutoff run --apply
@@ -83,7 +89,7 @@ y **Claude Opus 4.6** (mayo de 2025). Las tareas y las notas las escribió Claud
    - **stale**: válida para la versión de comparación, inválida para la fijada
    - **wrong**: inválida, y no se explica por el cambio de versión
    - **deprecated**: válida, pero usa una API marcada con `@deprecated` en la versión fijada
-5. **Corrección y verificación.** Para cada fallo se escribe una nota de una línea para
+5. **Escribir y probar las notas.** Para cada fallo se escribe una nota de una línea para
    AGENTS.md. Una nota escrita por el modelo solo se conserva si su ejemplo pasa la verificación
    de tipos con la versión fijada y si todas las API que recomienda aparecen en ese ejemplo; si
    no, la nota es una descripción del cambio tomada directamente del diff de la API. Después, las
@@ -166,8 +172,11 @@ una utilidad muy práctica: la respuesta es una lista de líneas para poner en A
 ## Pruébalo
 
 ```bash
-# qué ha cambiado desde la fecha de corte de tu modelo (sin llamadas al modelo)
+# las API modificadas que usa tu código, con una nota para cada una (sin llamadas al modelo)
 uvx since-cutoff scan
+
+# escribir las notas en AGENTS.md y mantenerlas al día (sin llamadas al modelo)
+uvx since-cutoff sync
 
 # medir, escribir notas y aplicarlas a AGENTS.md
 uvx since-cutoff run --apply
@@ -178,7 +187,7 @@ cualquier servidor compatible con OpenAI.
 `since-cutoff mcp` permite a cualquier cliente MCP (Codex, Cursor, VS Code, Gemini CLI) consultar
 los cambios de una biblioteca antes de escribir código, y una
 [GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md#github-action)
-ejecuta el análisis en las pull requests. Por ahora solo admite Python; TypeScript es lo
+ejecuta el análisis en las pull requests y puede comprobar que las notas están al día. Por ahora solo admite Python; TypeScript es lo
 siguiente. Los comentarios sobre el método son muy bienvenidos en los
 [issues](https://github.com/MohammadHijjawi97/since-cutoff/issues), y los resultados de tus
 propios proyectos, en

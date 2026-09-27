@@ -1,19 +1,61 @@
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo-dark.svg">
-  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo.svg" width="96" height="96" alt="logo de since-cutoff">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/logo.svg" width="72" height="72" alt="logo de since-cutoff">
 </picture></p>
 
 <h1 align="center">since-cutoff</h1>
 
-**Pour les projets Python écrits avec un agent de code : since-cutoff repère les API de vos
-dépendances qui ont changé après la date limite d'entraînement du modèle, mesure celles sur
-lesquelles le modèle se trompe et corrige ces erreurs avec de courtes notes AGENTS.md, chacune
-validée par un vérificateur de types ou tirée directement du diff d'API.**
+**Les données d'entraînement de votre assistant de code s'arrêtent avant les dernières versions
+de vos dépendances : il peut donc écrire des appels que vos versions épinglées n'acceptent plus.
+since-cutoff montre où votre code utilise une API qui a changé après la date limite
+d'entraînement du modèle, et rédige les courtes notes dont votre assistant a besoin pour éviter
+l'ancienne forme.**
 
-<p align="center"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/hero-dark.fr.svg">
-  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/hero.fr.svg" width="640" alt="Votre modèle de code a appris vos bibliothèques avant qu'elles ne changent. Claude Opus 4.6 sur un seul projet d'exemple, mesuré avec since-cutoff 0.1.0 : sur 7 des 16 changements d'API sondés, il a utilisé un nom ou un paramètre supprimé depuis ; avec les notes, la part de tâches réservées correctes est passée de 5 % à 65 % (20 tâches). Essayez : uvx since-cutoff scan (aucun appel au modèle, aucune clé d'API).">
-</picture></p>
+Le [projet d'exemple](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)
+appelle `client.messages.create` et épingle anthropic 1.8.0. La dernière version d'anthropic à la
+date limite d'entraînement de Claude Sonnet 4.5 était la 0.60.0, dont `create` acceptait encore
+`temperature` ; la 1.8.0 lève `TypeError` pour ce paramètre. Ce qu'affiche `scan`, réduit à la
+partie anthropic :
+
+```console
+$ uvx since-cutoff scan --model anthropic:claude-sonnet-4-5
+Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31)
+
+huggingface-hub 0.34.3 -> 2.0.0 (0.34.3 was the latest release at the cutoff; pyproject.toml pins
+  2.0.0)
+  ...
+
+anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyproject.toml pins 1.8.0)
+  Messages.create: temperature, top_k and top_p were removed                          uses this API
+    app/main.py   calls create
+    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass
+          them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+
+2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
+  pyproject.toml.
+```
+
+L'appel de `app/main.py` ne passe aucun de ces paramètres : il est donc marqué « uses this API »
+(utilise cette API) et non « old form » (ancienne forme). Il fonctionne aujourd'hui, mais un
+assistant qui écrit pour la 0.60.0 pourrait ajouter `temperature=0.2` en modifiant l'appel. La
+note est ce que `since-cutoff sync` écrit dans AGENTS.md pour l'en empêcher ; son étiquette,
+`[diff]`, indique sur quoi elle repose : une comparaison statique des API publiques des deux
+versions.
+
+**Essayez-le sur votre projet.** Aucune clé d'API, aucun appel au modèle. À la racine du projet :
+
+```bash
+uvx since-cutoff scan
+```
+
+Il détecte votre modèle de code (ou passez `--model`), lit votre fichier de verrouillage, prend
+pour chaque dépendance la dernière version publiée au plus tard à la date limite d'entraînement
+du modèle et compare l'API publique de cette version à celle que vous épinglez, de façon
+statique : aucun code de paquet n'est exécuté. La date limite sert seulement à choisir les
+changements à examiner ; elle ne dit rien de ce que le modèle a mémorisé. Si votre modèle se
+trompe vraiment sur ces changements, et si les notes l'aident, c'est ce que mesure
+[`since-cutoff run`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#mesurer-votre-modèle) ;
+il appelle votre modèle et reste facultatif.
 
 [![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -26,10 +68,10 @@ validée par un vérificateur de types ou tirée directement du diff d'API.**
 ## Le problème
 
 Chaque modèle a une date limite d'entraînement ; votre fichier de verrouillage, lui, continue
-d'évoluer. Quand une bibliothèque modifie son API publique après cette date, un modèle qui a
-appris l'ancienne version continue d'écrire les anciens appels. Une partie de ce code échoue à
-l'import ou à l'appel. Une autre partie s'exécute encore, parce que l'ancienne façon de faire
-n'est que dépréciée.
+d'évoluer. Quand une bibliothèque modifie son API publique après cette date, un modèle dont les
+données d'entraînement précèdent le changement peut continuer d'écrire les anciens appels. Une
+partie de ce code échoue à l'import ou à l'appel. Une autre partie s'exécute encore, parce que
+l'ancienne façon de faire n'est que dépréciée, ou encore acceptée avec un avertissement.
 
 Quelques-uns des changements que `since-cutoff scan` trouve pour Claude Sonnet 4.5 (date limite
 d'entraînement : juillet 2025) dans le [projet d'exemple](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app),
@@ -44,8 +86,8 @@ qui épingle six de ses neuf dépendances sur les versions actuelles (pour les t
 | openai | 1.98.0 | 3.19.2 | 21 changements incompatibles, 6 nouvelles dépréciations |
 
 Dans ce projet, 7 dépendances sur 9 ont modifié leur API publique après la date limite. Le diff
-statique signale 317 changements incompatibles et 23 nouvelles dépréciations ; une partie
-concerne des éléments internes, que les sondes ignorent.
+statique signale 310 changements incompatibles et 23 nouvelles dépréciations ; le code du projet
+utilise 2 des API modifiées.
 
 Ce n'est pas l'affaire d'un seul modèle ni d'un seul fournisseur. Sur 36 bibliothèques Python
 d'IA très utilisées et 21 modèles d'OpenAI, Anthropic, Google, xAI, DeepSeek, Qwen, Moonshot et
@@ -61,44 +103,156 @@ un changement incompatible de l'API publique de 20 des 36
 Pour y remédier, since-cutoff fait trois choses :
 
 1. **`scan`** trouve, pour chaque dépendance, la version la plus récente publiée au plus tard à
-   la date limite du modèle et compare son API publique à celle de la version que vous épinglez.
-   Aucun appel au modèle, aucune clé d'API.
-2. **`run`** soumet au modèle de courtes tâches de programmation qui nécessitent les API
-   modifiées, sans outils ni documentation, et classe chaque réponse en *stale* (périmée : valide
-   seulement pour l'ancienne version), *wrong* (erronée), *deprecated* (dépréciée) ou *correct* à
-   l'aide d'un vérificateur de types appliqué aux *deux* versions. Aucun LLM ne sert de juge.
-3. **Notes** : pour chaque échec, il rédige une note d'une ligne pour AGENTS.md / CLAUDE.md. Une
-   note rédigée par le modèle n'est conservée que si son exemple passe la vérification de types
-   avec votre version ; sinon, un simple constat du changement tiré du diff d'API la remplace.
-   Il teste ensuite à nouveau le modèle sur des tâches réservées (held-out), avec et sans les
-   notes.
+   la date limite du modèle, compare son API publique à celle de la version que vous épinglez, et
+   montre lesquelles des API modifiées votre code utilise, où, avec une note pour chacune. Aucun
+   appel au modèle, aucune clé d'API.
+2. **`sync`** écrit ces notes dans un bloc balisé d'AGENTS.md (ou de CLAUDE.md) après vous avoir
+   montré le diff, et les tient à jour avec votre fichier de verrouillage ; `sync --check` et
+   `status` préviennent la CI, pre-commit et votre agent quand elles ne sont plus à jour. Chaque
+   note est rédigée à partir du diff d'API et porte une étiquette qui dit ce qui a été vérifié.
+   Aucun appel au modèle.
+3. **`run`**, facultatif, soumet au modèle de courtes tâches de programmation qui nécessitent les
+   API modifiées, sans outils ni documentation, et classe chaque réponse en *stale* (périmée :
+   valide seulement pour l'ancienne version), *wrong* (erronée), *deprecated* (dépréciée) ou
+   *correct* à l'aide d'un vérificateur de types appliqué aux *deux* versions. Aucun LLM ne sert
+   de juge. Pour chaque échec, il rédige une note, ne garde une note rédigée par le modèle que si
+   son exemple passe la vérification de types avec votre version, et teste à nouveau le modèle
+   sur des tâches réservées (held-out), sans puis avec les notes.
 
 Le même diff est accessible aux agents via un [serveur MCP](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#utilisation-depuis-nimporte-quel-agent-mcp)
-et à la CI via une [action GitHub et un hook pre-commit](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#utilisation-en-ci).
+et à la CI via une [action GitHub et des hooks pre-commit](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#utilisation-en-ci).
 
 ## Démarrage rapide
 
 ```bash
-# lister les changements d'API depuis la date limite de votre modèle (aucun appel au modèle, aucune clé d'API)
+# les API modifiées qu'utilise votre code, avec une note pour chacune (aucun appel au modèle, aucune clé d'API)
 uvx since-cutoff scan
 
-# sonder le modèle, rédiger des notes et les ajouter à AGENTS.md
-uvx since-cutoff run --apply
+# écrire ces notes dans AGENTS.md (montre le diff et demande d'abord) ; à relancer après une mise à jour
+uvx since-cutoff sync
+
+# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle)
+uvx since-cutoff run
 ```
 
 Vous pouvez aussi l'installer avec `pipx install since-cutoff` (ou `pip install since-cutoff`)
 puis exécuter `since-cutoff`. Lancez-le depuis la racine de votre projet : il lit `uv.lock`,
 `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`,
-`Pipfile` ou un `.venv` (pas `setup.py` ni `setup.cfg`). Sans `--model`, il teste le modèle
+`Pipfile` ou un `.venv` (pas `setup.py` ni `setup.cfg`). Sans `--model`, il utilise le modèle
 configuré pour votre agent de code, d'après les réglages de Claude Code, Codex, OpenCode ou
 Aider ; pour tout autre modèle, passez `--model` (voir
 [Choisir le modèle](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#choisir-le-modèle)).
-`scan` est gratuit ; `run` envoie des prompts au fournisseur du modèle et consomme vos crédits
-d'API ou votre quota Claude Code.
+`scan`, `sync` et `status` n'appellent aucun modèle et ne demandent aucune clé d'API ; `run`
+envoie des prompts au fournisseur du modèle et consomme vos crédits d'API ou votre quota Claude
+Code.
 
 Ce qu'affiche `scan` pour le projet d'exemple :
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 sur le projet d'exemple : 7 dépendances sur 9 ont modifié leur API après la date limite ; diff statique : 317 changements incompatibles, 23 nouvelles dépréciations ; un tableau donnant, pour chaque paquet, la version épinglée, la version à la date limite et le nombre de changements, et un exemple de changement par paquet"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 sur le projet d'exemple. Votre code utilise 2 API qui ont changé après la date limite d'entraînement de claude-sonnet-4-5 (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0 : hf_hub_download, utilisée dans app/main.py, n'a plus force_filename, local_dir_use_symlinks, resume_download ni proxies dans sa signature ; sa note porte l'étiquette [diff], et une ligne Runtime indique que le code source de la 2.0.0 les traite encore, si bien que les appels qui les passent peuvent s'exécuter avec un avertissement. anthropic 0.60.0 -> 1.8.0 : Messages.create, appelée dans app/main.py, n'accepte plus temperature, top_k ni top_p ; sa note porte l'étiquette [diff]. 2 notes prêtes pour AGENTS.md ; ce que signifient uses this API et [diff] ; 326 autres changements dans 7 paquets que le code n'utilise pas."></p>
+
+Les deux API sont marquées « uses this API » ; un fichier qui passerait `resume_download=True` ou
+`temperature=0.2` les ferait passer en « old form ». `scan -v` liste tous les fichiers qui
+utilisent une API (3 sont affichés), et `scan --all` ajoute tous les autres changements, paquet
+par paquet. `scan --json` et `.since-cutoff/results.json` contiennent la même chose dans
+`used_apis` (chaque API, où elle est utilisée, ses changements et sa note, avec les étiquettes
+de la note, les versions auxquelles elle s'applique et ce qui a été vérifié), et
+`.since-cutoff/report.md` commence par « Used by your code ».
+
+### Tenir les notes à jour avec sync et status
+
+`since-cutoff sync` (depuis la 0.4.0) écrit les notes qu'affiche `scan` dans un bloc balisé :
+dans AGENTS.md, ou dans CLAUDE.md si seul ce fichier existe, et, là où un bloc existe déjà, dans
+celui-ci (`--target` désigne un autre fichier). Il affiche un diff unifié et demande
+`Write this to AGENTS.md? [y/N]` ; `--yes` écrit sans demander, et s'il n'y a pas de terminal où
+poser la question, il n'écrit rien. Le texte hors du bloc garde ses octets, fins de ligne CRLF
+comprises, et `since-cutoff unapply` retire le bloc. Pour le projet d'exemple, le bloc se termine
+ainsi :
+
+```markdown
+**anthropic 1.8.0** (0.60.0 at the cutoff)
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+
+**huggingface-hub 2.0.0** (0.34.3 at the cutoff)
+- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
+<!-- since-cutoff:end -->
+```
+
+Au-dessus des puces se trouvent le marqueur de début, une ligne de métadonnées (le modèle, sa
+date limite, la provenance des versions, une empreinte des dépendances et une autre du texte du
+bloc lui-même, pour qu'une modification à la main se voie) et un en-tête qui nomme le modèle, la
+date limite et le fichier d'où viennent les versions, explique les étiquettes et précise
+qu'aucun code de bibliothèque n'a été exécuté. La mise en garde « Runtime: » reste hors du
+bloc : le conseil (« do not pass them », ne les passez pas) est le même dans tous les cas.
+
+Relancez `sync` quand vous modifiez le fichier de verrouillage ou le code. Il ajoute des notes
+pour les API que votre code se met à utiliser, vérifie à nouveau un paquet mis à jour, et retire
+les notes d'un paquet quand il n'est plus une dépendance, n'est plus plus récent que la version
+à la date limite, ou quand votre code n'utilise plus ses API modifiées, en disant pourquoi. Il
+conserve le modèle et la date limite pour lesquels le bloc a été écrit (pour que des collègues
+dont les agents utilisent d'autres modèles ne le réécrivent pas sans cesse), sauf si vous passez
+`--model` ou `--cutoff` ; `--model a,b` prend la plus ancienne de leurs dates limites. Si rien n'a
+changé, il n'écrit rien, et le fichier garde ses octets et sa date de modification.
+
+| commande | ce qu'elle fait | code de sortie |
+|---|---|---|
+| `since-cutoff sync` | affiche le diff, demande, écrit | 0 écrit ou déjà à jour ; 3 rien d'écrit (vous avez répondu non, ou il n'y a pas de terminal où demander) |
+| `since-cutoff sync --yes` | écrit sans demander | 0 |
+| `since-cutoff sync --dry-run` | affiche le diff, n'écrit rien | 0 |
+| `since-cutoff sync --check` | n'écrit rien (pour la CI et pre-commit) | 0 à jour ; 3 pas à jour |
+| `since-cutoff status` | compare le bloc au fichier de verrouillage, hors ligne | 0 à jour, ou aucun bloc ; 3 pas à jour ; 1 marqueurs cassés |
+
+Si le bloc a été modifié à la main, `sync` et `sync --check` affichent le diff, n'écrivent rien et
+sortent avec le code 4 ; `sync --force` le remplace. Si un paquet dont parlent les notes ne peut
+pas être vérifié (PyPI injoignable), `sync` n'écrit rien et sort avec le code 1.
+
+`since-cutoff status` n'utilise pas le réseau et ne lit pas le code : pour chaque paquet, la
+version pour laquelle les notes ont été écrites et celle du fichier de verrouillage, si d'autres
+dépendances ont changé, et si le modèle configuré pour votre agent de code a une date limite
+antérieure à celle des notes (avec la commande `sync --model` correspondante). `status --json`
+est destiné aux scripts. `status --hook` n'affiche une ligne que lorsque les notes ne sont plus à
+jour et sort toujours avec 0, par exemple :
+
+```text
+since-cutoff: the library notes in AGENTS.md are out of date: anthropic 1.8.0 in the notes, 0.60.0 in pyproject.toml. `since-cutoff sync` updates them.
+```
+
+Autres options :
+
+- `sync --scope imported` note aussi les changements les plus susceptibles de compter dans chaque
+  paquet modifié qu'importe votre code (jusqu'à 5 API par paquet), pour du code qui n'utilise
+  encore aucune des API modifiées. `scan` le suggère dans ce cas.
+- `sync --suggestions` ajoute les noms de la version épinglée qui ressemblent seulement à ce qui a
+  été supprimé, avec l'étiquette `[not confirmed]`. Le bloc enregistre ces deux choix, et les
+  exécutions suivantes de sync les conservent.
+- Les notes écrites par `since-cutoff run --apply` portent l'étiquette `[type-checked]`. `sync`
+  conserve chacune d'elles, à la place de la note tirée du diff pour la même API, tant que son
+  paquet garde la même version et que votre code utilise encore cette API.
+
+Claude Code lit CLAUDE.md, et ne lit AGENTS.md que s'il n'y a pas de CLAUDE.md ou si CLAUDE.md
+l'importe avec une ligne `@AGENTS.md`
+([documentation sur la mémoire](https://code.claude.com/docs/en/memory), en anglais). Quand les
+notes vont dans AGENTS.md et que CLAUDE.md ne l'importe pas, `scan` et `sync` le signalent.
+L'écriture dans les deux fichiers est l'objet de
+[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+
+### Mesurer votre modèle
+
+`since-cutoff run` est l'étape facultative qui appelle un modèle. Il lui soumet de courtes tâches
+qui nécessitent les API modifiées, sans outils, sans documentation et sans rien de votre code ;
+évalue les réponses avec un vérificateur de types sur les deux versions ; rédige une note pour
+chaque échec ; et teste les notes sur des tâches réservées
+([Fonctionnement](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#fonctionnement)).
+Il consomme vos crédits d'API ou votre quota Claude Code et peut prendre de 5 à 20 minutes.
+
+```bash
+since-cutoff run --quick    # une exécution plus courte : 12 sondes, 1 tâche réservée, 3 vérifications de non-régression
+since-cutoff run --apply    # écrire les notes de cette exécution dans le bloc
+```
+
+Sans `--apply`, les notes sont affichées, pas écrites. `run --apply` remplace le bloc par les
+notes de cette exécution ; un `since-cutoff sync` ultérieur ajoute les notes tirées du diff pour
+les autres API modifiées qu'utilise votre code, et conserve les notes `[type-checked]` de
+l'exécution tant que la version de leur paquet ne change pas.
 
 ### Dans Claude Code
 
@@ -108,11 +262,16 @@ Ce qu'affiche `scan` pour le projet d'exemple :
 ```
 
 Demandez ensuite à Claude : « Vérifie pour lesquelles de nos dépendances tes connaissances ne
-sont plus à jour », ou lancez `/since-cutoff:since-cutoff`. Le skill exécute la CLI ; la mesure
-elle-même est effectuée par une nouvelle instance du modèle, sans outils, si bien que l'agent ne
-peut pas s'évaluer lui-même. Le plugin démarre aussi le
+sont plus à jour », ou lancez `/since-cutoff:since-cutoff`. Le skill lance `since-cutoff scan` et
+propose les notes : il lance `since-cutoff sync --dry-run`, vous montre le diff et n'écrit que si
+vous êtes d'accord. Si vous lui demandez de mesurer le modèle, la mesure est effectuée par une
+nouvelle instance du modèle, sans outils, si bien que l'agent ne peut pas s'évaluer lui-même. Le
+plugin démarre aussi le
 [serveur MCP](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#utilisation-depuis-nimporte-quel-agent-mcp),
-pour que Claude puisse consulter les changements d'une bibliothèque avant d'écrire du code.
+pour que Claude puisse consulter les changements d'une bibliothèque avant d'écrire du code, et
+(depuis la 0.4.0) lance `since-cutoff status --hook` au début de chaque session, ce qui ajoute une
+ligne à la session quand les notes ne sont plus à jour (la première fois, uvx télécharge
+since-cutoff).
 
 ### Dans d'autres agents de code
 
@@ -123,16 +282,17 @@ npx skills add MohammadHijjawi97/since-cutoff
 Cette commande installe le même skill via la CLI open source [skills](https://github.com/vercel-labs/skills),
 pour Codex, Cursor, Gemini CLI, GitHub Copilot, OpenCode et les autres agents qui lisent
 `SKILL.md`. since-cutoff lit aussi le modèle dans les réglages de Codex, OpenCode et Aider ; pour
-les autres agents, indiquez-lui quel modèle tester, par exemple
+les autres agents, indiquez-lui quel modèle utiliser, par exemple
 `since-cutoff scan --model openai:gpt-5.4`. Ajoutez le serveur MCP comme indiqué plus bas.
 
 Des prompts qui fonctionnent bien :
 
-- « Lesquelles de nos dépendances ont modifié leur API publique après ta date limite
-  d'entraînement ? » L'agent lance `since-cutoff scan` ou appelle l'outil MCP `project_changes`.
-- « Mesure sur lesquels de ces changements tu te trompes vraiment, et ajoute les notes
-  à AGENTS.md. » L'agent vous demande d'abord votre accord, puis lance
-  `since-cutoff run --quick --apply`.
+- « Quelles API utilisées par notre code ont changé après ta date limite d'entraînement ? »
+  L'agent lance `since-cutoff scan` ou appelle l'outil MCP `project_changes`.
+- « Ajoute des notes à leur sujet dans AGENTS.md. » L'agent lance `since-cutoff sync --dry-run`,
+  vous montre le diff, puis lance `since-cutoff sync --yes` quand vous êtes d'accord.
+- « Mesure sur lesquels de ces changements tu te trompes vraiment. » L'agent vous demande d'abord
+  votre accord, puis lance `since-cutoff run --quick`.
 - « Avant d'écrire le code httpx, vérifie ce qui a changé dans httpx depuis ta date limite. »
   L'agent appelle l'outil MCP `api_changes`.
 
@@ -149,8 +309,10 @@ Des prompts qui fonctionnent bien :
 | `ollama:<model>` | Ollama en local | Ollama en cours d'exécution |
 | `openai-compatible:<model>` | tout serveur compatible OpenAI | `--base-url`, `OPENAI_API_KEY` facultative |
 
-Sans `--model`, les versions 0.3.0 et suivantes testent le modèle configuré pour votre
-agent de code, et la ligne du modèle indique d'où il vient (« model from .claude/settings.json ») :
+La colonne « nécessite » concerne `run`, qui appelle le modèle ; `scan` et `sync` n'utilisent
+que sa date limite d'entraînement. Sans `--model`, les versions 0.3.0 et suivantes utilisent le
+modèle configuré pour votre agent de code, et la ligne du modèle indique d'où il vient
+(« model from .claude/settings.json ») :
 
 1. `SINCE_CUTOFF_MODEL` (une spécification complète comme `openai:gpt-5.4`) l'emporte toujours.
 2. Dans Claude Code (qui définit `CLAUDECODE=1` pour les commandes qu'il exécute), seuls
@@ -168,21 +330,39 @@ agent de code, et la ligne du modèle indique d'où il vient (« model from .cl
 | OpenCode | `opencode.json`, `opencode.jsonc` | `~/.config/opencode/` |
 | Aider | `.aider.conf.yml`, avec les alias d'Aider (`4o`, `flash`, `r1`, ...) | `~/.aider.conf.yml` |
 
-Si aucun réglage n'indique de modèle, il teste le modèle par défaut de Claude Code et le signale.
+Si aucun réglage n'indique de modèle, il utilise le modèle par défaut de Claude Code et le signale.
 Seuls les champs du modèle sont lus, et un nom de modèle qu'il ne sait pas identifier arrête
 l'exécution avec un message qui nomme le réglage. Un modèle auquel un agent accède via un autre
 service (GitHub Copilot, Amazon Bedrock, Vertex AI) est désigné d'après l'entreprise qui l'a conçu,
-si bien que `run` appelle l'API de celle-ci (`openai:` nécessite `OPENAI_API_KEY`).
+si bien que `run` appelle l'API de celle-ci (`openai:` nécessite `OPENAI_API_KEY`). `sync`
+conserve le modèle pour lequel un bloc a été écrit, quel que soit celui qu'utilise désormais votre
+agent.
 
 Les dates limites d'entraînement proviennent de [models.dev](https://models.dev) (un instantané
 est inclus pour une utilisation hors ligne). `since-cutoff models sonnet` les affiche ;
 `--cutoff 2025-07` remplace la date, et `since-cutoff scan --cutoff 2025-07` sans `--model`
-analyse par rapport à cette seule date. `scan` n'a besoin que de la date limite : il accepte donc
-aussi un identifiant de modèle sans fournisseur (`claude-haiku-4-5`, `sonnet`) ou avec n'importe
+analyse par rapport à cette seule date. `scan` et `sync` n'ont besoin que de la date limite : ils
+acceptent donc aussi un identifiant de modèle sans fournisseur (`claude-haiku-4-5`, `sonnet`) ou avec n'importe
 quel fournisseur répertorié par models.dev (`google:gemini-2.5-pro`, identifiants Amazon Bedrock
 et Vertex AI compris) ; `run` a besoin d'un fournisseur du tableau ci-dessus.
 
 ## Résultats
+
+Ce qui a été mesuré jusqu'ici, chaque fois avec sa portée :
+
+- **Un projet, un modèle, since-cutoff 0.1.0** : la carte ci-dessous, Claude Opus 4.6 sur le
+  projet d'exemple. Le tableau qui la suit ajoute Claude Haiku 4.5 sur le même projet.
+- **Benchmark** : le rapport du benchmark de la 0.4.0 sera lié ici une fois qu'il aura été
+  exécuté, quel qu'en soit le résultat.
+- **Rapports de développeurs indépendants** : ils seront listés ici, chacun avec son projet, son
+  modèle et sa date. Publiez le vôtre dans
+  [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)
+  (« Partagez vos résultats », en anglais).
+
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/hero-dark.fr.svg">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/hero.fr.svg" width="640" alt="Votre modèle de code a appris vos bibliothèques avant qu'elles ne changent. Claude Opus 4.6 sur un seul projet d'exemple, mesuré avec since-cutoff 0.1.0 : sur 7 des 16 changements d'API sondés, il a utilisé un nom ou un paramètre supprimé depuis ; avec les notes, la part de tâches réservées correctes est passée de 5 % à 65 % (20 tâches). Essayez : uvx since-cutoff scan (aucun appel au modèle, aucune clé d'API).">
+</picture></p>
 
 Deux modèles Claude sur le projet d'exemple à 9 dépendances de
 [`examples/agent-app`](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app),
@@ -213,7 +393,8 @@ et rejeté par le vérificateur de types pour la version épinglée : `messages
 huggingface-hub 2.0.0 accepte encore ces quatre arguments de téléchargement, les ignore et émet
 un avertissement.
 
-Les notes rédigées lors de l'exécution Claude Haiku 4.5 (extrait, texte original) :
+Les notes rédigées lors de l'exécution Claude Haiku 4.5 (extrait, texte original ; format de
+since-cutoff 0.1.0) :
 
 ```markdown
 <!-- since-cutoff:start -->
@@ -233,7 +414,11 @@ Les notes rédigées lors de l'exécution Claude Haiku 4.5 (extrait, texte origi
 La note sur huggingface-hub n'est pas tout à fait exacte : `resume_download` a quitté la
 signature en 1.0, pas en 2.0.0, et la 2.0.0 l'accepte encore à l'exécution, l'ignore et émet un
 avertissement ([code source](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)).
-Le conseil de l'omettre reste juste.
+Le conseil de l'omettre reste juste. La note que la 0.4.0 rédige à partir du diff d'API pour ces
+mêmes arguments figure dans
+[Tenir les notes à jour](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#tenir-les-notes-à-jour-avec-sync-et-status) ;
+la mise en garde sur l'exécution apparaît dans le terminal, le rapport et le JSON, pas dans le
+bloc.
 
 Voici le résumé affiché dans le terminal pour l'exécution Claude Opus 4.6, enregistré avec la
 version 0.1.0. Les résultats des sondes sont ceux du tableau ci-dessus. Les chiffres du diff sur
@@ -279,7 +464,7 @@ Il propose trois outils en lecture seule :
 | outil | répond à |
 |---|---|
 | `api_changes(package, model, symbol=...)` | ce qui a changé dans une bibliothèque entre la version à la date limite du modèle et la dernière version (ou une version donnée), incompatibilités franches en premier |
-| `project_changes(project_dir, model)` | la même chose pour chaque dépendance d'un projet, à sa version épinglée, en commençant par les API que votre code utilise déjà |
+| `project_changes(project_dir, model)` | la même chose pour chaque dépendance d'un projet, à sa version épinglée, en commençant par les API modifiées qu'utilise votre code : pour chacune, les fichiers qui l'utilisent (3 au plus), sa note, la mise en garde sur l'exécution et les noms qui lui ressemblent, non confirmés comme remplaçants |
 | `model_cutoff(model)` | la date limite d'entraînement d'un modèle, d'après [models.dev](https://models.dev) |
 
 L'agent transmet son propre identifiant de modèle : la réponse couvre donc ce qui a changé
@@ -347,53 +532,56 @@ ci-dessus. `project_changes` limite sa réponse à environ 24 000 caractères 
 modifiées qui n'y tiennent pas occupent une ligne chacune, et les passer dans `only` affiche
 leurs changements.
 
-Ce qu'a renvoyé `api_changes("huggingface-hub", model="claude-haiku-4-5")` avec la 0.2.0 (sortie
-réelle, abrégée ; les versions suivantes affinent le diff, leurs chiffres diffèrent donc
-légèrement) :
+Ce que renvoie `api_changes("huggingface-hub", model="claude-haiku-4-5", to_version="2.0.0")`
+(sortie réelle, abrégée) :
 
 ```markdown
 # huggingface-hub 0.29.1 -> 2.0.0
 
 - From 0.29.1 (2025-02-20): the newest release on or before 2025-02-28 (training cutoff of claude-haiku-4-5, from models.dev)
-- To 2.0.0 (2026-09-24): the latest release on PyPI
-- 116 breaking changes, 0 new deprecations (removed or moved 62, parameters removed 43, parameters now required 9, changed kind 1, now keyword-only or positional-only 1)
+- To 2.0.0 (2026-09-24): as requested
+- 114 breaking changes, 0 new deprecations (removed or moved 62, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
 
 ## Removed or moved
 
-- `huggingface_hub.InferenceApi` was removed; similar names now: `inference`, `InferenceEndpoint`, `InferenceClient`
+- `huggingface_hub.InferenceApi` was removed
 ...
 
 ## Parameters removed
 
-- `huggingface_hub.snapshot_download(resume_download=...)`: parameter `resume_download` was removed; similar parameters now: `force_download`
-- `huggingface_hub.file_download.hf_hub_download(force_filename=...)`: parameter `force_filename` was removed; similar parameters now: `filename`
+- `huggingface_hub.InferenceClient.text_generation(stop_sequences=...)`: parameter `stop_sequences` was removed; the old docs said: Deprecated argument. Use `stop` instead; also changed under 1 other path, e.g. `huggingface_hub.AsyncInferenceClient.text_generation`
+...
+- `huggingface_hub.file_download.hf_hub_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
 ...
 
-Not listed: 76 breaking changes, 0 new deprecations (removed or moved 47, parameters removed 29). Narrow with symbol="..." or raise limit.
+Not listed: 74 breaking changes, 0 new deprecations (removed or moved 46, parameters removed 28). Narrow with symbol="..." or raise limit.
 ```
 
 Avec `symbol="hf_hub_download"`, il ne liste que les 8 changements de cette fonction
 (`resume_download=`, `force_filename=`, `local_dir_use_symlinks=` et `proxies=`, sur la fonction
 et sur `HfApi`). `symbol` accepte aussi un appel tel que le code l'écrit : `client.messages.create`
-trouve les changements de `Messages.create`. Le diff ne lit que les signatures : ces quatre
-paramètres ont quitté la signature dans huggingface-hub 1.0, mais la 2.0.0 les accepte encore à
-l'exécution, les ignore et émet un avertissement.
+trouve les changements de `Messages.create`. Le diff lit les signatures : ces quatre paramètres
+ont quitté la signature dans huggingface-hub 1.0, et la réponse ajoute que le code source de la
+2.0.0 les traite encore, si bien que les appels qui les passent peuvent s'exécuter avec un
+avertissement.
 
 ## Utilisation en CI
 
 ### GitHub Action
 
-L'action analyse le projet à chaque pull request et ajoute un résumé à la page du job : pour
-chaque dépendance, la version à la date limite du modèle, la version que vous épinglez et les
-principaux changements, en commençant par ceux qui touchent des noms utilisés par votre code.
-Comme `scan`, elle ne lit que PyPI et models.dev : aucun appel au modèle, aucune clé d'API.
+L'action analyse le projet à chaque pull request et ajoute un résumé à la page du job : les API
+modifiées qu'utilise votre code, avec les fichiers qui les utilisent, le changement, l'usage ou
+non de l'ancienne forme et le remplaçant ; puis, repliés, les notes et les changements de chaque
+dépendance. Avec `check-notes: true`, elle fait aussi échouer le job quand les notes d'AGENTS.md
+ne sont plus à jour. Comme `scan`, elle ne lit que PyPI et models.dev : aucun appel au modèle,
+aucune clé d'API.
 
 ```yaml
 # .github/workflows/since-cutoff.yml
 name: since-cutoff
 on:
   pull_request:
-    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/pyproject.toml"]
+    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -402,7 +590,11 @@ jobs:
       - uses: MohammadHijjawi97/since-cutoff@v0
         with:
           model: anthropic:claude-sonnet-4-5  # le modèle que votre équipe utilise pour coder
+          check-notes: true                   # échoue quand AGENTS.md a besoin de `since-cutoff sync`
 ```
+
+Sans `paths`, le job s'exécute aussi quand une modification du code commence à utiliser une API
+modifiée.
 
 | entrée | valeur par défaut | |
 |---|---|---|
@@ -411,14 +603,20 @@ jobs:
 | `only`, `exclude` | | noms PyPI séparés par des virgules |
 | `cutoff` | | remplace la date limite d'entraînement (`YYYY-MM` ou `YYYY-MM-DD`) |
 | `fail-on-changes` | `false` | fait échouer l'étape quand une dépendance a modifié son API après la date limite |
+| `check-notes` | `false` | lance aussi `since-cutoff sync --check`, qui n'écrit rien, et fait échouer le job quand les notes d'AGENTS.md / CLAUDE.md ne sont plus à jour ou que le bloc a été modifié à la main ; les notes gardent le modèle pour lequel elles ont été écrites, et `model` (et `cutoff`) servent pour un projet qui n'a pas encore de bloc |
 | `step-summary` | `true` | ajoute le résumé Markdown au résumé du job |
 | `cache` | `true` | conserve entre les exécutions les métadonnées PyPI, les sources des paquets et les diffs d'API (y compris quand `fail-on-changes` fait échouer le job) |
 | `args` | | arguments supplémentaires pour `since-cutoff scan`, par exemple `--all-deps --limit 20` |
 | `since-cutoff-version` | `0.3.2` | la version de since-cutoff à exécuter, ou `latest` |
 
+`args: --fail-on old-form --annotate github` ne fait échouer le job que si votre code utilise une
+API modifiée sous l'ancienne forme, et annote chaque fichier qui en utilise une : un
+avertissement (*warning*) pour l'ancienne forme, une note (*notice*) sinon.
+
 Sorties : `changed-packages` (liste séparée par des virgules), `changes` (changements incompatibles),
 `deprecations`, `markdown` (le chemin du résumé, par exemple pour le publier en commentaire de
-la pull request) et `report` (le chemin du rapport complet). Un changement accessible par
+la pull request), `report` (le chemin du rapport complet) et, avec `check-notes`, `notes`
+(`up-to-date`, `out-of-date`, `edited-by-hand` ou `error`). Un changement accessible par
 plusieurs chemins d'import n'est compté qu'une fois.
 
 ### pre-commit
@@ -430,18 +628,30 @@ repos:
     rev: v0.3.2
     hooks:
       - id: since-cutoff-scan
-        args: [--model=anthropic:claude-sonnet-4-5]  # ajoutez --fail-on-changes pour bloquer le commit
+        args: [--model=anthropic:claude-sonnet-4-5]  # ajoutez --fail-on=old-form pour bloquer le commit
+      - id: since-cutoff-sync  # tient à jour les notes d'AGENTS.md ; args: [--check] vérifie seulement
 ```
 
-Le hook s'exécute quand un fichier de verrouillage, un fichier `requirements*.txt` ou
-`pyproject.toml` change, et affiche le résultat du scan. Passez-lui `--model` dans `args`. Il a besoin d'accéder
-à PyPI : désactivez-le donc sur pre-commit.ci (`ci: {skip: [since-cutoff-scan]}`).
+`since-cutoff-scan` s'exécute quand un fichier de verrouillage, un fichier `requirements*.txt` ou
+`pyproject.toml` change, et affiche le résultat du scan ; passez-lui `--model` dans `args`.
+`since-cutoff-sync` s'exécute quand l'un de ces fichiers, AGENTS.md ou CLAUDE.md change, et met
+les notes à jour ; s'il modifie le fichier, le hook échoue, comme tout hook pre-commit qui
+modifie des fichiers : ajoutez le fichier et refaites le commit. Avec `args: [--check]`, il ne
+modifie rien et échoue tant que les notes ne sont pas à jour. Il conserve le modèle pour lequel
+les notes ont été écrites ; pour un premier bloc, indiquez-lui en un :
+`args: [--model=anthropic:claude-sonnet-4-5]`. Les deux ont besoin d'accéder à PyPI :
+désactivez-les donc sur pre-commit.ci (`ci: {skip: [since-cutoff-scan, since-cutoff-sync]}`).
+`since-cutoff-status` n'a pas besoin du réseau : il échoue quand les notes ne correspondent pas
+au fichier de verrouillage.
 
 ### Autres CI
 
 ```bash
-# résumé Markdown pour n'importe quelle CI ; code de sortie 3 si une dépendance a modifié son API après la date limite
-since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on-changes
+# résumé Markdown pour n'importe quelle CI ; code de sortie 3 si votre code utilise une API modifiée sous l'ancienne forme
+since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on old-form
+
+# code de sortie 3 si les notes d'AGENTS.md ne sont plus à jour, 4 si le bloc a été modifié à la main
+since-cutoff sync --check
 
 # mesurer aussi le modèle (nécessite sa clé d'API, ou la CLI claude)
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
@@ -450,20 +660,33 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 `--markdown -` écrit le résumé sur stdout, et seulement la progression et le chemin du rapport
 sur stderr, comme `--json`. Dans un fichier, un pipe ou un journal de CI, il n'y a pas de barre
 de progression animée, et la sortie est mise en page sur 160 colonnes (`COLUMNS` fixe une autre
-largeur). Codes de sortie : `0` OK, `1` erreur (par exemple, `run` n'a pu sonder aucun
-changement d'API ou n'a pu évaluer aucune réponse du modèle), `2` erreur d'utilisation, `3`
-utilisation d'API périmée (stale) détectée avec `run --fail-on-stale`, ou changements d'API
-détectés avec `scan --fail-on-changes`, `141` la sortie a été fermée prématurément (par
-exemple, redirigée vers `head`).
+largeur). Codes de sortie :
+
+- `0` OK ;
+- `1` erreur (par exemple, `run` n'a pu sonder aucun changement d'API ou n'a pu évaluer aucune
+  réponse du modèle, ou `sync` n'a pas pu vérifier un paquet dont parlent ses notes) ;
+- `2` erreur d'utilisation ;
+- `3` une vérification a échoué : `scan --fail-on changes`, `used` ou `old-form` (une dépendance a
+  modifié son API après la date limite, votre code utilise une API modifiée, ou l'utilise sous
+  l'ancienne forme ; `--fail-on-changes` équivaut à `--fail-on changes`), `run --fail-on-stale`
+  (utilisation d'API périmée détectée), ou notes qui ne sont plus à jour avec `sync --check` ou
+  `status` (et avec `sync`, quand il ne les a pas écrites) ;
+- `4` `sync` : le bloc a été modifié à la main, et rien n'a été écrit sans `--force` ;
+- `141` la sortie a été fermée prématurément (par exemple, redirigée vers `head`).
 
 ## Fonctionnement
 
-Trois étapes. La première ne fait appel à aucun modèle ; dans les deux autres, un vérificateur
-de types évalue chaque réponse et contrôle chaque note rédigée par le modèle :
+`scan` et `sync` n'ont besoin d'aucun modèle : ils comparent les API publiques, trouvent où votre
+code utilise celles qui ont changé et énoncent chaque changement à partir du diff, avec une
+étiquette qui dit ce qui a été vérifié
+([détails](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md#notes-without-a-model-scan-and-sync),
+en anglais). `run` passe par trois étapes. La première est l'analyse et ne fait appel à aucun
+modèle ; dans les deux autres, un vérificateur de types évalue chaque réponse et contrôle chaque
+note rédigée par le modèle :
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works-dark.fr.svg">
-  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works.fr.svg" width="640" alt="Trois étapes. Analyse (scan), sans appel au modèle : le fichier de verrouillage donne vos versions exactes, puis la version à la date limite du modèle, puis un diff statique de l'API avec griffe. Sonde : de courtes tâches qui nécessitent le changement, le modèle répond de mémoire, basedpyright vérifie la réponse par rapport aux deux versions. Correction et vérification : une note rédigée par le modèle n'est conservée que si son exemple passe la vérification de types, sinon un constat du changement tiré du diff d'API la remplace ; le modèle répond aux tâches réservées sans puis avec les notes, et --apply écrit un bloc dans AGENTS.md.">
+  <img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/how-it-works.fr.svg" width="640" alt="Trois étapes. Analyse (scan), sans appel au modèle : le fichier de verrouillage donne vos versions exactes, puis la version à la date limite du modèle, puis un diff statique de l'API avec griffe. Sonde : de courtes tâches qui nécessitent le changement, le modèle répond de mémoire, basedpyright vérifie la réponse par rapport aux deux versions. Rédaction et test des notes : une note rédigée par le modèle n'est conservée que si son exemple passe la vérification de types, sinon un constat du changement tiré du diff d'API la remplace ; le modèle répond aux tâches réservées sans puis avec les notes, et --apply écrit un bloc dans AGENTS.md.">
 </picture></p>
 
 | résultat | signification |
@@ -497,6 +720,66 @@ un environnement isolé avec les dépendances d'exécution propres à ce paquet.
 de juge, et chaque chiffre peut être retrouvé dans `results.json`. Détails (en anglais) :
 [docs/how-it-works.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md).
 
+### Ce que « verified » veut dire
+
+since-cutoff n'emploie jamais le mot « verified » (vérifié) sans précision. Chaque note porte une
+étiquette qui dit ce qui a été vérifié, et rien d'autre n'est affirmé :
+
+| étiquette | ce qui a été vérifié | ce qui ne l'a pas été |
+|---|---|---|
+| `[diff]` | Le changement figure dans une comparaison statique (griffe) des API publiques de deux versions : la plus récente publiée au plus tard à la date limite d'entraînement du modèle, et la version qu'épingle votre projet. Les sources sont lues, pas importées. Avec `[diff]` seul, aucun remplaçant n'est nommé : la note rapporte ce que dit le texte de dépréciation de la bibliothèque elle-même (« there is no replacement for `resume_download` », il n'y a pas de remplaçant), ou que since-cutoff n'y en a trouvé aucun. | Le comportement, et si un appel fonctionne encore : la version épinglée peut encore accepter un paramètre supprimé avec un avertissement, comme huggingface-hub 2.0.0 le fait pour `resume_download`. Le terminal, report.md, les outils MCP et le JSON ajoutent une ligne « Runtime: » quand le code source épinglé en traite encore un ; le bloc non, puisque le conseil est le même. Si votre modèle se trompe dessus. |
+| `[diff + library]` | Comme `[diff]`, et le texte de dépréciation de la bibliothèque elle-même (une docstring, l'entrée d'un paramètre dans la docstring, un message `@deprecated` ou un texte `warnings.warn`, dans l'ancienne version ou, pour une dépréciation, dans la version épinglée) énonce le remplaçant (« Use `stop` instead »), et ce nom existe dans votre version épinglée. Un texte qui ne mentionne un nom qu'à titre de conseil est cité sous `[diff]` ; il n'est pas pris pour un remplaçant. | Que le remplaçant se comporte de la même façon. |
+| `[diff + move checked]` | Comme `[diff]`, et l'objet au nouveau chemin est le même objet, autant qu'on puisse le compter : une classe ou un module garde au moins la moitié des noms publics de l'ancien, une fonction garde ses paramètres, une valeur est la même. | Le comportement. |
+| `[diff; probable rename]` | Un paramètre à la même position, avec la même annotation, porte un nouveau nom. Une supposition, signalée comme telle. | Qu'il s'agisse du même paramètre. |
+| `[type-checked]` | Rédigée par un modèle pendant `since-cutoff run` et conservée parce que son exemple a passé la vérification de types décrite plus bas. | Le comportement ; que l'explication de la puce soit vraie au-delà des noms qu'elle montre. |
+| `[not confirmed]` | Seulement avec `sync --suggestions` : des noms de la version épinglée qui ressemblent à ce qui a été supprimé (l'étiquette de la puce est alors `[diff; not confirmed]`). | Que l'un d'eux le remplace. |
+
+Les étiquettes se combinent : les éléments de preuve sont reliés par `+` (`[diff + library]`), et
+une supposition vient après `;` (`[diff; probable rename]`, `[diff; not confirmed]`).
+
+Les noms qui ne font que se ressembler ne sont jamais écrits dans les notes par défaut. Le
+terminal, report.md et les outils MCP les présentent comme « not confirmed as replacements »
+(non confirmés comme remplaçants), et ne les montrent pas du tout quand la bibliothèque dit qu'il
+n'y a pas de remplaçant ; `sync --suggestions` les ajoute, avec l'étiquette `[not confirmed]`.
+
+**La vérification de types derrière `[type-checked]`.** Une note rédigée par le modèle n'est
+conservée que si toutes ces conditions sont remplies (le modèle a deux essais) :
+
+- son exemple complet s'analyse sans erreur et importe le paquet ;
+- basedpyright (mode standard, dépréciations signalées comme des erreurs, commentaires
+  `# type: ignore` et `# pyright:` retirés) ne signale aucune erreur attribuée à ce paquet, ni
+  aucune de ses dépréciations, quand l'exemple est vérifié sur les sources de la version exacte
+  de votre fichier de verrouillage et les dépendances d'exécution de cette version, dans un
+  environnement par ailleurs vide ;
+- chaque nom de la bibliothèque que la puce met entre accents graves figure dans cet exemple ou
+  dans l'entrée du diff d'API dont parle la note ;
+- la puce compte au plus 60 mots.
+
+`[type-checked]` signifie donc que les imports, les noms, les paramètres et le nombre
+d'arguments qu'utilise l'exemple existent dans votre version et ne sont pas marqués
+`@deprecated` (PEP 702). Les erreurs extérieures au paquet (bibliothèque standard, autres
+bibliothèques) ne bloquent pas une note. Cela ne signifie pas que le code se comporte
+correctement à l'exécution, que le remplaçant est celui que recommandent les mainteneurs, ni que
+la note aide le modèle. Quand une note échoue à cette vérification, since-cutoff écrit à la
+place la note tirée du diff d'API, avec son étiquette.
+
+**Mesuré** est une autre affaire : `since-cutoff run` fait répondre à des tâches réservées sans
+puis avec les notes et en donne les comptes. Rien d'autre dans since-cutoff ne dit si une note
+aide.
+
+**Dans `run`, une réponse compte comme correcte** quand elle importe le paquet, utilise l'API
+modifiée et ne présente aucune erreur de « connaissance » attribuée au paquet dans votre version
+(nom, import ou paramètre inconnu ; argument obligatoire manquant ; mauvais nombre d'arguments).
+Les remarques de pure rigueur de typage sont ignorées. Aucune réponse n'est exécutée.
+
+Le bloc d'AGENTS.md contient les puces avec leurs étiquettes et, pour chaque paquet, la version à
+laquelle s'appliquent ses notes et la version à la date limite. Le reste se trouve dans
+`scan --json` et `results.json` : `used_apis[]` (chaque API modifiée qu'utilise votre code, où,
+ses changements, ses remplaçants avec leur source, et sa note avec `tags`, `applies_to` et
+`checks`) et, après `run`, `notes_detail[]` (chaque note avec l'exemple du modèle et ce qu'a
+mesuré le test sur les tâches réservées ; `verified` est conservé et signifie la même chose que
+`checks.example_type_checks`).
+
 ## Ce qu'il exécute, envoie et stocke
 
 - **N'exécute aucun code de paquet ni aucun code écrit par le modèle.** Les paquets sont lus de
@@ -506,17 +789,22 @@ de juge, et chaque chiffre peut être retrouvé dans `results.json`. Détails (e
 - **Récupère** les métadonnées publiques et les wheels des paquets sur PyPI, et les dates limites
   des modèles sur models.dev (un instantané est inclus pour une utilisation hors ligne). Les
   dépendances Git, locales (path), de workspace ou issues d'un index privé ne sont jamais
-  recherchées par leur nom sur le PyPI public.
+  recherchées par leur nom sur le PyPI public. `status` ne récupère rien.
 - **Envoie** des prompts uniquement lors de `run`, et uniquement au fournisseur de modèle que vous
   choisissez : noms et versions des paquets, signatures publiques et docstrings des API
   modifiées, tâches générées et, pour les notes, les propres réponses du modèle. Jamais votre
-  code source. `scan`, le serveur MCP, l'action GitHub et le hook pre-commit n'envoient jamais
-  rien à un modèle.
+  code source. `scan`, `sync`, `status`, le serveur MCP, l'action GitHub et les hooks pre-commit
+  n'envoient jamais rien à un modèle.
+- **Montre où votre code utilise une API modifiée** (pour l'instant, des noms de fichiers) dans le
+  terminal et dans `.since-cutoff/`, et ne l'envoie nulle part. Ce que vous en transmettez ne
+  dépend que de vous : `--markdown` et `--annotate github` le placent dans le résumé et les
+  annotations d'un job de CI, et l'outil MCP `project_changes` le renvoie à l'agent qui l'a
+  appelé, lequel transmet les résultats de ses outils à son modèle.
 - **Stocke** les résultats dans `.since-cutoff/` au sein de votre projet (le dossier s'exclut
   lui-même de git) et dans un cache local (`since-cutoff cache path` indique son emplacement,
-  `since-cutoff cache clear` le supprime). Avec `--apply`, il écrit un seul bloc balisé dans
-  `AGENTS.md`/`CLAUDE.md` et laisse le reste du fichier intact, octet pour octet ;
-  `since-cutoff unapply` retire le bloc.
+  `since-cutoff cache clear` le supprime). `sync` (quand vous acceptez, ou avec `--yes`) et
+  `run --apply` écrivent un seul bloc balisé dans AGENTS.md ou CLAUDE.md et laissent le reste du
+  fichier intact, octet pour octet ; `since-cutoff unapply` retire le bloc.
 - **Aucune télémétrie**, aucun compte, aucune donnée personnelle. Les exécutions suivantes sont
   servies par le cache : elles sont donc gratuites et reproductibles (`--fresh` interroge à
   nouveau le modèle). Voir [PRIVACY.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/PRIVACY.md)
@@ -534,6 +822,17 @@ de juge, et chaque chiffre peut être retrouvé dans `results.json`. Détails (e
   `__getattr__`, mais `run` ne les sonde pas.
 - Le diff couvre l'API publique : les noms `_private`, ainsi que les suites de tests, benchmarks
   et exemples livrés dans un paquet, sont ignorés.
+- « Your code uses » (votre code utilise) est une correspondance statique de noms, fichier par
+  fichier : imports (noms réexportés compris), appels, lectures d'attributs et arguments nommés.
+  Il ne suit pas les accès dynamiques comme `getattr`, et il indique pour l'instant des fichiers,
+  pas des lignes ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Un paramètre
+  devenu obligatoire, nommé seulement ou positionnel seulement est toujours marqué « uses this
+  API », jamais « old form », pour l'instant.
+- Une note ne nomme un remplaçant que si le texte de dépréciation de la bibliothèque elle-même
+  l'énonce. Un conseil qui ne figure que dans un guide de migration (le
+  [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md)
+  d'anthropic suggère `extra_body` pour les anciens modèles qui acceptent encore `temperature`)
+  n'est pas dans les notes.
 - Les sondes portent sur un **échantillon** classé des changements incompatibles (en commençant
   par les symboles que votre code utilise déjà), pas sur leur totalité.
 - « La version de comparaison » est la version la plus récente publiée au plus tard à la date
@@ -583,7 +882,7 @@ documentation de la bibliothèque aujourd'hui ? ») et se combinent bien avec 
 | [library-skills](https://github.com/tiangolo/library-skills) | Des bibliothèques comme FastAPI et Streamlit livrent des skills pour agents dans leurs paquets ; `uvx library-skills` relie les skills des versions installées dans `.agents/skills` ou `.claude/skills`, si bien qu'ils se mettent à jour avec la bibliothèque | Écrits par les mainteneurs et en phase avec la version installée : quand une bibliothèque en livre un, utilisez-le. since-cutoff couvre les paquets qui ne livrent aucune consigne, et se limite aux changements de la surface de l'API. |
 | Plugins de skills des éditeurs, p. ex. [pydantic/skills](https://github.com/pydantic/skills) | Plugins Claude Code, Codex et Cursor et fichiers `SKILL.md` pour Pydantic, Pydantic AI et Logfire, installés depuis le dépôt | Consignes des mainteneurs pour bien utiliser une bibliothèque ; publiées avec le dépôt de plugins, pas avec la version que vous épinglez. Les notes de since-cutoff sont rédigées pour votre lockfile. |
 | Codemods : règles [ast-grep](https://ast-grep.github.io/), `openai migrate` d'OpenAI ([Grit](https://github.com/openai/openai-python/discussions/742)) | Réécrivent du code existant avec des règles syntaxiques écrites à la main ; le catalogue d'ast-grep propose une [migration du SDK OpenAI](https://ast-grep.github.io/catalog/python/#migrate-openai-sdk) (de `openai.Completion.create(...)` vers `client.completions.create(...)`) | Pour migrer le code que vous avez déjà, un codemod est le bon outil. since-cutoff porte sur le code que l'assistant va écrire ensuite : il trouve les changements dans le diff d'API plutôt que dans des règles écrites par quelqu'un, et se contente de suggérer ; il ne réécrit rien. |
-| Bots de dépendances : [Renovate](https://github.com/renovatebot/renovate), [Dependabot](https://github.com/dependabot/dependabot-core) | Ouvrent des pull requests qui mettent à jour vos versions épinglées | L'action GitHub peut s'exécuter sur ces pull requests et lister les API modifiées, en commençant par celles qu'utilise votre code. |
+| Bots de dépendances : [Renovate](https://github.com/renovatebot/renovate), [Dependabot](https://github.com/dependabot/dependabot-core) | Ouvrent des pull requests qui mettent à jour vos versions épinglées | L'action GitHub peut s'exécuter sur ces pull requests, lister les API modifiées qu'utilise votre code et les fichiers qui les utilisent et, avec `check-notes`, échouer jusqu'à ce que les notes soient synchronisées. |
 | Benchmarks : [GitChameleon 2.0](https://arxiv.org/abs/2507.12367), [VersiCode](https://arxiv.org/abs/2406.07411), [CodeUpdateArena](https://arxiv.org/abs/2407.06249), [LibEvolutionEval](https://arxiv.org/abs/2412.04478) | Mesurent des modèles sur des ensembles de tâches fixes, construits à partir de vrais changements de version ou de changements synthétiques (CodeUpdateArena) ; GitChameleon 2.0 exécute des tests unitaires | Ils comparent des modèles en général, et certains vérifient le comportement en exécutant des tests. since-cutoff examine les versions épinglées d'un projet, de façon statique : un vérificateur de types voit les noms, les paramètres et les dépréciations, pas le comportement. |
 
 `--compare signatures` de `since-cutoff run` donne au modèle la signature de la nouvelle version et

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+import textwrap
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from rich.console import Console, Group
 from rich.markup import escape
@@ -17,7 +19,21 @@ from rich.table import Table
 from rich.text import Text
 
 from since_cutoff import __version__
-from since_cutoff.apidiff import DIFF_SCHEMA, PARAM_REMOVED, APIChange
+from since_cutoff.apidiff import (
+    DEPRECATED as CHANGE_DEPRECATED,
+)
+from since_cutoff.apidiff import (
+    DIFF_SCHEMA,
+    KIND_CHANGED,
+    KIND_PRIORITY,
+    MOVED,
+    PARAM_KEYWORD_ONLY,
+    PARAM_POSITIONAL_ONLY,
+    PARAM_REMOVED,
+    PARAM_REQUIRED,
+    REMOVED,
+    APIChange,
+)
 from since_cutoff.baselines import ARM_SIGNATURES, ARM_TEMPLATE, ARM_VERIFIED
 from since_cutoff.engine import (
     CHANGE_BROKEN,
@@ -36,12 +52,42 @@ from since_cutoff.engine import (
     UNTOUCHED,
     WRONG,
     Attempt,
+    PackageScan,
     Pairing,
     RunResult,
     ScanResult,
+    UsedAPI,
 )
-from since_cutoff.project import FileUse
-from since_cutoff.selection import other_paths_text, uses_text
+from since_cutoff.notes import (
+    EVIDENCE_LIBRARY,
+    EVIDENCE_MOVE,
+    EVIDENCE_RENAME,
+    NOTE_DIFF,
+    NOTE_MODEL,
+    TAG_TYPE_CHECKED,
+    Note,
+    agents_import_tip,
+    block_targets,
+    rename_text,
+    runtime_text,
+    similar_text,
+    tag_legend,
+    tag_text,
+)
+from since_cutoff.project import LOCKFILES, VENV_DIRS, FileUse
+from since_cutoff.selection import (
+    FORM_LABELS,
+    NAME_MATCH,
+    OLD_FORM,
+    USE_CALL,
+    USE_KEYWORD,
+    USE_MEMBER,
+    USES_API,
+    Use,
+    other_paths_text,
+    uses_text,
+)
+from since_cutoff.selection import uses as selection_uses
 from since_cutoff.stats import (
     BOOTSTRAP_RESAMPLES,
     BOOTSTRAP_SEED,
@@ -56,12 +102,18 @@ from since_cutoff.stats import (
 )
 
 REPO_URL = "https://github.com/MohammadHijjawi97/since-cutoff"
+# results.json and ``scan --json`` gained keys in 0.4 (``used``, ``used_apis``,
+# ``notes_preview``); none of 0.3's was removed or changed. 0.3 wrote no report_schema.
+REPORT_SCHEMA = 2
+# The import paths results.json lists per change (the shortest; ``import_paths_total`` counts
+# them all). A method of a base class can have thousands: transformers' PreTrainedModel.
+IMPORT_PATHS_SHOWN = 5
 
 STATUS_LABEL = {
     CHANGED: "API changed",
     UNCHANGED: "no breaking changes",
     KNOWN: "released before cutoff",
-    NEW: "newer than the model",
+    NEW: "first released after the cutoff",
     SKIPPED: "not checked",
 }
 # Added to the status of a dependency the project's code imports (PackageScan.imported).
@@ -88,24 +140,28 @@ STATS_NOTE = (
     "than half of their pairs), with a Wilson interval, instead. With few API changes (under about "
     "ten) the bootstrap interval tends to be too narrow; the sign test is exact at any size."
 )
-# Report names of the notes arms (``run --compare``), and what the baselines are.
+# Report names of the notes arms (``run --compare``), and what the baselines are. The run's
+# own notes are the arm with the id ``verified`` in results.json (its name since 0.2).
 ARM_TITLES = {
-    ARM_VERIFIED: "verified notes",
+    ARM_VERIFIED: "type-checked notes",
     ARM_TEMPLATE: "template baseline",
     ARM_SIGNATURES: "signatures baseline",
 }
 ARMS_NOTE = (
     "Every held-out task and regression check was also answered with each baseline block in "
-    "place of the verified notes. The blocks share their header, are paired against the same "
-    "answers without notes, are counted by the same rules and are compared on the same pairs: "
-    "a pair counts for every block only when its answer without notes is scorable and no "
-    "block's answer with notes is an error (for the other blocks, such a pair is not counted "
-    'under "error with another block"). So the verified notes\' row can count fewer pairs than '
-    "their result above, which keeps every pair they can count. The template baseline states each "
-    "change in one sentence from the API diff; the signatures baseline gives the new signature "
-    "and first docstring paragraph of each changed API, or of the replacement its library names. "
-    "Neither calls a model. The last column counts the API changes that only the verified notes "
-    "fixed and those that only the baseline fixed, with an exact two-sided sign test."
+    "place of the run's notes (the type-checked notes, with the note from the API diff where a "
+    "model's example did not type-check). The baseline blocks keep 0.3's header and wording, so "
+    "that their numbers stay comparable with 0.3's; the notes' block has the header that says "
+    "what its tags mean. The blocks are paired against the same answers without notes, are "
+    "counted by the same rules and are compared on the same pairs: a pair counts for every block "
+    "only when its answer without notes is scorable and no block's answer with notes is an "
+    'error (for the other blocks, such a pair is not counted under "error with another block"). '
+    "So the type-checked notes' row can count fewer pairs than their result above, which keeps "
+    "every pair they can count. The template baseline states each change in one sentence from "
+    "the API diff; the signatures baseline gives the new signature and first docstring "
+    "paragraph of each changed API, or of the replacement its library names. Neither calls a "
+    "model. The last column counts the API changes that only the type-checked notes fixed and "
+    "those that only the baseline fixed, with an exact two-sided sign test."
 )
 
 
@@ -186,10 +242,13 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
     out["probed_dependencies"] = sorted({a.change.package for a in valid})
     out["stale_dependencies"] = sorted({a.change.package for a in valid if a.outcome == STALE})
     if run.notes:
+        type_checked = sum(TAG_TYPE_CHECKED in n.tag_list for n in run.notes)
         out["notes"] = {
             "count": len(run.notes),
-            "verified": sum(n.verified for n in run.notes),
-            "from_diff": sum(n.source == "template" for n in run.notes),
+            # ``verified`` is the name results.json has always had for ``type_checked``.
+            "verified": type_checked,
+            "type_checked": type_checked,
+            "from_diff": sum(n.source != NOTE_MODEL for n in run.notes),
             "tokens": estimate_tokens(run.block or ""),
         }
     if run.heldout:
@@ -205,13 +264,13 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
 
 
 def arms_summary(run: RunResult) -> dict[str, dict[str, Any]]:
-    """Each notes arm of a ``--compare`` run, the verified notes first.
+    """Each notes arm of a ``--compare`` run, the run's notes first.
 
     Per arm: the size of its block, its held-out and regression pairings with their statistics
-    (:func:`pairing_summary`), and for a baseline, how it did against the verified notes
+    (:func:`pairing_summary`), and for a baseline, how it did against the run's notes
     (:func:`head_to_head`). Every arm is paired on the same pairs (``RunResult.pairing(...,
     common=True)``): a pair counts only when its answer without notes is scorable and no
-    block's answer with notes is an error. So the verified notes' row here can count fewer
+    block's answer with notes is an error. So the notes' row here can count fewer
     pairs than their own result (``summary()["heldout"]``), which keeps every pair they can
     count, as in a run without ``--compare``.
     """
@@ -366,9 +425,10 @@ def headline(
     if run is not None and run.notes:
         n = s["notes"]
         detail = (
-            f" ({n['verified']} checked by the type checker, {n['from_diff']} from the API diff)"
+            f" ({n['type_checked']} with an example that type-checks against the pinned version, "
+            f"{n['from_diff']} stated from the API diff)"
             if n["from_diff"]
-            else " (all checked by the type checker)"
+            else " (all with an example that type-checks against the pinned version)"
         )
         lines.append(
             Text(f"Fix: {_plural(n['count'], 'note')}{detail}, about {n['tokens']} tokens")
@@ -398,11 +458,11 @@ def headline(
 def _baseline_lines(
     arms: dict[str, dict[str, Any]], verified_alone: dict[str, Any] | None = None
 ) -> list[Text]:
-    """One line per ``--compare`` baseline, in the terms of the verified notes' lines.
+    """One line per ``--compare`` baseline, in the terms of the notes' own lines.
 
     The baselines are counted on the pairs every block could count (:func:`arms_summary`).
-    When an error left out pairs the verified notes' own line counts, a last line gives the
-    verified notes' rates on those same pairs, so the lines compare like with like.
+    When an error left out pairs the notes' own line counts, a last line gives the notes'
+    rates on those same pairs, so the lines compare like with like.
     """
     lines = []
     for arm, a in arms.items():
@@ -425,7 +485,7 @@ def _baseline_lines(
         lines.append(
             Text(
                 f"Blocks compared on the {_plural(shared['n'], 'held-out pair')} all could count; "
-                f"verified notes on them: {pct(shared['before'], shared['n'])} -> "
+                f"type-checked notes on them: {pct(shared['before'], shared['n'])} -> "
                 f"{pct(shared['after'], shared['n'])}; not counted: {_excluded_text(shared)}",
                 style="dim",
             )
@@ -509,8 +569,15 @@ def _excluded_text(h: dict[str, Any]) -> str:
 
 
 def render_console(
-    console: Console, scan: ScanResult, run: RunResult | None = None, *, verbose: bool = False
+    console: Console,
+    scan: ScanResult,
+    run: RunResult | None = None,
+    *,
+    verbose: bool = False,
+    shown: Collection[str] = (),
 ) -> None:
+    """0.3's summary: the headline panel, the dependency table, the scan's warnings (but those
+    in ``shown``, printed already) and what the model got wrong."""
     s = summary(scan, run)
     if s["model"]:
         title = f"since-cutoff · {escape(s['model'])} · training cutoff {s['cutoff']}"
@@ -566,7 +633,7 @@ def render_console(
         table.add_column("wrong", justify="right", style="magenta", overflow="fold")
     for row in rows:
         status = _status_text(row, short=bool(widths))
-        if row["reason"] and (verbose or row["status"] == SKIPPED):
+        if _new_reason(row["status"], row["reason"]) and (verbose or row["status"] == SKIPPED):
             status += f" ({clip(row['reason'], REASON_WIDTH)})"
         name = row["package"]
         cells = [
@@ -593,7 +660,8 @@ def render_console(
             )
         )
     for w in scan.warnings:
-        console.print(Text(f"! {w}", style="yellow"))
+        if w not in shown:
+            console.print(Text(f"! {w}", style="yellow"))
 
     if has_probes and run is not None:
         failing = [a for a in run.probes if a.outcome in (STALE, WRONG, DEPRECATED)]
@@ -616,6 +684,14 @@ def render_console(
 
 
 _STYLE = {STALE: "red", WRONG: "magenta", DEPRECATED: "yellow", PASS: "green"}
+
+
+def _new_reason(status: str, reason: str | None) -> str | None:
+    """A dependency's reason, unless its status label says it already ("first released after
+    the cutoff" is both a status and the reason for it)."""
+    if not reason or reason.strip().lower() == STATUS_LABEL.get(status, "").lower():
+        return None
+    return reason
 
 
 def _status_text(row: dict[str, Any], *, short: bool = False) -> str:
@@ -697,8 +773,514 @@ def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> N
             line = change_text(c, short=True)
             line += f" (your code uses {uses})" if uses else ""
             console.print(Text("  - " + line.replace("`", "")))
+            runtime = runtime_text([c])
+            if runtime:
+                console.print(Text(f"    Runtime: {runtime}".replace("`", ""), style="dim"))
         if len(ranked) > limit:
             console.print(Text(f"  ... {len(ranked) - limit} more in the report", style="dim"))
+
+
+# ------------------------------------------------------ scan: the project first
+# The first section of ``since-cutoff scan`` is at most this wide (or the terminal's width): the
+# "old form" / "uses this API" labels stay next to their API in a 160-column log.
+USED_WIDTH = 100
+# Places shown per API in the terminal and in MCP's project_changes (-v shows every one).
+LOCATIONS_SHOWN = 3
+# What `scan` prints once there is a note to write, and when the code uses no changed API
+# although it imports a package that changed.
+NOTES_READY = "{count} ready: `since-cutoff sync` writes {them} to {target} and keeps {them} in step with {versions}."
+IMPORTED_HINT = (
+    "No notes to write. For the changes most likely to matter in the packages your code imports:"
+)
+IMPORTED_COMMAND = "  since-cutoff sync --scope imported"
+
+
+def render_scan(
+    console: Console,
+    scan: ScanResult,
+    *,
+    show_all: bool = False,
+    verbose: bool = False,
+    limit: int = 8,
+    shown: Collection[str] = (),
+) -> None:
+    """What ``since-cutoff scan`` prints: the changed APIs the project's code uses first
+    (:func:`scan_lines`), each with where the code uses it and its note, then one line for the
+    rest. With ``show_all`` (``--all``), the rest in full: 0.3's summary panel, dependency
+    table and the top ``limit`` changes of each changed dependency. Each of the scan's
+    warnings is printed once, and not at all when it is in ``shown`` (printed already)."""
+    lines = scan_lines(
+        scan,
+        width=min(console.width, USED_WIDTH),
+        page=console.width,
+        verbose=verbose,
+        show_all=show_all,
+        shown=shown,
+    )
+    for line in lines:
+        console.print(line, soft_wrap=True)
+    if show_all:
+        console.print()
+        render_console(console, scan, verbose=verbose, shown=scan.warnings)
+        render_scan_changes(console, scan, limit=limit)
+
+
+def scan_lines(
+    scan: ScanResult,
+    *,
+    width: int = USED_WIDTH,
+    page: int | None = None,
+    verbose: bool = False,
+    show_all: bool = False,
+    shown: Collection[str] = (),
+) -> list[Text]:
+    """The lines of :func:`render_scan` before 0.3's layout (the scan's warnings last, but
+    those in ``shown``).
+
+    Per changed API the code uses: its package and versions, what changed, whether the code
+    uses it in the old form, where (at most :data:`LOCATIONS_SHOWN` places unless ``verbose``;
+    file-level until the scan records lines, issue #8), the note from the API diff with its
+    tag, the runtime caveat and names that merely look similar. Then the dependencies first
+    released after the cutoff that the code imports, what the notes are ready for, what the
+    labels mean, and (unless ``show_all``) one line for everything else that changed.
+
+    An API's lines are at most ``width`` wide, so that its label stays next to it; the other
+    lines wrap at ``page`` (the terminal's width; ``width`` by default).
+    """
+    page = max(page or width, width)
+    used = scan.used_apis()
+    new = scan.new_imported()
+    after = _after(scan)
+    out: list[Text] = []
+
+    def prose(text: str, style: str = "", at: int = page) -> None:
+        out.extend(Text(line, style) for line in _wrap(text, at, "", "  "))
+
+    if used:
+        prose(f"Your code uses {_plural(len(used), 'API')} that changed after {after}", "bold")
+    elif scan.changed:
+        prose(f"Your code uses none of the APIs that changed after {after}.", "bold")
+    else:
+        checked = _deps(len(scan.packages) - len(scan.skipped))
+        prose(
+            f"{checked[0].upper()}{checked[1:]} checked; none changed its API after {after}.",
+            "bold",
+        )
+    group: str | None = None
+    for u in used:
+        if u.package.name != group:
+            group = u.package.name
+            out.append(Text(""))
+            prose(versions_text(scan, u.package), "bold")
+        out += _api_lines(scan, u, width, verbose)
+    if new:
+        if used:
+            out.append(Text(""))
+        for p in new:
+            prose(_new_package_text(p))
+    other = None if show_all else _others_text(scan, used)
+    if used:
+        out.append(Text(""))
+        prose(
+            NOTES_READY.format(
+                count=_plural(len(used), "note"),
+                them="it" if len(used) == 1 else "them",
+                target=_target_name(scan),
+                versions=scan.project.versions_word,
+            ),
+            at=width,
+        )
+        # Issue #13 will choose the files for both AGENTS.md and CLAUDE.md; until then, say
+        # what Claude Code needs to read notes written to AGENTS.md.
+        tip = agents_import_tip(scan.project.root, block_targets(scan.project.root))
+        if tip:
+            prose(f"{tip}.", "yellow", at=width)
+        out.append(Text(""))
+        for line in _form_legend(used) + tag_legend(t for u in used for t in u.note.tag_list):
+            prose(line, "dim", at=width)
+        if other:
+            prose(other, "dim", at=width)  # with the legend above it
+    elif scan.changed:
+        if other:
+            prose(other)
+        if any(p.imported for p in scan.changed):
+            prose(IMPORTED_HINT)
+            out.append(Text(IMPORTED_COMMAND))
+        else:
+            out.append(Text("No notes to write."))
+    if scan.skipped:
+        skipped = len(scan.skipped)
+        first = next((p.reason for p in scan.skipped if p.reason), "")
+        why = ("; for example: " if skipped > 1 else ": ") + clip(first, REASON_WIDTH)
+        total = _deps(len(scan.packages))
+        prose(f"{skipped} of {total} could not be checked{why if first else ''}", "yellow")
+    out += [Text(f"! {w}", "yellow") for w in scan.warnings if w not in shown]
+    return out
+
+
+def _after(scan: ScanResult) -> str:
+    """``claude-sonnet-4-5's training cutoff (2025-07-31)``, or ``the cutoff (2025-03-31)``."""
+    target = scan.target
+    day = target.cutoff.isoformat()
+    return (
+        f"{target.model_id}'s training cutoff ({day})" if target.model_id else f"the cutoff ({day})"
+    )
+
+
+def versions_text(scan: ScanResult, p: PackageScan) -> str:
+    """``anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; uv.lock pins
+    1.8.0)``."""
+    source = scan.versions_from(p)
+    locked = p.locked or "?"
+    if source != p.version_source or source in LOCKFILES or source.startswith("pylock."):
+        pins = f"{source} pins {locked}"  # a lockfile, or the file that pins it
+    elif source == "installed" or source in VENV_DIRS:
+        pins = f"{locked} is installed"
+    elif source.startswith("latest on PyPI"):
+        pins = f"{locked} is the {source}"
+    elif source == "pinned":
+        pins = f"the project pins {locked}"
+    else:
+        pins = f"{source}: {locked}"
+    return (
+        f"{p.name} {p.cutoff_version} -> {locked} ({p.cutoff_version} was the latest release at "
+        f"the cutoff; {pins})"
+    )
+
+
+def api_display(u: UsedAPI) -> str:
+    """How the scan names a used API under its package: ``Messages.create``, ``Client`` (its
+    constructor), ``hf_hub_download`` (a name the package exports at its top level) or a
+    dotted path."""
+    api = u.note.api
+    if u.note.change.owner or api.count(".") != 1:
+        return api
+    return api.split(".", 1)[1]
+
+
+def changes_text(changes: Sequence[APIChange], *, code: bool = False) -> tuple[bool, str]:
+    """What changed in one API, in words: ``temperature, top_p and top_k were removed``, with
+    the names in backticks when ``code``. The flag says whether the text starts with a verb
+    about the API itself (``was removed``), so that it follows the API's name without a
+    colon."""
+    q = (lambda s: f"`{s}`") if code else (lambda s: s)
+    parts: list[str] = []
+    first_is_api = False
+    kinds = sorted(dict.fromkeys(c.kind for c in changes), key=lambda k: KIND_PRIORITY.get(k, 9))
+    for kind in kinds:
+        group = [c for c in changes if c.kind == kind]
+        params = list(dict.fromkeys(c.parameter for c in group if c.parameter))
+        names = _joined([q(p) for p in params], "and")
+        one = len(params) == 1
+        if kind == PARAM_REMOVED:
+            if any(c.still_handled_at for c in group):
+                text = f"{names} {'is' if one else 'are'} no longer in its signature"
+            else:
+                text = f"{names} {'was' if one else 'were'} removed"
+        elif kind == PARAM_REQUIRED:
+            text = f"now requires {names}"
+        elif kind == PARAM_KEYWORD_ONLY:
+            text = f"{names} {'is' if one else 'are'} now keyword-only"
+        elif kind == PARAM_POSITIONAL_ONLY:
+            text = f"{names} {'is' if one else 'are'} now positional-only"
+        elif kind == CHANGE_DEPRECATED and params:
+            text = f"{names} {'is' if one else 'are'} deprecated"
+        else:  # a change to the API itself
+            c = group[0]
+            if kind == REMOVED:
+                text = "was removed"
+            elif kind == MOVED:
+                text = f"moved to {q(c.moved_to or '?')}"
+            elif kind == KIND_CHANGED and c.old_kind and c.new_kind:
+                text = f"changed from {c.old_kind} to {c.new_kind}"
+            elif kind == KIND_CHANGED:
+                text = "changed kind"
+            elif c.call_form:
+                text = f"is deprecated when called as {q(' '.join(c.call_form.split()))}"
+            else:
+                text = "is deprecated"
+            first_is_api = first_is_api or not parts
+        parts.append(text)
+    return first_is_api, "; ".join(parts)
+
+
+def api_head(u: UsedAPI, *, code: bool = False) -> str:
+    """``Messages.create: temperature, top_p and top_k were removed``, ``AI_PROMPT was
+    removed``."""
+    name = api_display(u)
+    about_api, text = changes_text(u.changes, code=code)
+    name = f"`{name}`" if code else name
+    return f"{name} {text}" if about_api else f"{name}: {text}"
+
+
+def use_text(uses: Sequence[Use], *, code: bool = False) -> str:
+    """What the code does at one place (the uses of one API there, most specific first):
+    ``passes temperature to create``, ``calls create``, ``uses hf_hub_download``."""
+    q = (lambda s: f"`{s}`") if code else (lambda s: s)
+    first = uses[0]
+    if first.kind == USE_KEYWORD:
+        params = list(dict.fromkeys(u.names[1] for u in uses if u.kind == USE_KEYWORD))
+        text = f"passes {_joined([q(p) for p in params], 'and')} to {q(first.names[0])}"
+    elif first.kind == USE_CALL:
+        text = f"calls {q(first.names[0])}"
+    elif first.kind == USE_MEMBER:
+        text = f"reads {q(first.names[0])}"
+    else:
+        text = f"uses {q(first.names[0])}"
+    return text + (" (matched by name)" if first.how == NAME_MATCH else "")
+
+
+def places(u: UsedAPI) -> list[tuple[str, list[Use]]]:
+    """The places the code uses an API, most specific first: ``(where, uses there)``, where
+    ``where`` is ``app/main.py`` (``app/main.py:7`` once the scan records lines, issue #8)."""
+    by_place: dict[str, list[Use]] = {}
+    for use in u.uses:
+        by_place.setdefault(use.where or "a file of your code", []).append(use)
+    return list(by_place.items())
+
+
+def _snippet(root: Path, use: Use, cache: dict[str, list[str]]) -> str | None:
+    """The code on the line of a use, read at render time and never stored (only when the
+    scan knows the line: issue #8)."""
+    if use.line is None or not use.file:
+        return None
+    if use.file not in cache:
+        try:
+            cache[use.file] = (
+                (root / use.file).read_text(encoding="utf-8", errors="replace").splitlines()
+            )
+        except OSError:
+            cache[use.file] = []
+    lines = cache[use.file]
+    return lines[use.line - 1].strip() if 0 < use.line <= len(lines) else None
+
+
+def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[Text]:
+    """One used API in the scan's first section: what changed and the label, where, the note,
+    the runtime caveat and the names that merely look similar."""
+    label = FORM_LABELS[u.form]
+    style = "bold red" if u.form == OLD_FORM else "yellow"
+    head = _wrap(api_head(u), max(20, width - len(label) - 4), "  ", "  ")
+    out = [Text(line) for line in head[:-1]]
+    last = head[-1]
+    out.append(Text.assemble(last, " " * max(2, width - len(last) - len(label)), (label, style)))
+    shown = places(u)
+    cut = None if verbose else LOCATIONS_SHOWN
+    column = max(len(where) for where, _ in shown[:cut]) if shown else 0
+    snippets: dict[str, list[str]] = {}
+    for where, here in shown[:cut]:
+        what = _snippet(scan.project.root, here[0], snippets) or use_text(here)
+        for i, line in enumerate(
+            _wrap(what, width, f"    {where.ljust(column)}   ", " " * (column + 7))
+        ):
+            out.append(
+                Text(line, "dim")
+                if i
+                else Text.assemble((line[: column + 4], "cyan"), line[column + 4 :])
+            )
+    if len(shown) > LOCATIONS_SHOWN and not verbose:
+        out.append(Text(f"    and {len(shown) - LOCATIONS_SHOWN} more (-v lists them)", "dim"))
+    out += [Text(t) for t in _wrap(f"Note: {u.note.line}", width, "    ", "          ")]
+    runtime = runtime_text(u.changes)
+    if runtime:
+        out += [
+            Text(t, "dim")
+            for t in _wrap(f"Runtime: {runtime.replace('`', '')}", width, "    ", "             ")
+        ]
+    if u.note.not_confirmed:
+        names = ", ".join(u.note.not_confirmed)
+        text = f"Similar names in {u.package.locked}, not confirmed as replacements: {names}"
+        out += [Text(t, "dim") for t in _wrap(text, width, "    ", "      ")]
+    return out
+
+
+def _new_package_text(p: PackageScan) -> str:
+    if p.cutoff_version:  # the release at the cutoff was an empty placeholder
+        when = p.reason or "empty at the cutoff"
+    elif p.first_released:
+        when = f"first released {p.first_released}, after the cutoff"
+    else:
+        when = "first released after the cutoff"
+    name = f"{p.name} {p.locked}" if p.locked else p.name
+    return f"Your code imports {name} ({when}): its whole API is newer than the cutoff."
+
+
+def _form_legend(used: Sequence[UsedAPI]) -> list[str]:
+    """What "old form" and "uses this API" mean, for the labels shown."""
+    forms = {u.form for u in used}
+    packages = {(u.package.cutoff_version, u.package.locked) for u in used if u.form == OLD_FORM}
+    out = []
+    if OLD_FORM in forms:
+        if len(packages) == 1:
+            old, new = next(iter(packages))
+            valid = f"valid for {old}; {new} removed, moved or deprecated what it uses"
+        else:
+            valid = (
+                "valid for the release at the cutoff; the pinned release removed, moved or "
+                "deprecated what it uses"
+            )
+        out.append(f"old form: {valid} (a static name match; nothing was run)")
+    if USES_API in forms:
+        out.append(
+            "uses this API: not in the old form, but an assistant editing this code may write "
+            "the old form"
+        )
+    return out
+
+
+def other_changes(scan: ScanResult, used: Sequence[UsedAPI]) -> dict[str, int]:
+    """The changes (each once, PackageScan.distinct) the project's code does not use, per
+    changed dependency, most first."""
+    taken = {c.id for u in used for c in u.changes}
+    counts = {p.name: sum(c.id not in taken for c in p.distinct) for p in scan.changed}
+    return dict(sorted(((k, v) for k, v in counts.items() if v), key=lambda kv: -kv[1]))
+
+
+def _others_text(scan: ScanResult, used: Sequence[UsedAPI]) -> str | None:
+    counts = other_changes(scan, used)
+    if not counts:
+        return None
+    total = sum(counts.values())
+    if len(counts) == 1:
+        where = f"in {next(iter(counts))}"
+    else:
+        top = ", ".join(f"{name} {n}" for name, n in list(counts.items())[:3])
+        more = ", ..." if len(counts) > 3 else ""
+        where = f"in {len(counts)} packages ({top}{more})"
+    lead = (
+        "Also changed, not used by your code"
+        if used
+        else "Changed in your dependencies, not seen in your code"
+    )
+    return f"{lead}: {_plural(total, 'change')} {where}. `--all` lists them."
+
+
+def _old_form_count(used: Sequence[UsedAPI]) -> str:
+    """``2 of them in the old form``; ``in the old form`` or ``not in the old form`` for one."""
+    old = sum(u.form == OLD_FORM for u in used)
+    if len(used) == 1:
+        return "in the old form" if old else "not in the old form"
+    return f"{old} of them in the old form"
+
+
+def place_form(uses: Sequence[Use]) -> str:
+    """OLD_FORM when any use at a place is the old form of its change."""
+    return OLD_FORM if any(u.form == OLD_FORM for u in uses) else USES_API
+
+
+def fail_reason(scan: ScanResult, conditions: set[str]) -> str | None:
+    """Why ``scan --fail-on`` exits with code 3, or None: ``old-form`` when the code uses a
+    changed API in the old form, ``used`` when it uses one at all, ``changes`` when any
+    dependency changed its API after the cutoff (``--fail-on-changes``)."""
+    used = scan.used_apis() if conditions & {"used", "old-form"} else []
+    old = [u for u in used if u.form == OLD_FORM]
+    if "old-form" in conditions and old:
+        return (
+            f"--fail-on old-form: your code uses {_plural(len(old), 'changed API')} in the old form"
+        )
+    if "used" in conditions and used:
+        apis = _plural(len(used), "API")
+        return f"--fail-on used: your code uses {apis} that changed after the cutoff"
+    if "changes" in conditions and scan.changed:
+        n = len(scan.changed)
+        return (
+            f"--fail-on changes: {_deps(n)} changed {'its' if n == 1 else 'their'} API after "
+            "the cutoff"
+        )
+    return None
+
+
+def github_annotations(scan: ScanResult, env: Mapping[str, str] | None = None) -> list[str]:
+    """``--annotate github``: one GitHub Actions workflow command per place where the
+    project's code uses a changed API: ``::warning`` where it is the old form, ``::notice``
+    elsewhere. File-level for now (``file=`` only); once the scan records lines (issue #8),
+    ``line=`` and ``col=`` too. Paths are relative to ``GITHUB_WORKSPACE`` when the project is
+    inside it. Property values and the message are escaped as the Actions toolkit does."""
+    prefix = _workspace_prefix(scan.project.root, env)
+    out = []
+    for u in scan.used_apis():
+        p = u.package
+        title = f"since-cutoff: {p.name} {p.locked}"
+        message = (
+            f"{api_head(u)}. {p.name} {p.cutoff_version} was the latest release at "
+            f"{_after(scan)}; {p.locked} is pinned. Note: {u.note.line} Static match; nothing "
+            "was run."
+        )
+        for _, here in places(u):
+            use = here[0]
+            if not use.file:
+                continue
+            props = [("file", prefix + use.file)]
+            if use.line is not None:
+                props.append(("line", str(use.line)))
+            if use.column is not None:
+                props.append(("col", str(use.column + 1)))  # 1-based in the annotation
+            props.append(("title", title))
+            level = "warning" if place_form(here) == OLD_FORM else "notice"
+            head = ",".join(f"{k}={_escape_property(v)}" for k, v in props)
+            out.append(f"::{level} {head}::{_escape_data(message)}")
+    return out
+
+
+def _escape_data(text: str) -> str:
+    """A workflow command's message, as ``escapeData`` in actions/toolkit's command.ts."""
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(text: str) -> str:
+    """A workflow command's property value, as ``escapeProperty`` in actions/toolkit."""
+    return _escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def _workspace_prefix(root: Path, env: Mapping[str, str] | None) -> str:
+    """The project's folder in the GitHub checkout (``services/api/``), "" at its root or
+    outside Actions: the path that annotations and links put before a project file."""
+    workspace = (env or {}).get("GITHUB_WORKSPACE")
+    if not workspace:
+        return ""
+    try:
+        rel = root.resolve().relative_to(Path(workspace).resolve()).as_posix()
+    except (OSError, ValueError):
+        return ""
+    return "" if rel == "." else f"{rel}/"
+
+
+def _github_link(root: Path, env: Mapping[str, str] | None) -> Callable[[Use], str] | None:
+    """A function that gives a use's link on GitHub (``https://github.com/o/r/blob/<sha>/
+    app/main.py``, with ``#L7`` once lines are known), from the ``GITHUB_REPOSITORY`` and
+    ``GITHUB_SHA`` an Actions job sets; None outside one."""
+    env = env or {}
+    repo, sha = env.get("GITHUB_REPOSITORY"), env.get("GITHUB_SHA")
+    if not repo or not sha:
+        return None
+    server = (env.get("GITHUB_SERVER_URL") or "https://github.com").rstrip("/")
+    prefix = _workspace_prefix(root, env)
+
+    def link(use: Use) -> str:
+        anchor = f"#L{use.line}" if use.line is not None else ""
+        return f"{server}/{repo}/blob/{sha}/{quote(prefix + use.file)}{anchor}"
+
+    return link
+
+
+def _wrap(text: str, width: int, first: str, rest: str) -> list[str]:
+    """``text`` in lines of at most ``width`` characters (a longer word stays whole: a path, a
+    flag), the first starting with ``first``, the others with ``rest``."""
+    return textwrap.wrap(
+        text,
+        width=max(width, len(first) + 10),
+        initial_indent=first,
+        subsequent_indent=rest,
+        break_long_words=False,
+        break_on_hyphens=False,
+    ) or [first.rstrip()]
+
+
+def _joined(items: Sequence[str], conjunction: str) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} {conjunction} {items[-1]}"
 
 
 # ----------------------------------------------------------------- markdown
@@ -714,6 +1296,9 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
         f"- {_cutoff_md(s)}" + (f", thinking effort `{s['effort']}`" if s["effort"] else ""),
         f"- Project: `{scan.project.root.name}`, versions from `{s['version_source']}`",
         f"- Generated by since-cutoff {__version__} at {s['generated_at']}",
+    ]
+    out += _used_report_md(scan)
+    out += [
         "",
         "## Summary",
         "",
@@ -732,7 +1317,8 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
         "|---|---|---|---|---:|---:|" + ("---:|---:|---:|" if probed else ""),
     ]
     for r in s["packages"]:
-        status = _status_text(r) + (f": {r['reason']}" if r["reason"] else "")
+        reason = _new_reason(r["status"], r["reason"])
+        status = _status_text(r) + (f": {reason}" if reason else "")
         counts = " | ".join(_count_cells(r))
         row = (
             f"| {r['package']} | {r['locked'] or '?'} ({r['locked_date'] or '-'}) "
@@ -742,7 +1328,10 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
             row += f" {r['probed'] or ''} | {r['stale'] or ''} | {r['wrong'] or ''} |"
         out.append(row)
     if run is not None and run.block:
-        out += ["", "## Notes written for AGENTS.md", "", "```markdown", run.block.strip(), "```"]
+        out += _notes_md(run.notes, run.block, run=True)
+    elif run is None:
+        diff_notes = scan.diff_notes()
+        out += _notes_md(diff_notes, scan.notes_block(diff_notes) or "", run=False)
     if run is not None and run.probes:
         out += ["", "## Probes", ""]
         for a in run.probes:
@@ -779,9 +1368,53 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
                 "",
             ]
             files = scan.uses(p)
-            out += [_md_change(c, files, example=True) for c in scan.ranked(p)]
+            out += [_md_change(c, files, example=True, used_in=True) for c in scan.ranked(p)]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
+
+
+def _used_report_md(scan: ScanResult) -> list[str]:
+    """report.md's "Used by your code": each changed API the code uses, by package, with
+    every file that uses it (the lines are issue #8's), the note with its tag, the runtime
+    caveat and the names that merely look similar."""
+    used = scan.used_apis()
+    new = scan.new_imported()
+    if not used and not new:
+        if not scan.changed:
+            return []
+        return [
+            "",
+            "## Used by your code",
+            "",
+            f"Your code uses none of the APIs that changed after {_after(scan)}.",
+        ]
+    out = ["", "## Used by your code", ""]
+    if used:
+        out.append(
+            f"Your code uses {_plural(len(used), 'API')} that changed after {_after(scan)}, "
+            f"{_old_form_count(used)}. "
+            + " ".join(f"{text[0].upper()}{text[1:]}." for text in _form_legend(used))
+        )
+    group: str | None = None
+    for u in used:
+        if u.package.name != group:
+            group = u.package.name
+            out += ["", f"### {versions_text(scan, u.package)}", ""]
+        wheres = [f"`{w}` ({use_text(here, code=True)})" for w, here in places(u)]
+        out.append(f"- **{api_head(u, code=True)}** · {FORM_LABELS[u.form]}")
+        out.append(f"  - Used in: {', '.join(wheres) or 'a file of your code'}")
+        out.append(f"  - Note: {u.note.line}")
+        runtime = runtime_text(u.changes)
+        if runtime:
+            out.append(f"  - Runtime: {runtime}")
+        if u.note.not_confirmed:
+            names = ", ".join(f"`{n}`" for n in u.note.not_confirmed)
+            out.append(
+                f"  - Similar names in {u.package.locked}, not confirmed as replacements: {names}"
+            )
+    if new:
+        out += ["", *(f"- {_new_package_text(p)}" for p in new)]
+    return out
 
 
 def _pairs_md(run: RunResult) -> list[str]:
@@ -805,13 +1438,13 @@ def _pairs_md(run: RunResult) -> list[str]:
 
 
 def _arms_md(arms: dict[str, dict[str, Any]], blocks: dict[str, str]) -> list[str]:
-    """The ``--compare`` table: one row per notes arm, the verified notes first; then each
-    baseline's block, folded (the verified block is under "Notes written for AGENTS.md")."""
+    """The ``--compare`` table: one row per notes arm, the run's notes first; then each
+    baseline's block, folded (the notes' own block is under "Notes for AGENTS.md")."""
     out = ["", "### Compared with baseline notes", "", ARMS_NOTE, ""]
     out += [
         "| notes | tokens | held-out correct without -> with | held-out pairs not counted "
         "| changes fixed, 95% CI | changes broken | regression checks still correct "
-        "| fixed only by the verified notes / only by this, sign test |",
+        "| fixed only by the type-checked notes / only by this, sign test |",
         "|---|---:|---|---|---|---:|---|---|",
     ]
     for arm, a in arms.items():
@@ -918,7 +1551,7 @@ _ROLE_TITLES = {
 
 def _heldout_md(heldout: dict[str, dict[str, Any]]) -> list[str]:
     """The held-out statistics, one column per role, then the counts of each API change."""
-    out = ["", "## Held-out verification", "", PAIRING_RULE]
+    out = ["", "## Held-out test of the notes", "", PAIRING_RULE]
     roles = [(role, heldout[role]) for role in _ROLE_TITLES if role in heldout]
     if not roles:
         return out
@@ -997,30 +1630,52 @@ def _cutoff_md(s: dict[str, Any]) -> str:
     return f"Model `{s['model']}`, training cutoff **{s['cutoff']}** (source: {s['cutoff_source']})"
 
 
-def _md_change(change: APIChange, files: Sequence[FileUse], *, example: bool = False) -> str:
-    """One Markdown list item: the change, how many paths share it, and what the code uses."""
+def _md_change(
+    change: APIChange, files: Sequence[FileUse], *, example: bool = False, used_in: bool = False
+) -> str:
+    """One Markdown list item: the change, how many paths share it, and what the code uses
+    (with ``used_in``, where: " · used in `app/main.py`"); below it, the "Runtime:" caveat when
+    the new version still reads a removed parameter."""
     others = other_paths_text(change, example=example)
     uses = uses_text(change, files)
     mark = f" · **your code uses {uses}**" if uses else ""
-    return f"- {change_text(change)}{f' ({others})' if others else ''}{mark}"
+    if uses and used_in:
+        wheres = list(dict.fromkeys(u.where for u in selection_uses(change, files) if u.file))
+        shown = ", ".join(f"`{w}`" for w in wheres[:LOCATIONS_SHOWN])
+        more = f" and {len(wheres) - LOCATIONS_SHOWN} more" if len(wheres) > LOCATIONS_SHOWN else ""
+        mark += f" · used in {shown}{more}" if shown else ""
+    runtime = runtime_text([change])
+    below = f"\n  - Runtime: {runtime}" if runtime else ""
+    return f"- {change_text(change)}{f' ({others})' if others else ''}{mark}{below}"
 
 
 def change_text(change: APIChange, *, short: bool = False) -> str:
-    """The change in a sentence, with the parameter that replaced a removed one, when the
-    diff found it renamed in place: ``parameter `pos` was removed (now `start`?)``."""
+    """The change in a sentence, with the parameter that replaced a removed one when the diff
+    found it renamed in place (``parameter `pos` was removed (probably renamed to `start`, same
+    position and type)``), and the names that merely look similar, labelled as not confirmed.
+    """
     text = change.describe(short=short, versioned=False)
-    if change.kind == PARAM_REMOVED and change.suggestions:
-        text += " (now " + " or ".join(f"`{s}`" for s in change.suggestions[:2]) + "?)"
+    renamed = rename_text(change)
+    similar = similar_text(change) if change.kind in (PARAM_REMOVED, REMOVED) else None
+    if renamed:
+        text += f" ({renamed})"
+    elif similar:
+        text += f" ({similar})"
     return text
 
 
-def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
+def render_scan_markdown(
+    scan: ScanResult, *, limit: int = 8, env: Mapping[str, str] | None = None
+) -> str:
     """A short GitHub-flavoured Markdown summary of a scan, for CI job summaries and PR comments.
 
-    One table row per flagged dependency, then the top ``limit`` changes of each changed one,
-    with changes to names the project's code uses first. The full list stays in report.md.
-    Every count is of distinct changes, and the dependencies come in the same order, as in
-    the full report and the MCP tools.
+    First the changed APIs the project's code uses, one table row each (where, API, change,
+    form, replacement), with links to the files when ``env`` has an Actions job's
+    ``GITHUB_REPOSITORY`` and ``GITHUB_SHA``, and the notes for them, folded. Then one table
+    row per flagged dependency and the top ``limit`` changes of each changed one, folded, with
+    changes to names the project's code uses first. The full list stays in report.md. Every
+    count is of distinct changes, and the dependencies come in the same order, as in the full
+    report and the MCP tools.
     """
     s = summary(scan)
     project = scan.project
@@ -1030,6 +1685,7 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
         f"{_cutoff_md(s)} · project `{project.root.name}`, versions from `{s['version_source']}`",
         "",
     ]
+    out += _used_markdown(scan, env)
     out += [f"- {t.plain}" for t in headline(scan, None, s)]
     out += [f"- Warning: {w}" for w in scan.warnings]
 
@@ -1045,8 +1701,8 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
         status = STATUS_LABEL.get(p.status, p.status)
         if p.imported:
             status += f", {IMPORTED}"
-        elif p.reason:
-            status += f": {clip(p.reason, 2 * REASON_WIDTH)}"
+        elif _new_reason(p.status, p.reason):
+            status += f": {clip(p.reason or '', 2 * REASON_WIDTH)}"
         counts = p.counts if p.status == CHANGED else ("", "")
         out.append(
             f"| {p.name} | {_version_cell(p.locked, p.locked_date)} "
@@ -1068,7 +1724,7 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
         )
         out += [
             "",
-            f"<details{' open' if hits else ''}><summary><b>{p.name}</b> "
+            f"<details><summary><b>{p.name}</b> "
             f"{p.cutoff_version} -> {p.locked}: {detail}</summary>",
             "",
         ]
@@ -1083,6 +1739,74 @@ def render_scan_markdown(scan: ScanResult, *, limit: int = 8) -> str:
         "not shown.</sub>",
     ]
     return "\n".join(out) + "\n"
+
+
+_EVIDENCE_WORDS = {
+    EVIDENCE_LIBRARY: "named in the library's deprecation text",
+    EVIDENCE_MOVE: "move checked",
+    EVIDENCE_RENAME: "probable rename",
+}
+
+
+def _used_markdown(scan: ScanResult, env: Mapping[str, str] | None) -> list[str]:
+    """The Markdown summary's first section: a table of the changed APIs the code uses, the
+    dependencies first released after the cutoff that it imports, and the notes, folded."""
+    used = scan.used_apis()
+    new = scan.new_imported()
+    out: list[str] = []
+    if used:
+        link = _github_link(scan.project.root, env)
+        out += [
+            f"**Your code uses {_plural(len(used), 'API')} that changed after the cutoff**",
+            "",
+            "| where | API | change | form | replacement |",
+            "|---|---|---|---|---|",
+        ]
+        for u in used:
+            shown = places(u)
+            wheres = [
+                f"[{w}]({link(here[0])})" if link and here[0].file else f"`{w}`"
+                for w, here in shown[:LOCATIONS_SHOWN]
+            ]
+            if len(shown) > LOCATIONS_SHOWN:
+                wheres.append(f"and {len(shown) - LOCATIONS_SHOWN} more")
+            p = u.package
+            api = f"`{api_display(u)}` ({p.name} {p.cutoff_version} -> {p.locked})"
+            _, change = changes_text(u.changes, code=True)
+            replacement = ", ".join(
+                f"`{r.text}`"
+                + (f" for `{r.replaces}`" if r.replaces else "")
+                + f" ({_EVIDENCE_WORDS.get(r.evidence, r.evidence)})"
+                for r in u.note.replacements
+            )
+            cells = [
+                "<br>".join(wheres),
+                api,
+                change,
+                FORM_LABELS[u.form],
+                replacement or "none named",
+            ]
+            out.append("| " + " | ".join(_cell(c) for c in cells) + " |")
+    elif scan.changed:
+        out.append("**Your code uses none of the APIs that changed after the cutoff**")
+    for p in new:
+        out += ["", _new_package_text(p)]
+    block = scan.notes_block(scan.diff_notes()) if used else None
+    if block:
+        count = _plural(len(used), "note")
+        out += [
+            "",
+            f"<details><summary>{count} ready for {_target_name(scan)} (`since-cutoff sync` "
+            f"writes {'it' if len(used) == 1 else 'them'}), about {estimate_tokens(block)} "
+            "tokens</summary>",
+            "",
+            "```markdown",
+            block.strip(),
+            "```",
+            "",
+            "</details>",
+        ]
+    return [*out, ""] if out else []
 
 
 def _version_cell(version: str | None, day: str | None) -> str:
@@ -1118,11 +1842,35 @@ def clip(text: str, limit: int) -> str:
 
 
 def to_json(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
-    data = summary(scan, run)
-    data["scan"] = [p.to_dict() for p in scan.packages]
+    """results.json and ``scan --json``: :func:`summary`, every package's changes, the changed
+    APIs the code uses (``used``, ``used_apis``) and the notes block for them. Nothing 0.3
+    wrote is left out; ``report_schema`` counts the additions."""
+    data = {"report_schema": REPORT_SCHEMA, **summary(scan, run)}
+    data["scan"] = [_scan_json(p) for p in scan.packages]
+    used = scan.used_apis()
+    data["used"] = {
+        "apis": len(used),
+        "changes": sum(len(u.changes) for u in used),
+        "old_form": sum(u.form == OLD_FORM for u in used),
+        "files": len({f for u in used for f in u.files}),
+        "packages": list(dict.fromkeys(u.package.name for u in used)),
+        "new_packages_imported": [p.name for p in scan.new_imported()],
+    }
+    data["used_apis"] = [_used_api_json(scan, u) for u in used]
+    notes = scan.diff_notes()
+    block = scan.notes_block(notes)
+    data["notes_preview"] = (
+        None
+        if block is None
+        else {
+            "targets": target_names(scan),
+            "tokens": estimate_tokens(block),
+            "block": block,
+        }
+    )
     if run is not None:
         data["attempts"] = [_attempt_json(run, a) for a in run.probes + run.heldout]
-        data["notes_detail"] = [n.to_dict() for n in run.notes]
+        data["notes_detail"] = [_note_detail(run, n) for n in run.notes]
         data["block"] = run.block
         for arm, entry in data.get("arms", {}).items():
             entry["block"] = run.arms[arm]
@@ -1130,6 +1878,168 @@ def to_json(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
             {"change": c.describe(), "reason": r} for c, r in run.skipped_changes
         ]
     return data
+
+
+def _scan_json(p: PackageScan) -> dict[str, Any]:
+    """A package's scan for results.json: every change, each with at most
+    :data:`IMPORT_PATHS_SHOWN` of its import paths (shortest first) and how many it has
+    (``import_paths_total``). The diff cache keeps them all, and matching uses them all: a
+    method of a base class that thousands of classes inherit has a path under each."""
+    data = p.to_dict()
+    for change in data["changes"]:
+        found = change.get("import_paths")
+        if found is not None:
+            change["import_paths_total"] = len(found)
+            change["import_paths"] = found[:IMPORT_PATHS_SHOWN]
+    return data
+
+
+def _used_api_json(scan: ScanResult, u: UsedAPI) -> dict[str, Any]:
+    """One entry of ``used_apis``: a changed API the project's code uses, its changes, where
+    and how the code uses it, and the note from the API diff for it.
+
+    ``locations`` are file-level for now: ``line``, ``column`` and ``code`` stay null until the
+    scan records where in each file (issue #8). ``used_in`` lists the files."""
+    p, note = u.package, u.note
+    snippets: dict[str, list[str]] = {}
+    locations = []
+    for _, here in places(u):
+        use = here[0]  # the most specific use there
+        code = _snippet(scan.project.root, use, snippets)
+        locations.append(
+            {
+                "file": use.file,
+                "line": use.line,
+                "column": use.column,
+                "kind": use.kind,
+                "names": list(use.names),
+                "form": place_form(here),
+                "match": use.how,
+                "code": code[:200] if code else None,
+            }
+        )
+    return {
+        "package": p.name,
+        "cutoff_version": p.cutoff_version,
+        "locked": p.locked,
+        "versions_from": scan.versions_from(p),
+        "api": note.change.path,
+        "display": note.api,
+        "form": u.form,
+        "match": u.match,
+        "changes": [
+            {
+                "change_id": c.id,
+                "kind": c.kind,
+                "parameter": c.parameter,
+                "form": u.forms.get(c.id, USES_API),
+                "runtime": {"checked": False, "still_handled_at": c.still_handled_at},
+            }
+            for c in u.changes
+        ],
+        "replacement": note.replacements[0].to_dict() if note.replacements else None,
+        "replacements": [r.to_dict() for r in note.replacements],
+        "used_in": u.files,
+        "locations": locations,
+        "locations_total": len(locations),
+        "note": _note_json(note),
+    }
+
+
+def _note_json(note: Note) -> dict[str, Any]:
+    """A note as ``used_apis[].note`` has it (``notes_detail[]`` has more: the example, ids)."""
+    return {
+        "bullet": note.bullet,
+        "tags": list(note.tag_list),
+        "tag_text": tag_text(note.tag_list),
+        "applies_to": note.applies_to(),
+        "checks": note.checks(),
+        "replacements": [r.to_dict() for r in note.replacements],
+        "not_confirmed": list(note.not_confirmed),
+    }
+
+
+def _note_detail(run: RunResult, note: Note) -> dict[str, Any]:
+    """A note of a run for ``notes_detail``, with what the held-out test measured for it."""
+    data = note.to_dict()
+    pairs = {c.change_id: c for c in run.pairing("heldout").per_change}
+    measured = [pairs[c.id] for c in note.covered if c.id in pairs]
+    if measured:
+        data["checks"]["measured"] = {
+            "pairs": sum(m.n for m in measured),
+            "correct_without": sum(m.before for m in measured),
+            "correct_with": sum(m.after for m in measured),
+            "outcome": measured[0].outcome if len(measured) == 1 else None,
+        }
+    return data
+
+
+def target_names(scan: ScanResult) -> list[str]:
+    """The files the notes would be written to, as ``sync`` and ``run --apply`` choose them
+    (:func:`notes.block_targets`; issue #13 is the case of both AGENTS.md and CLAUDE.md)."""
+    root = scan.project.root
+    names = []
+    for target in block_targets(root):
+        try:
+            names.append(target.relative_to(root).as_posix())
+        except ValueError:  # pragma: no cover - block_targets without --target is in root
+            names.append(str(target))
+    return names
+
+
+def _target_name(scan: ScanResult) -> str:
+    return _joined(target_names(scan), "and")
+
+
+def _notes_md(notes: list[Note], block: str, *, run: bool) -> list[str]:
+    """The "Notes for AGENTS.md" section: the block, then where each note comes from."""
+    if not notes or not block:
+        return []
+    if run:
+        intro = (
+            "The notes this run wrote (`run --apply` writes them). A model wrote each one and "
+            "kept it only when its example type-checks against the pinned version; the note "
+            "from the API diff takes its place otherwise."
+        )
+    else:
+        intro = (
+            "Written from the API diff, with no model call, for the changed APIs your code "
+            "uses; `since-cutoff sync` writes them into the file and keeps them in step with "
+            "the lockfile. Each note's tag says what was checked; the list below says where it "
+            "comes from. results.json has the same under `used_apis`."
+        )
+    out = ["", "## Notes for AGENTS.md (with their sources)", "", intro, ""]
+    out += ["```markdown", block.strip(), "```", ""]
+    # In the order of the block: by package, then as written.
+    by_package = sorted(notes, key=lambda n: (n.change.package, n.change.to_version))
+    out += [f"- {_source_md(n)}" for n in by_package]
+    return out
+
+
+def _source_md(note: Note) -> str:
+    """Where one note comes from: the diff, the library's text, a model; and what was not
+    checked (the runtime caveat, the names that merely look similar)."""
+    c = note.change
+    parts = [
+        f"`{note.api}` {tag_text(note.tag_list)}: {c.package} {c.from_version} -> {c.to_version}"
+    ]
+    if note.source == NOTE_MODEL:
+        writer = f" by `{note.writer}`" if note.writer else ""
+        parts.append(f"written{writer}; its example type-checks against {c.package} {c.to_version}")
+    elif note.source == NOTE_DIFF:
+        parts.append("stated from the API diff")
+    for r in note.replacements:
+        parts.append(f"`{r.text}` for `{r.replaces}`: {r.source}")
+    runtime = runtime_text(note.covered)
+    if runtime:
+        parts.append(f"Runtime: {runtime}")
+    if note.not_confirmed:
+        names = ", ".join(f"`{n}`" for n in note.not_confirmed)
+        parts.append(
+            f"similar names in {c.to_version}, not confirmed as replacements (not in the note): "
+            f"{names}"
+        )
+    return "; ".join(parts)
 
 
 def _attempt_json(run: RunResult, attempt: Attempt) -> dict[str, Any]:

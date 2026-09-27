@@ -27,12 +27,14 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
 from since_cutoff import __version__
 from since_cutoff.baselines import BASELINE_ARMS
 from since_cutoff.cache import DiskCache, default_cache_dir
 from since_cutoff.engine import (
     ERROR,
+    SKIPPED,
     STALE,
     TASK_WRITER_FAILED,
     Engine,
@@ -45,18 +47,52 @@ from since_cutoff.engine import (
 from since_cutoff.errors import SinceCutoffError
 from since_cutoff.hosts import DEFAULT_SOURCE, detect_model, not_found_hint
 from since_cutoff.models import ModelRegistry, parse_cutoff
-from since_cutoff.notes import apply_block, remove_block
-from since_cutoff.project import load_project
+from since_cutoff.notes import (
+    SCOPE_USED,
+    agents_import_tip,
+    apply_block,
+    block_targets,
+    model_names,
+    remove_block,
+)
+from since_cutoff.project import Project, load_project
 from since_cutoff.report import (
+    fail_reason,
+    github_annotations,
     render_console,
-    render_scan_changes,
+    render_scan,
     render_scan_markdown,
     to_json,
     write_outputs,
 )
+from since_cutoff.sync import (
+    EXIT_EDITED,
+    EXIT_OK,
+    EXIT_OUT_OF_DATE,
+    DetectedModel,
+    TargetFile,
+    blocked_by,
+    current_deps_hash,
+    diff_lines,
+    edited_text,
+    exit_code,
+    hook_line,
+    lockfile_changes,
+    out_of_date_text,
+    propose,
+    read_target,
+    status_json,
+    status_lines,
+    sticky_target,
+    target_status,
+    up_to_date_text,
+    written_text,
+)
 from since_cutoff.taskfile import read_tasks, tasks_document, write_tasks
 
-COMMANDS = ("run", "scan", "models", "cache", "unapply", "mcp")
+COMMANDS = ("run", "scan", "sync", "status", "models", "cache", "unapply", "mcp")
+# ``scan --fail-on``: what makes it exit with code 3 (report.fail_reason).
+FAIL_ON = ("changes", "used", "old-form")
 CACHE_NAMESPACES = (
     "pypi",
     "sources",
@@ -70,10 +106,17 @@ CACHE_NAMESPACES = (
 )
 EXAMPLES = """examples:
   since-cutoff                          probe your coding agent's model on this project
-  since-cutoff scan                     list API changes since the model's cutoff (no model calls)
+  since-cutoff scan                     the changed APIs your code uses, with a note for each
+                                        (no model calls; --all lists every change)
   since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown - >> "$GITHUB_STEP_SUMMARY"
+  since-cutoff scan --annotate github --fail-on old-form   annotate and fail a CI job
   since-cutoff scan --cutoff 2025-03   list API changes since a date, with no model involved
-  since-cutoff run --apply              probe, then write verified notes into AGENTS.md
+  since-cutoff sync                     write the notes into AGENTS.md (shows the diff and asks
+                                        first) and keep them in step with the lockfile
+  since-cutoff sync --check             exit 3 when the notes are out of date (CI, pre-commit)
+  since-cutoff status                   are the notes current for the lockfile? (offline)
+  since-cutoff run --apply              probe the model, then write notes (model-written ones
+                                        only if their example type-checks)
   since-cutoff run --quick --model openai:gpt-5.4
   since-cutoff run --compare template   compare the notes with a baseline built without a model
   since-cutoff run --model openai-compatible:my-model --base-url http://localhost:8000/v1
@@ -81,8 +124,12 @@ EXAMPLES = """examples:
   since-cutoff mcp                      serve the read-only tools to coding agents over MCP (stdio)
 
 exit codes: 0 ok, 1 error (including: no model answer could be scored), 2 usage error,
-            3 stale API use found with --fail-on-stale, or API changes found with
-            scan --fail-on-changes, 141 the output was closed early (e.g. piped into head)
+            3 stale API use found with --fail-on-stale, or with scan --fail-on: API changes
+            (changes, also --fail-on-changes), changed APIs your code uses (used), or uses of
+            them in the old form (old-form); sync --check and status: the notes are out of
+            date (sync: out of date and not written),
+            4 sync: the notes block was edited by hand; nothing written without --force,
+            141 the output was closed early (e.g. piped into head)
 """
 # The exit code when the reader of the output goes away (``since-cutoff scan | head``): the
 # code a shell reports for a writer stopped by SIGPIPE.
@@ -187,6 +234,7 @@ class RichReporter(Reporter):
         self.progress: Progress | None = None
         self.task: object | None = None
         self.count = self.total = self.next_line = 0
+        self.warned: list[str] = []  # what warn() printed: the results do not print it again
 
     def stage(self, title: str, total: int | None = None) -> None:
         self.done()
@@ -221,6 +269,7 @@ class RichReporter(Reporter):
 
     def warn(self, message: str) -> None:
         self.console.print(f"[yellow]![/yellow] {escape(message)}")
+        self.warned.append(message)
 
     def done(self) -> None:
         if self.progress is not None:
@@ -321,15 +370,17 @@ def _common(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="since-cutoff",
-        description="Find which of your exact dependency versions your coding agent writes wrong, "
-        "and fix it with a small, verified AGENTS.md note.",
+        description="Find which dependency APIs your code uses changed after your coding model's "
+        "training cutoff, and write short AGENTS.md notes from the API diff, each with its source.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=EXAMPLES,
     )
     parser.add_argument("--version", action="version", version=f"since-cutoff {__version__}")
     sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="scan, probe the model, write and verify notes (default)")
+    run = sub.add_parser(
+        "run", help="scan, probe the model, write notes and test them on held-out tasks (default)"
+    )
     _common(run)
     run.add_argument(
         "--max-probes", type=_positive, default=30, help="API changes to probe (default: 30)"
@@ -359,16 +410,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--jobs", type=_positive, default=4, help="parallel model calls (default: 4)")
     run.add_argument(
-        "--no-fix", action="store_true", help="only measure; do not write or verify notes"
+        "--no-fix", action="store_true", help="only measure; do not write or test notes"
     )
     run.add_argument(
         "--apply",
         action="store_true",
-        help="write the verified notes into the agent instructions file",
+        help="write the notes into the agent instructions file",
     )
     run.add_argument(
         "--target",
-        help="file to write notes into (default: AGENTS.md, or CLAUDE.md if that is what exists)",
+        help="file to write notes into (default: AGENTS.md and CLAUDE.md where they already have "
+        "a since-cutoff block; else AGENTS.md, or CLAUDE.md if only that one exists)",
     )
     run.add_argument(
         "--fresh",
@@ -398,12 +450,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="ARM[,ARM]",
         help="also answer the held-out tasks with baseline notes built without a model and "
-        "compare them with the verified notes: template (each change stated from the API "
+        "compare them with the notes: template (each change stated from the API "
         "diff), signatures (the new signature and docstring of each changed or replacement "
         "API), none (default)",
     )
 
-    scan = sub.add_parser("scan", help="list API changes since the model's cutoff (no model calls)")
+    scan = sub.add_parser(
+        "scan",
+        help="the APIs your code uses that changed after the model's cutoff, with a note for each "
+        "(no model calls)",
+    )
     _common(scan)
     scan.add_argument(
         "--limit", type=_positive, default=8, help="changes shown per package (default: 8)"
@@ -415,10 +471,127 @@ def build_parser() -> argparse.ArgumentParser:
         "current directory ('-' for stdout), e.g. for a CI job summary or a PR comment",
     )
     scan.add_argument(
+        "--all",
+        action="store_true",
+        help="after the changed APIs your code uses, show everything that changed: the "
+        "summary, the dependency table and the top --limit changes of each changed dependency",
+    )
+    scan.add_argument(
+        "--fail-on",
+        choices=FAIL_ON,
+        action="append",
+        help="exit with code 3 (for CI) when a dependency changed its API after the cutoff "
+        "(changes), when your code uses an API that changed (used), or when it uses one in the "
+        "old form (old-form); repeat it for several",
+    )
+    scan.add_argument(
         "--fail-on-changes",
         action="store_true",
-        help="exit with code 3 if any dependency changed its API after the cutoff (for CI)",
+        help="the same as --fail-on changes",
     )
+    scan.add_argument(
+        "--annotate",
+        choices=["github"],
+        help="also print GitHub Actions annotations to stdout: a warning on each file that uses "
+        "a changed API in the old form, a notice on each file that uses one otherwise",
+    )
+
+    sync = sub.add_parser(
+        "sync",
+        help="write the notes for the changed APIs your code uses into AGENTS.md / CLAUDE.md, "
+        "and update them when the lockfile or the code changes (no model calls)",
+        description="Write the notes from the API diff for the changed APIs your code uses into "
+        "the since-cutoff block of AGENTS.md / CLAUDE.md, or update them: notes for newly used "
+        "APIs are added, those of a bumped package checked again, and those of a package that "
+        "is no longer a dependency, no longer newer than the release at the cutoff, or no "
+        "longer used, dropped. Text outside the block stays byte for byte. It shows the diff "
+        "and asks before writing (--yes writes without asking). It keeps the model and cutoff "
+        "the block was written for unless --model or --cutoff is given, and the [type-checked] "
+        "notes of `since-cutoff run` while their package's version is the same.",
+    )
+    sync.add_argument(
+        "path", nargs="?", default=".", help="project directory (default: current directory)"
+    )
+    sync.add_argument(
+        "--model",
+        action="extend",
+        type=_csv,
+        default=[],
+        metavar="PROVIDER:MODEL[,...]",
+        help="write the notes for this model's training cutoff instead of the one the block was "
+        "written for; several (repeated or comma-separated): the earliest of their cutoffs "
+        "(default without a block: the model your coding agent is set up with, as for run)",
+    )
+    sync.add_argument("--cutoff", help="override the training cutoff (YYYY-MM or YYYY-MM-DD)")
+    sync.add_argument(
+        "--target",
+        help="file to write notes into (default: AGENTS.md and CLAUDE.md where they already have "
+        "a since-cutoff block; else AGENTS.md, or CLAUDE.md if only that one exists)",
+    )
+    sync.add_argument(
+        "--check",
+        action="store_true",
+        help="write nothing; exit with code 3 when the notes are out of date (for CI and "
+        "pre-commit)",
+    )
+    sync.add_argument(
+        "--dry-run", action="store_true", help="show the diff; write nothing (exit code 0)"
+    )
+    sync.add_argument("-y", "--yes", action="store_true", help="write without asking")
+    sync.add_argument(
+        "--force",
+        action="store_true",
+        help="replace a block that was edited by hand (otherwise sync exits with code 4)",
+    )
+    sync.add_argument(
+        "--scope",
+        choices=["used", "imported"],
+        help="used: notes for the changed APIs your code uses (default); imported: also for "
+        "the changes most likely to matter in each changed package your code imports (up to "
+        "5 APIs per package). The block keeps the scope it was written with",
+    )
+    sync.add_argument(
+        "--suggestions",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="also write into the notes the names in the pinned version that merely look "
+        "similar to what was removed, tagged [not confirmed] (off by default; the block keeps "
+        "the choice)",
+    )
+    sync.add_argument(
+        "--max-download-mb",
+        type=float,
+        default=80.0,
+        help="skip packages whose wheel is larger (default: 80)",
+    )
+    sync.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
+
+    status = sub.add_parser(
+        "status",
+        help="are the notes in AGENTS.md / CLAUDE.md current for the lockfile? (offline)",
+        description="Compare the since-cutoff block with the project's dependencies as they are, "
+        "without the network: the versions its notes are for, a hash of the other "
+        "dependencies, where the versions come from, and the training cutoff of the model your "
+        "coding agent is set up with. It does not read your code for new uses of changed APIs: "
+        "`since-cutoff sync --check` does. Exit code 3 when a block is out of date (no block "
+        "is not: `since-cutoff sync --check` says whether your code needs one).",
+    )
+    status.add_argument(
+        "path", nargs="?", default=".", help="project directory (default: current directory)"
+    )
+    status.add_argument(
+        "--target",
+        help="file to check (default: AGENTS.md and CLAUDE.md where they have a since-cutoff "
+        "block; else AGENTS.md, or CLAUDE.md if only that one exists)",
+    )
+    status.add_argument(
+        "--hook",
+        action="store_true",
+        help="for a coding agent's session-start hook: print one line only when the notes are "
+        "out of date, nothing otherwise; always exit with code 0",
+    )
+    status.add_argument("--json", action="store_true", help="print the status as JSON")
+    status.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
 
     models = sub.add_parser("models", help="list known models and their training cutoffs")
     models.add_argument(
@@ -519,8 +692,18 @@ def _main(argv: list[str] | None) -> int:
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
     json_mode = getattr(args, "json", False)
     markdown = getattr(args, "markdown", None)
-    if json_mode and markdown == "-":
-        err.print("[red]error:[/red] --json and --markdown - cannot both write to stdout")
+    to_stdout = [
+        flag
+        for flag, on in (
+            ("--json", json_mode),
+            ("--markdown -", markdown == "-"),
+            ("--annotate", getattr(args, "annotate", None)),
+        )
+        if on
+    ]
+    if len(to_stdout) > 1:
+        both = " and ".join(to_stdout)
+        err.print(f"[red]error:[/red] {both} cannot both write to stdout")
         return 2
     problem = _compare_problem(args)
     if problem:
@@ -537,6 +720,10 @@ def _main(argv: list[str] | None) -> int:
             return _cmd_unapply(args, out)
         if args.command == "mcp":
             return _cmd_mcp(args)
+        if args.command == "sync":
+            return _cmd_sync(args, out)
+        if args.command == "status":
+            return _cmd_status(args, out)
         return _cmd_run(args, ui, json_mode)
     except SinceCutoffError as exc:
         err.print(f"[red]error:[/red] {escape(str(exc))}")
@@ -623,16 +810,10 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     if args.command == "scan" and args.model is None and settings.cutoff is not None:
         # A date alone: there is no model to look up, name or guess (and no CLI to ask).
         target = ModelTarget.cutoff_only(settings.cutoff)
-        ui.print(
-            f"[dim]•[/dim] Custom cutoff [bold]{target.cutoff.isoformat()}[/bold] "
-            "[dim](from --cutoff; no model given)[/dim]"
-        )
+        ui.print(_model_line(target, "--cutoff; no model given"))
     else:
         target = _resolve_target(engine, allow_calls=args.command == "run")
-        ui.print(
-            f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
-            f"[bold]{target.cutoff.isoformat()}[/bold] [dim](from {escape(target.cutoff_source)})[/dim]"
-        )
+        ui.print(_model_line(target))
     scan: ScanResult = engine.scan(project, target)
     run: RunResult | None = None
     if args.command == "run" and scan.changed:
@@ -643,24 +824,30 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     tasks_out = getattr(args, "tasks_out", None)
     summary_md = getattr(args, "markdown", None)
     if summary_md:
-        _write_markdown(summary_md, render_scan_markdown(scan, limit=args.limit))
+        _write_markdown(summary_md, render_scan_markdown(scan, limit=args.limit, env=os.environ))
     if json_mode:
         STDOUT.write(json.dumps(to_json(scan, run), indent=2, default=str) + "\n")
         STDOUT.flush()
     elif summary_md != "-":  # stdout has the Markdown, stderr only the progress, as for --json
         ui.print()
-        render_console(ui, scan, run, verbose=args.verbose)
+        # A warning printed while scanning (on this same console) is not printed again.
+        shown = reporter.warned
         if args.command == "scan":
-            render_scan_changes(ui, scan, limit=args.limit)
+            render_scan(
+                ui, scan, show_all=args.all, verbose=args.verbose, limit=args.limit, shown=shown
+            )
+        else:
+            render_console(ui, scan, run, verbose=args.verbose, shown=shown)
 
     if args.command == "run" and run is not None:
         if run.block:
             if args.apply:
-                path = _target_file(project.root, args.target)
-                action = apply_block(path, run.block)
-                ui.print(
-                    f"\n[green]✓[/green] {action.capitalize()} {escape(str(path))} with {len(run.notes)} notes"
-                )
+                for path in block_targets(project.root, args.target):
+                    action = apply_block(path, run.block)
+                    ui.print(
+                        f"\n[green]✓[/green] {action.capitalize()} {escape(str(path))} with "
+                        f"{len(run.notes)} notes"
+                    )
             elif not json_mode:
                 ui.print(
                     "\n[bold]Notes for AGENTS.md[/bold] [dim](run again with --apply to write them)[/dim]"
@@ -675,6 +862,10 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         ui.print(f"[dim]Tasks: {escape(tasks_out)} (repeat this run with --tasks-from)[/dim]")
     if summary_md and summary_md != "-":
         ui.print(f"[dim]Markdown summary: {escape(summary_md)}[/dim]")
+    if getattr(args, "annotate", None) == "github":
+        # Plain lines, never wrapped: the runner reads each "::warning ..." line as one command.
+        STDOUT.write("".join(line + "\n" for line in github_annotations(scan, env=os.environ)))
+        STDOUT.flush()
 
     checked = [p for p in scan.packages if p.status != "skipped"]
     if not checked and scan.packages:
@@ -719,7 +910,12 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         ui.print(
             "[yellow]Some model calls failed; their probes are not counted (see the report).[/yellow]"
         )
-    if getattr(args, "fail_on_changes", False) and scan.changed:
+    fail_on = set(getattr(args, "fail_on", None) or ())  # each --fail-on given counts
+    if getattr(args, "fail_on_changes", False):
+        fail_on.add("changes")
+    failing = fail_reason(scan, fail_on)
+    if failing:
+        ui.print(f"[dim]Exit code 3: {escape(failing)}[/dim]")
         return 3
     return 0
 
@@ -749,14 +945,40 @@ def _choose_model(
     is a guess and how to choose."""
     if args.model is not None or (args.command == "scan" and settings.cutoff is not None):
         return  # a date alone needs no model
+    _use_detected_model(settings, root, reporter, probes=args.command == "run")
+
+
+def _use_detected_model(
+    settings: Settings, root: Path, reporter: Reporter, *, probes: bool = True
+) -> None:
+    """The model the coding agent is set up with, into ``settings``; when no setting names
+    one, say that Claude Code's default is used, which ``run`` tests (``probes``) and ``scan``
+    and ``sync`` only take the training cutoff of."""
     found = detect_model(root)
     if found is None:
         settings.model_source = DEFAULT_SOURCE
-        reporter.warn(not_found_hint())
+        reporter.warn(not_found_hint(probes=probes))
         return
     if found.problem:
         raise SinceCutoffError(found.problem)
     settings.model, settings.model_source = found.spec, found.source
+
+
+def _model_line(target: ModelTarget, source: str | None = None) -> str:
+    """``• Model claude-sonnet-4-5, training cutoff 2025-07-31 (from models.dev)``, as rich
+    markup; a cutoff alone; several models (``sync --model a,b``) with their earliest cutoff."""
+    day = target.cutoff.isoformat()
+    where = f"[dim](from {escape(source or target.cutoff_source)})[/dim]"
+    if not target.model_id:
+        return f"[dim]•[/dim] Custom cutoff [bold]{day}[/bold] {where}"
+    names = model_names(target.model_id)
+    if len(names) > 1:
+        shown = ", ".join(f"[bold]{escape(n)}[/bold]" for n in names)
+        return f"[dim]•[/dim] Models {shown}, earliest training cutoff [bold]{day}[/bold] {where}"
+    return (
+        f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
+        f"[bold]{day}[/bold] {where}"
+    )
 
 
 def _resolve_target(engine: Engine, *, allow_calls: bool) -> ModelTarget:
@@ -787,14 +1009,242 @@ def _write_markdown(target: str, text: str) -> None:
         raise SinceCutoffError(f"cannot write the Markdown summary to {path}: {exc}") from exc
 
 
-def _target_file(root: Path, explicit: str | None) -> Path:
-    if explicit:
-        p = Path(explicit)
-        return p if p.is_absolute() else root / p
-    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents.exists() or not claude.exists():
-        return agents
-    return claude
+# ------------------------------------------------------------ sync and status
+# A target file, the model and cutoff its block is written for, its scope and --suggestions.
+_Plan = tuple[TargetFile, ModelTarget, str, bool]
+
+
+def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
+    """``since-cutoff sync``: write or update the notes block (see :mod:`since_cutoff.sync`)."""
+    try:
+        cutoff = parse_cutoff(args.cutoff) if args.cutoff else None
+    except ValueError as exc:
+        raise SinceCutoffError(str(exc)) from exc
+    project = load_project(Path(args.path))
+    targets = [read_target(project.root, p) for p in block_targets(project.root, args.target)]
+    store = DiskCache()
+    reporter = RichReporter(out)
+    plans: list[_Plan] = []
+    given: ModelTarget | None = None
+    for t in targets:
+        # The model and cutoff the block was written for, unless --model or --cutoff is given.
+        basis = None if args.model or cutoff else sticky_target(t)
+        if basis is None:
+            given = given or _sync_model(args.model, cutoff, project.root, store, reporter)
+            basis = given
+        scope = args.scope or t.scope or SCOPE_USED
+        suggestions = t.meta.get("suggestions") is True
+        plans.append(
+            (t, basis, scope, suggestions if args.suggestions is None else args.suggestions)
+        )
+    scans = _sync_scans(args, project, plans, store, reporter, out)
+    proposals = [
+        propose(scans[(basis.model_id, basis.cutoff)], t, scope=scope, suggestions=suggestions)
+        for t, basis, scope, suggestions in plans
+    ]
+    changed = [p for p in proposals if p.changed]
+    for p in changed:
+        out.print()
+        for line in diff_lines(p):
+            out.print(_diff_text(line))
+    out.print()
+    # Both AGENTS.md and CLAUDE.md, the notes in AGENTS.md: issue #13 (which files get the
+    # block) is not done yet, so say what Claude Code needs to read them.
+    tip = agents_import_tip(project.root, [t.path for t in targets])
+    if tip and any(p.block for p in proposals):
+        out.print(f"[yellow]![/yellow] {escape(tip)}.")
+    edited = [p for p in changed if p.edited and not args.force]
+    if edited:
+        for p in edited:
+            out.print(f"[yellow]![/yellow] {escape(edited_text(p))}")
+        return EXIT_OK if args.dry_run and not args.check else EXIT_EDITED
+    for p in proposals:
+        if not p.changed:
+            out.print(escape(up_to_date_text(p, scans[(p.model, p.cutoff)])))
+    if not changed:
+        return EXIT_OK
+    if args.check:
+        for p in changed:
+            out.print(escape(out_of_date_text(p)))
+        return EXIT_OUT_OF_DATE
+    if args.dry_run:
+        out.print("Nothing written (--dry-run).")
+        return EXIT_OK
+    if not args.yes:
+        names = " and ".join(p.target.name for p in changed)
+        answer = _confirm(f"Write {'this' if len(changed) == 1 else 'these'} to {names}?", out)
+        if answer is None:
+            out.print(
+                "Not written: there is no terminal to ask in. `since-cutoff sync --yes` writes "
+                "it; `since-cutoff sync --check` only checks."
+            )
+            return EXIT_OUT_OF_DATE
+        if not answer:
+            out.print("Nothing written.")
+            return EXIT_OUT_OF_DATE
+    for p in changed:
+        if p.block is None:
+            remove_block(p.target.path)
+        else:
+            apply_block(p.target.path, p.block)
+        out.print(f"[green]✓[/green] {escape(written_text(p))}")
+    if any(p.target.text for p in changed):
+        out.print("[dim]Text outside the since-cutoff markers is unchanged.[/dim]")
+    return EXIT_OK
+
+
+def _sync_scans(
+    args: argparse.Namespace,
+    project: Project,
+    plans: list[_Plan],
+    store: DiskCache,
+    reporter: RichReporter,
+    out: Console,
+) -> dict[tuple[str, date], ScanResult]:
+    """One scan per model and cutoff the blocks are written for (the diffs are cached, so a
+    second one costs little). Raises SinceCutoffError when nothing could be checked, or when a
+    package the notes are about could not be (PyPI unreachable): sync then writes nothing."""
+    settings = Settings(
+        max_download_mb=args.max_download_mb,
+        python_version=project.python_version,
+        today=date.today(),
+    )
+    engine = Engine(settings, store=store, llm_cache=store, reporter=reporter)
+    scans: dict[tuple[str, date], ScanResult] = {}
+    for _, basis, _, _ in plans:
+        key = (basis.model_id, basis.cutoff)
+        if key in scans:
+            continue
+        out.print(_model_line(basis))
+        for t, _, _, _ in plans:
+            if t.basis == key:
+                moved = lockfile_changes(project, target_status(project, t))
+                if moved:
+                    reporter.info(moved)
+        scans[key] = engine.scan(project, basis)
+    reporter.done()
+    for scan in scans.values():
+        if scan.packages and all(p.status == SKIPPED for p in scan.packages):
+            first = next((p.reason for p in scan.skipped if p.reason), "")
+            raise SinceCutoffError(f"no dependency could be checked: {first} (is PyPI reachable?)")
+    for t, basis, _, _ in plans:
+        for p in blocked_by(scans[(basis.model_id, basis.cutoff)], [t]):
+            raise SinceCutoffError(
+                f"cannot tell whether the notes for {p.name} in {t.name} still hold: it could "
+                f"not be checked ({p.reason}). Nothing written."
+            )
+    for scan in scans.values():
+        for p in scan.skipped:
+            reporter.warn(f"{p.name} could not be checked ({p.reason}), so it has no notes")
+    return scans
+
+
+def _sync_model(
+    models: list[str], cutoff: date | None, root: Path, store: DiskCache, reporter: Reporter
+) -> ModelTarget:
+    """The model(s) and cutoff given on the command line, else the model the coding agent is
+    set up with, as for ``scan``; several models: the earliest of their cutoffs."""
+    if not models and cutoff is not None:
+        return ModelTarget.cutoff_only(cutoff, "--cutoff; no model given")
+    found: list[ModelTarget] = []
+    specs: list[str | None] = [*dict.fromkeys(models)] or [None]
+    for spec in specs:
+        settings = Settings(model=spec or "claude-code", cutoff=cutoff, today=date.today())
+        if spec is None:
+            _use_detected_model(settings, root, reporter, probes=False)
+        engine = Engine(settings, store=store, llm_cache=store, reporter=reporter)
+        found.append(_resolve_target(engine, allow_calls=False))
+    if len(found) == 1:
+        return found[0]
+    earliest = min(t.cutoff for t in found)
+    each = "; ".join(f"{t.model_id} {t.cutoff.isoformat()}" for t in found)
+    return ModelTarget(
+        ", ".join(t.spec for t in found),
+        ", ".join(dict.fromkeys(t.model_id for t in found)),
+        earliest,
+        f"the earliest of {each}",
+    )
+
+
+def _confirm(question: str, out: Console) -> bool | None:
+    """Ask a yes/no question on the terminal; None when stdin is not one (a pipe, CI, a coding
+    agent's shell), where nobody can answer."""
+    if not _interactive(sys.stdin):
+        return None
+    out.print(f"{escape(question)} [y/N] ", end="")
+    try:
+        answer = input()
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _diff_text(line: str) -> Text:
+    style = ""
+    if line.startswith(("---", "+++")):
+        style = "bold"
+    elif line.startswith("@@"):
+        style = "cyan"
+    elif line.startswith("+"):
+        style = "green"
+    elif line.startswith("-"):
+        style = "red"
+    return Text(line, style)
+
+
+def _cmd_status(args: argparse.Namespace, out: Console) -> int:
+    """``since-cutoff status``, offline. With ``--hook``, one line when the notes are out of
+    date, else nothing, and always exit code 0: a coding agent's session start must never
+    fail or wait on it."""
+    if not args.hook:
+        return _status(args, out)
+    try:
+        _status(args, out)
+    except Exception:  # whatever goes wrong, the session starts
+        logging.getLogger(__name__).debug("status --hook failed", exc_info=True)
+    return EXIT_OK
+
+
+def _status(args: argparse.Namespace, out: Console) -> int:
+    project = load_project(Path(args.path))
+    targets = [read_target(project.root, p) for p in block_targets(project.root, args.target)]
+    detected = _detected_offline(project.root)
+    deps = current_deps_hash(project)
+    statuses = [target_status(project, t, deps=deps, detected=detected) for t in targets]
+    code = exit_code(statuses)
+    if args.hook:
+        line = hook_line(statuses)
+        if line:
+            STDOUT.write(line + "\n")
+        return EXIT_OK
+    if args.json:
+        STDOUT.write(json.dumps(status_json(project, statuses, detected), indent=2) + "\n")
+        return code
+    for line in status_lines(project, statuses):
+        out.print(escape(line))
+    return code
+
+
+def _detected_offline(root: Path) -> DetectedModel | None:
+    """The model the coding agent is set up with and its cutoff, from the agents' settings and
+    the model registry's cache or bundled snapshot: no network. None when no setting names a
+    model (Claude Code's default is only a guess) or it cannot be resolved offline."""
+    found = detect_model(root)
+    if found is None or found.problem or not found.spec:
+        return None
+    store = DiskCache()
+    settings = Settings(model=found.spec, model_source=found.source, today=date.today())
+    engine = Engine(
+        settings,
+        store=store,
+        llm_cache=store,
+        registry=ModelRegistry(store, offline=True),
+    )
+    try:
+        target = engine.resolve_target(allow_calls=False)
+    except SinceCutoffError:
+        return None
+    return DetectedModel(target, found.spec, found.source)
 
 
 def _cmd_models(args: argparse.Namespace, out: Console) -> int:

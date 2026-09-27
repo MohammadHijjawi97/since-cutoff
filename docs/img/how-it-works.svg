@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="486" viewBox="0 0 640 486" role="img" aria-labelledby="title desc" xml:lang="en">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="508" viewBox="0 0 640 508" role="img" aria-labelledby="title desc" xml:lang="en">
 <title id="title">How since-cutoff works</title>
-<desc id="desc">Scan, with no model calls: read the lockfile, find each dependency&#x27;s release at the model&#x27;s training cutoff, and diff the public API statically with griffe. Probe: write short tasks that need a changed API, let the model answer with no tools and no docs, and type-check the answer with basedpyright against both versions. Fix and verify: keep a model-written note only if its example type-checks, otherwise state the change from the API diff; then compare held-out tasks without and with the notes, and write the block into AGENTS.md with --apply.</desc>
+<desc id="desc">Scan, with no model calls: read the lockfile, find each dependency&#x27;s release at the model&#x27;s training cutoff, and diff the public API statically with griffe. Probe: write short tasks that need a changed API, let the model answer with no tools and no docs, and type-check the answer with basedpyright against both versions. Write and test notes: keep a model-written note only if its example type-checks, otherwise state the change from the API diff; then compare held-out tasks without and with the notes, and write the block into AGENTS.md with --apply.</desc>
 <style>
     .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
@@ -13,7 +13,7 @@
     .sb { font-weight: 600; }
   </style>
 <defs><marker id="head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#59636e"/></marker></defs>
-<rect x="0.5" y="0.5" width="639" height="485" rx="14" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="0.5" y="0.5" width="639" height="507" rx="14" fill="#ffffff" stroke="#d0d7de"/>
 <rect x="16" y="16" width="608" height="134" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
 <text x="36" y="49" font-size="22" class="sans b accent">1  Scan</text>
 <text x="604" y="48" font-size="17" class="sans muted" text-anchor="end">no model calls</text>
@@ -36,14 +36,14 @@
 <circle cx="46" cy="292" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
 <text x="64" y="298" font-size="20" class="sans text">basedpyright checks both versions</text>
 <line x1="46" y1="313" x2="46" y2="332" stroke="#59636e" stroke-width="2" marker-end="url(#head)"/>
-<rect x="16" y="336" width="608" height="134" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
-<text x="36" y="369" font-size="22" class="sans b accent">3  Fix and verify</text>
-<text x="604" y="368" font-size="17" class="sans muted" text-anchor="end">the type checker decides</text>
-<line x1="46" y1="394" x2="46" y2="452" stroke="#d0d7de" stroke-width="2"/>
-<circle cx="46" cy="394" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
-<text x="64" y="400" font-size="20" class="sans text">Notes: type-checked, or from the diff</text>
-<circle cx="46" cy="423" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
-<text x="64" y="429" font-size="20" class="sans text">Held-out tasks: without vs. with notes</text>
-<circle cx="46" cy="452" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
-<text x="64" y="458" font-size="20" class="sans text">--apply writes a block to AGENTS.md</text>
+<rect x="16" y="336" width="608" height="156" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+<text x="36" y="369" font-size="22" class="sans b accent">3  Write and test notes</text>
+<text x="36" y="393" font-size="17" class="sans muted">the type checker decides</text>
+<line x1="46" y1="416" x2="46" y2="474" stroke="#d0d7de" stroke-width="2"/>
+<circle cx="46" cy="416" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="422" font-size="20" class="sans text">Notes: type-checked, or from the diff</text>
+<circle cx="46" cy="445" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="451" font-size="20" class="sans text">Held-out tasks: without vs. with notes</text>
+<circle cx="46" cy="474" r="5" fill="#ffffff" stroke="#59636e" stroke-width="2"/>
+<text x="64" y="480" font-size="20" class="sans text">--apply writes a block to AGENTS.md</text>
 </svg>

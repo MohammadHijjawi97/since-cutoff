@@ -9,7 +9,7 @@ import pytest
 
 from since_cutoff.cache import DiskCache
 from since_cutoff.engine import CHANGED, KNOWN, NEW, PASS, STALE, Engine, Settings
-from since_cutoff.notes import BLOCK_END, BLOCK_START
+from since_cutoff.notes import BLOCK_END, BLOCK_START, NOTE_DIFF, TAG_DIFF
 from since_cutoff.project import load_project
 from since_cutoff.report import render_markdown, summary, to_json
 from tests.conftest import ScriptedModel
@@ -102,7 +102,7 @@ def test_full_run_measures_fixes_and_verifies(tmp_path, cache, fake_pypi):
     assert s["stale_dependencies"] == ["toylib"]
     assert s["probes"]["stale"] == 3
     md = render_markdown(scan, run)
-    assert "Held-out verification" in md and "STALE" in md
+    assert "Held-out test of the notes" in md and "STALE" in md
     assert to_json(scan, run)["attempts"]
     # A run's dependency table has the probe columns after the counts.
     assert (
@@ -140,8 +140,19 @@ def test_unverifiable_notes_fall_back_to_the_diff(tmp_path, cache, fake_pypi):
     engine = make_engine(cache, fake_pypi, BadNotes(), max_probes=2, heldout=1, regression=0)
     project = load_project(make_project(tmp_path))
     run = engine.run(engine.scan(project, engine.resolve_target()))
-    assert run.notes and all(n.source == "template" and not n.verified for n in run.notes)
+    # The note from the diff instead, tagged with what it rests on, never [type-checked].
+    assert run.notes and all(n.source == NOTE_DIFF and not n.verified for n in run.notes)
+    assert all(n.tag_list[0] == TAG_DIFF for n in run.notes)
+    # The model's examples were checked and failed: results.json says so, as `verified` did.
+    assert all(n.checks()["example_type_checks"] is False for n in run.notes)
+    bullets = [line for line in (run.block or "").splitlines() if line.startswith("- ")]
     assert "temp=0" not in (run.block or "")
+    assert bullets and not any(line.endswith("[type-checked]") for line in bullets)
+    # toylib 1.0 said "Use fetch instead." of legacy_fetch, and 2.0 has it: named, tagged so.
+    assert (
+        "- `toylib.legacy_fetch` was removed; do not use it. Use `toylib.fetch` instead. "
+        "[diff + library]"
+    ) in bullets
 
 
 def test_measure_only_mode_writes_no_notes(tmp_path, cache, fake_pypi, scripted):

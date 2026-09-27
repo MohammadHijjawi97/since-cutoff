@@ -114,7 +114,7 @@ def test_output_to_a_file_is_complete_and_not_cut_at_80_columns(tmp_path, driver
     out, err = tmp_path / "out.txt", tmp_path / "err.txt"
     with out.open("wb") as stdout, err.open("wb") as stderr:
         code = subprocess.run(
-            [*driver, "scan", str(app), *CUTOFF, "--fail-on-changes"],
+            [*driver, "scan", str(app), *CUTOFF, "--fail-on-changes", "--all"],
             stdout=stdout,
             stderr=stderr,
             env=_env(tmp_path, PYTHONIOENCODING="ascii"),
@@ -321,17 +321,19 @@ def test_other_paths_of_a_change_do_not_read_like_replacements() -> None:
         also=["setuptools.command.alias.alias.ensure_string_list"],
     )
     assert mcp_server.change_line(gone) == (
-        "`setuptools.Command.ensure_string_list` was removed; similar names now: "
-        "`ensure_string`; also removed under 12 other paths, e.g. "
+        "`setuptools.Command.ensure_string_list` was removed; similar names in 80.9.0, not "
+        "confirmed as replacements: `ensure_string`; also removed under 12 other paths, e.g. "
         "`setuptools.command.alias.alias.ensure_string_list`"
     )
     assert report._md_change(gone, ()) == (
-        "- `setuptools.Command.ensure_string_list` was removed (also removed under 12 other paths)"
+        "- `setuptools.Command.ensure_string_list` was removed (similar names in 80.9.0, not "
+        "confirmed as replacements: `ensure_string`) (also removed under 12 other paths)"
     )
 
 
 def test_a_renamed_parameter_shows_its_new_name_in_every_report(tmp_path) -> None:
-    """markdown-it-py 4: parseLinkTitle's `pos` became `start`; only MCP said so."""
+    """markdown-it-py 4: parseLinkTitle's `pos` became `start`; only MCP said so. It is a
+    parameter renamed in place (the diff's ``renamed``), so a probable rename, and says so."""
     renamed = APIChange(
         "markdown-it-py",
         "3.0.0",
@@ -341,6 +343,7 @@ def test_a_renamed_parameter_shows_its_new_name_in_every_report(tmp_path) -> Non
         "parseLinkTitle",
         parameter="pos",
         suggestions=["start"],
+        renamed=True,
     )
     scan = ScanResult(
         Project(tmp_path, [], "uv.lock"),
@@ -359,8 +362,9 @@ def test_a_renamed_parameter_shows_its_new_name_in_every_report(tmp_path) -> Non
     )
     console = Console(width=200, record=True)
     report.render_scan_changes(console, scan)
-    assert "parameter pos was removed (now start?)" in console.export_text()
-    new_name = "parameter `pos` was removed (now `start`?)"
+    text = "parameter pos was removed (probably renamed to start (same position and type))"
+    assert text in console.export_text()
+    new_name = "parameter `pos` was removed (probably renamed to `start` (same position and type))"
     assert new_name in report.render_scan_markdown(scan)
     assert new_name in report.render_markdown(scan)
 

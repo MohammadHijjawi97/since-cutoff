@@ -476,7 +476,7 @@ def test_a_probe_repeated_in_a_tasks_file_is_never_a_held_out_task(tmp_path, cac
     assert run.settings["heldout_used"] == {"fewest": 1, "most": 1}
     assert reporter.warnings == [
         f"mine.json has fewer than 2 held-out tasks for {failing} of {failing} failing API "
-        "changes (as few as 1); those are verified on the ones there are; write it with "
+        "changes (as few as 1); those are tested on the ones there are; write it with "
         "--heldout 2 to use 2"
     ]
 
@@ -499,7 +499,7 @@ def test_a_task_writer_that_repeats_itself_is_reported(tmp_path, cache, fake_pyp
     assert failing and run.settings["heldout_used"] == {"fewest": 1, "most": 1}
     assert reporter.warnings == [
         f"The task writer gave fewer than 2 held-out tasks for {failing} of {failing} failing "
-        "API changes (as few as 1); those are verified on the ones there are"
+        "API changes (as few as 1); those are tested on the ones there are"
     ]
 
 

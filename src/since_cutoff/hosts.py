@@ -73,6 +73,19 @@ CLAUDE_CODE_NOT_FOUND_HINT = (
     ".claude/settings.json), so this tests Claude Code's default model. If this session uses "
     "another (/model, claude --model), pass --model claude-code:<model> or set SINCE_CUTOFF_MODEL"
 )
+# The same for ``scan`` and ``sync``, which test nothing: they use the model's training cutoff.
+NOT_FOUND_HINT_CUTOFF = (
+    "No model setting found (SINCE_CUTOFF_MODEL, ANTHROPIC_MODEL, or the Claude Code, Codex, "
+    "OpenCode and Aider settings), so this uses the training cutoff of Claude Code's default "
+    "model. For another model's, pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. "
+    "SINCE_CUTOFF_MODEL=openai:gpt-5.4"
+)
+CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF = (
+    "Running inside Claude Code, whose settings name no model (ANTHROPIC_MODEL, "
+    ".claude/settings.json), so this uses the training cutoff of Claude Code's default model. "
+    "If this session uses another (/model, claude --model), pass --model claude-code:<model> "
+    "or set SINCE_CUTOFF_MODEL"
+)
 
 # Provider names in the agents' settings (OpenCode's models.dev ids, Aider's LiteLLM prefixes,
 # Codex's model_provider) that since-cutoff can call itself.
@@ -150,9 +163,12 @@ def inside_claude_code(env: Mapping[str, str] | None = None) -> bool:
     return env.get("CLAUDECODE", "").strip() not in ("", "0")
 
 
-def not_found_hint(env: Mapping[str, str] | None = None) -> str:
-    """What to tell the user when no setting names a model (see :data:`DEFAULT_SOURCE`)."""
-    return CLAUDE_CODE_NOT_FOUND_HINT if inside_claude_code(env) else NOT_FOUND_HINT
+def not_found_hint(env: Mapping[str, str] | None = None, *, probes: bool = True) -> str:
+    """What to tell the user when no setting names a model (see :data:`DEFAULT_SOURCE`):
+    ``run`` tests that model (``probes``); ``scan`` and ``sync`` only use its cutoff."""
+    if inside_claude_code(env):
+        return CLAUDE_CODE_NOT_FOUND_HINT if probes else CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF
+    return NOT_FOUND_HINT if probes else NOT_FOUND_HINT_CUTOFF
 
 
 def detect_model(

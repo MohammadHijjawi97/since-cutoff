@@ -85,13 +85,16 @@ def test_markdown_summary_lists_what_the_code_uses_first(tmp_path, cache, fake_p
         "| toylib | 2.0 (2025-10-01) | 1.0 (2025-01-10) | API changed, imported by your code | 5 | 1 |"
         in md
     )
-    # Changes that hit the project's own code open the section and come first: the call with
-    # the removed parameter, then another change to the same method.
+    # The APIs the code uses lead (tests/test_scan_first.py); each package's changes follow,
+    # folded, those that hit the project's own code first: the call with the removed
+    # parameter, then another change to the same method.
+    assert md.index("**Your code uses 1 API that changed after the cutoff**") < md.index("<details")
     assert (
-        "<details open><summary><b>toylib</b> 1.0 -> 2.0: 5 breaking, 1 deprecated, "
+        "<details><summary><b>toylib</b> 1.0 -> 2.0: 5 breaking, 1 deprecated, "
         "2 touching names your code uses</summary>" in md
     )
-    items = [line for line in md.splitlines() if line.startswith("- `")]
+    listing = md.split("<b>toylib</b>")[1]
+    items = [line for line in listing.splitlines() if line.startswith("- `")]
     assert len(items) == 3
     assert "parameter `temperature` was removed" in items[0]
     assert items[0].endswith("**your code uses `send` and `temperature`**")
@@ -113,7 +116,8 @@ def test_markdown_summary_for_new_and_known_dependencies(tmp_path, cache, fake_p
     assert "Not flagged (released before the cutoff, or no breaking changes): toylib 1.0" in known
 
     new = render_scan_markdown(scan_app(root, cache, fake_pypi, date(2024, 1, 1)))
-    assert "| toylib | 1.0 (2025-01-10) | - | newer than the model: first released after" in new
+    # The status says it; the reason, the same words, is not repeated after it.
+    assert "| toylib | 1.0 (2025-01-10) | - | first released after the cutoff |" in new
 
 
 def code(text: str) -> tuple[FileUse, ...]:
@@ -228,7 +232,8 @@ def test_every_report_counts_the_same_changes(tmp_path, cache, fake_pypi):
     assert "- Static diff: 5 breaking changes, 1 new deprecation" in md
     assert "| API changed, imported by your code | 5 | 1 |" in md
     assert "<b>toylib</b> 1.0 -> 2.0: 5 breaking, 1 deprecated" in md
-    assert sum(line.startswith("- `") for line in md.splitlines()) == 6
+    listing = md.split("<b>toylib</b>")[1]  # after the notes block, which has bullets too
+    assert sum(line.startswith("- `") for line in listing.splitlines()) == 6
 
     full = render_markdown(scan).split("## All changes found")[1]
     assert "### toylib 1.0 -> 2.0: 5 breaking, 1 deprecated" in full
@@ -261,7 +266,9 @@ def test_scan_with_only_a_cutoff_names_no_model(tmp_path, capsys, fake_cli, monk
 
     out = capsys.readouterr().out
     assert "Custom cutoff 2025-02-28 (from --cutoff; no model given)" in out
-    assert "since-cutoff · custom cutoff 2025-02-28" in out
+    assert "Your code uses 1 API that changed after the cutoff (2025-02-28)" in out
+    assert cli.main([*argv, "--all"]) == 0  # 0.3's summary panel
+    assert "since-cutoff · custom cutoff 2025-02-28" in capsys.readouterr().out
     assert "sonnet" not in out and "assuming" not in out
     md = summary_md.read_text(encoding="utf-8")
     assert "\nCustom cutoff **2025-02-28** (given with --cutoff, no model) · project `app`" in md
@@ -447,17 +454,59 @@ def test_every_version_field_names_this_release(capsys) -> None:
     found = check.versions()
     # The package, server.json (twice), the Claude Code, Agent Plugins, Codex and Gemini
     # manifests, both MCP launcher pins, CITATION.cff, the action's default, the changelog and
-    # the README pins.
+    # the README pins; the plugin's SessionStart hook is checked on its own (see below).
     assert len(found) == 16
     assert dict.fromkeys(found, __version__) == found
     assert check.problems() == []  # including CITATION's date = the changelog's release date
     assert check.main(["check_versions.py", f"v{__version__}"]) == 0
 
-    # A tag that does not match fails the release, naming every field.
+    # A tag that does not match fails the release, naming every field, and the hook a release
+    # from 0.4.0 on must have.
     assert check.main(["check_versions.py", "v99.0.0"]) == 1
     out = capsys.readouterr().out
     assert f"gemini-extension.json version: {__version__} (expected 99.0.0)" in out
-    assert out.count("(expected 99.0.0)") == len(found)
+    assert out.count("(expected 99.0.0") == len(found) + 1
+
+
+def test_the_plugin_hook_ships_only_with_a_release_that_has_status(tmp_path, monkeypatch) -> None:
+    """hooks/hooks.json runs `uvx since-cutoff==X status --hook`, and the plugin installs from
+    the repository: with X = 0.3.2 (no `status` command) every session start would fail. So a
+    release before 0.4.0 must not have it, and one from 0.4.0 on must, pinned to itself."""
+    check = _check_versions()
+    assert not check.has_status("0.3.2") and check.has_status("0.4.0rc1")
+    assert check.has_status("0.4.0") and check.has_status("1.0.0")
+    assert check.hook_problems(__version__) == []  # the repository as it is
+    staged = ROOT / "hooks" / "hooks.json.in"
+    if staged.exists():  # waiting for the release that has `status`
+        [entry] = json.loads(staged.read_text(encoding="utf-8"))["hooks"]["SessionStart"]
+        command = entry["hooks"][0]["command"]
+        found = re.fullmatch(r"uvx since-cutoff==(\S+) status --hook", command)
+        assert found is not None and check.has_status(found.group(1))
+
+    monkeypatch.setattr(check, "ROOT", tmp_path)
+    assert check.hook_problems("0.3.2") == []  # no hook: nothing to fail
+    (tmp_path / "hooks").mkdir()
+    hook = {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "timeout": 60}]}]}}
+
+    def pin(version: str) -> None:
+        hook["hooks"]["SessionStart"][0]["hooks"][0]["command"] = (  # type: ignore[index]
+            f"uvx since-cutoff=={version} status --hook"
+        )
+        (tmp_path / "hooks" / "hooks.json").write_text(json.dumps(hook), encoding="utf-8")
+
+    pin("0.3.2")
+    [problem] = check.hook_problems("0.3.2")
+    assert "which since-cutoff 0.3.2 does not have (0.4.0 added it)" in problem
+    pin("0.4.0")
+    assert check.hook_problems("0.4.0") == []
+    assert check.hook_problems("0.4.1") == [
+        "hooks/hooks.json SessionStart pin: 0.4.0 (expected 0.4.1)"
+    ]
+    (tmp_path / "hooks" / "hooks.json").unlink()
+    (tmp_path / "hooks" / "hooks.json.in").write_text(json.dumps(hook), encoding="utf-8")
+    assert check.hook_problems("0.4.0") == [
+        "hooks/hooks.json SessionStart pin: missing (expected 0.4.0; hooks/hooks.json.in has it)"
+    ]
 
 
 # --------------------------------------------------- runs that measured nothing

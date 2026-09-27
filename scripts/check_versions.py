@@ -5,6 +5,11 @@
 
 Exits with code 1 and lists each field that differs. `tests/test_ci.py` runs the same check.
 Only the standard library is used, so it runs before anything is installed.
+
+The Claude Code plugin's SessionStart hook (`hooks/hooks.json`) runs `since-cutoff status`,
+which 0.4.0 added. The plugin installs from the repository, so the hook must not be there before
+a release that has `status` is on PyPI (every session start would fail): until then it waits in
+`hooks/hooks.json.in`, and a release from 0.4.0 on must have it, pinned to that release.
 """
 
 from __future__ import annotations
@@ -19,6 +24,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "since-cutoff"
 _VERSION = r"(\d+\.\d+\.\d+\S*)"
+# The first release with `since-cutoff status --hook`, which the plugin's SessionStart hook runs.
+STATUS_SINCE = (0, 4, 0)
+HOOKS = "hooks/hooks.json"
 
 
 def _text(name: str) -> str:
@@ -38,6 +46,43 @@ def _pin(name: str) -> str | None:
     """The version in an MCP launcher config: `uvx since-cutoff==X mcp`."""
     first = _json(name)["mcpServers"][PACKAGE]["args"][0]
     return first.split("==", 1)[1] if first.startswith(f"{PACKAGE}==") else None
+
+
+def _hook_pin(name: str = HOOKS) -> str | None:
+    """The version the Claude Code plugin's SessionStart hook runs: `uvx since-cutoff==X status`."""
+    [entry] = _json(name)["hooks"]["SessionStart"]
+    [hook] = entry["hooks"]
+    found = re.fullmatch(rf"uvx {PACKAGE}=={_VERSION} status --hook", hook["command"])
+    return found.group(1) if found else None
+
+
+def has_status(version: str) -> bool:
+    """Whether a release has `since-cutoff status` (0.4.0 and its pre-releases on)."""
+    numbers = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    return numbers is not None and tuple(map(int, numbers.groups())) >= STATUS_SINCE
+
+
+def hook_problems(expected: str) -> list[str]:
+    """What is wrong with the plugin's SessionStart hook for a release of ``expected``: before
+    0.4.0 there must be none (the release on PyPI has no `status` command to run); from 0.4.0
+    on it must be there, pinned to the release."""
+    active = (ROOT / HOOKS).exists()
+    if not has_status(expected):
+        if not active:
+            return []
+        return [
+            f"{HOOKS}: its SessionStart hook runs `since-cutoff status`, which since-cutoff "
+            f"{expected} does not have (0.4.0 added it), so every session start would fail: "
+            f"keep it as {HOOKS}.in until a release that has `status` is on PyPI"
+        ]
+    try:
+        pin = _hook_pin() if active else None
+    except (OSError, LookupError, ValueError):
+        pin = None
+    if pin == expected:
+        return []
+    staged = f"; {HOOKS}.in has it" if (ROOT / f"{HOOKS}.in").exists() and not active else ""
+    return [f"{HOOKS} SessionStart pin: {pin or 'missing'} (expected {expected}{staged})"]
 
 
 def _marketplace_entry() -> Any:
@@ -92,6 +137,7 @@ def problems(expected: str | None = None) -> list[str]:
         for label, value in found.items()
         if value != expected
     ]
+    out += hook_problems(str(expected))
     # The citation's release date is the date of that release in the changelog.
     released = _match(
         "CHANGELOG.md", rf"^## {re.escape(str(expected))} - (\d{{4}}-\d{{2}}-\d{{2}})"
@@ -108,7 +154,7 @@ def main(argv: list[str]) -> int:
     for line in found:
         print(line)
     if not found:
-        print(f"All {len(FIELDS)} version fields agree.")
+        print(f"All {len(FIELDS)} version fields agree, and so does the plugin's hook.")
     return 1 if found else 0
 
 
