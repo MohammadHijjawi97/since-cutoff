@@ -17,9 +17,11 @@ from since_cutoff import engine as engine_module
 from since_cutoff.apidiff import DEPRECATED, PARAM_REMOVED, REMOVED, APIChange
 from since_cutoff.cache import DiskCache
 from since_cutoff.engine import Engine, ScanResult, Settings
+from since_cutoff.errors import ProviderError
 from since_cutoff.mcp_server import Tools
 from since_cutoff.models import ModelRegistry
 from since_cutoff.project import load_project
+from since_cutoff.providers.base import Completion
 from since_cutoff.report import (
     render_console,
     render_markdown,
@@ -28,6 +30,7 @@ from since_cutoff.report import (
     summary,
 )
 from since_cutoff.selection import project_rank, usage, used_name, used_names, uses_text
+from tests.conftest import ScriptedModel
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -352,3 +355,31 @@ def test_every_version_field_names_this_release(capsys) -> None:
     out = capsys.readouterr().out
     assert f"gemini-extension.json version: {__version__} (expected 99.0.0)" in out
     assert out.count("(expected 99.0.0)") == len(found)
+
+
+# --------------------------------------------------- runs that measured nothing
+class _TaskWriterDown(ScriptedModel):
+    """The task writer's calls fail (rate limit); nothing else is ever reached."""
+
+    def complete(self, system: str, user: str) -> Completion:
+        if system.startswith("You write evaluation tasks"):
+            raise ProviderError("claude call failed: You've hit your limit")
+        return super().complete(system, user)
+
+
+def test_a_run_that_could_not_probe_anything_fails(tmp_path, capsys, monkeypatch, fake_pypi):
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(tmp_path / "cli-cache"))
+
+    def engine(settings: Settings, **kwargs: Any) -> Engine:
+        return Engine(
+            settings,
+            **{**kwargs, "pypi": fake_pypi, "provider_factory": lambda spec: _TaskWriterDown()},
+        )
+
+    monkeypatch.setattr(cli, "Engine", engine)
+    root = make_app(tmp_path)
+    argv = ["run", str(root), "--model", "anthropic:claude-sonnet-4-5", "--cutoff", "2025-07-31"]
+    # Without the guard this exited 0, so `--fail-on-stale` passed a run that measured nothing.
+    assert cli.main([*argv, "--fail-on-stale"]) == 1
+    out = capsys.readouterr().out
+    assert "No API change could be probed" in out and "hit your limit" in out

@@ -9,6 +9,7 @@ import json
 import logging
 import shutil
 import sys
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from since_cutoff.cache import DiskCache, default_cache_dir
 from since_cutoff.engine import (
     ERROR,
     STALE,
+    TASK_WRITER_FAILED,
     Engine,
     ModelTarget,
     Reporter,
@@ -468,6 +470,25 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     if run is not None and run.all_errored:
         first = next((a.error for a in run.probes if a.error), "unknown error")
         ui.print(f"[red]Every model call failed[/red]: {escape(first or '')}")
+        return 1
+    if run is not None and scan.changed and not run.probes and run.skipped_changes:
+        # Nothing was measured, so a clean exit would let `--fail-on-stale` pass silently.
+        reason = Counter(r for _, r in run.skipped_changes).most_common(1)[0][0]
+        ui.print(f"[red]No API change could be probed[/red]: {escape(reason)}")
+        return 1
+    writer_failed = [
+        r for _, r in (run.skipped_changes if run else []) if r.startswith(TASK_WRITER_FAILED)
+    ]
+    if (
+        run is not None
+        and writer_failed
+        and len(writer_failed) * 2 >= len(run.skipped_changes) + len(run.probes)
+    ):
+        ui.print(
+            f"[red]The task writer failed for {len(writer_failed)} of "
+            f"{len(run.skipped_changes) + len(run.probes)} API changes[/red], so this run measured "
+            f"too little to trust: {escape(writer_failed[0])}"
+        )
         return 1
     if (
         getattr(args, "fail_on_stale", False)

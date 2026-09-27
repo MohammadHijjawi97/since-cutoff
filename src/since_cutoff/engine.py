@@ -279,6 +279,10 @@ class Pairing:
         return dict(self.__dict__)
 
 
+# Prefix of the skip reason when the task writer's model call fails (rate limit, auth, ...).
+TASK_WRITER_FAILED = "task writer failed"
+
+
 @dataclass
 class RunResult:
     scan: ScanResult
@@ -736,7 +740,7 @@ class Engine:
         try:
             text = self.provider(spec).complete(prompts.TASK_SYSTEM, user).text
         except ProviderError as exc:
-            return [], f"task writer failed: {exc}"
+            return [], f"{TASK_WRITER_FAILED}: {exc}"
         tasks, reason = prompts.parse_tasks(text, change)
         # Held-out tasks must differ from the probe task (and from each other).
         unique: list[str] = []
