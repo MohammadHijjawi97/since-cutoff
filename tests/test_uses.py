@@ -4,6 +4,7 @@ every report, and the versions of dependencies that nothing pins."""
 from __future__ import annotations
 
 import ast
+import re
 import textwrap
 from datetime import date
 from pathlib import Path
@@ -326,8 +327,11 @@ def test_packages_are_ordered_by_the_breaking_changes_the_table_shows(
     render_console(console, scan)
     lines = console.export_text().splitlines()
     header = next(line for line in lines if line.startswith("package"))
-    assert header.split("│")[4:] == [" breaking ", " deprecated"]
-    rows = {line.split("│")[0].strip(): line.split("│")[4:] for line in lines if "│" in line}
+    # Rich draws the header with heavy bars (┃) and rows with light ones (│); legacy Windows
+    # consoles get light bars throughout.
+    cells = re.compile("[│┃]").split
+    assert cells(header)[4:] == [" breaking ", " deprecated"]
+    rows = {cells(line)[0].strip(): cells(line)[4:] for line in lines if "│" in line}
     assert [c.strip() for c in rows["deplib"]] == ["2", "7"]
     assert [c.strip() for c in rows["quietlib"]] == ["0", "1"]  # never a blank cell
 
