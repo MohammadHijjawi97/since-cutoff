@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Detect pinned dependencies from the `pip:` block of conda `environment.yml` /
+  `environment.yaml` files, alongside lockfiles, requirements files and `.venv`.
+  Only `==`-pinned PyPI entries are used; conda-native and unpinned lines are ignored.
+  PyYAML is now a dependency.
+
 ## 0.1.0 (2026-09-26)
 
 First release.

@@ -38,6 +38,7 @@ dependencies = [
     "basedpyright>=1.20",
     "griffe>=1.14",
     "packaging>=23.0",
+    "pyyaml>=6.0",
     "rich>=13.7",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -86,5 +87,5 @@ warn_unused_ignores = true
 files = ["src/since_cutoff"]
 
 [[tool.mypy.overrides]]
-module = ["griffe.*", "tomli", "basedpyright"]
+module = ["griffe.*", "tomli", "basedpyright", "yaml"]
 ignore_missing_imports = true

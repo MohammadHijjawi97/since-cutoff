@@ -62,7 +62,8 @@ uvx since-cutoff run --apply
 
 Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) and run
 `since-cutoff`. Run it from your project root (anything with `uv.lock`, `poetry.lock`,
-`pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml` or a `.venv`).
+`pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `environment.yml`,
+`pyproject.toml` or a `.venv`).
 
 ### In Claude Code
 
