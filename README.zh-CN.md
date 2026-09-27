@@ -26,10 +26,10 @@
 
 下面是 `since-cutoff scan` 针对 Claude Sonnet 4.5（训练截止 2025 年 7 月）在[示例项目](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)中找到的部分变更。这个项目的 9 个依赖中有 6 个锁定在当前版本，另外 3 个没有锁定（工具使用它们的最新版本）：
 
-| 库 | 截止日期时的版本 | 锁定版本 | 哪里会出错 |
+| 库 | 截止日期时的版本 | 锁定版本 | 变了什么 |
 |---|---|---|---|
 | anthropic | 0.60.0 | 1.8.0 | `messages.create(temperature=..., top_p=..., top_k=...)` 不再被接受 |
-| huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` 这些参数已移除 |
+| huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` 这些参数在 1.0 中已从函数签名里去掉（2.0.0 在运行时仍接受它们，但会忽略并发出警告） |
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()` 和 `llm.predict()` 已移除 |
 | openai | 1.98.0 | 3.19.2 | 21 个破坏性变更，6 个新的弃用 |
 
@@ -56,7 +56,7 @@ since-cutoff 针对这个问题做三件事：
 # 列出模型截止日期之后的 API 变更（不调用模型，不需要 API key）
 uvx since-cutoff scan
 
-# 测试模型、生成经过验证的说明，并写入 AGENTS.md
+# 测试模型、生成说明，并写入 AGENTS.md
 uvx since-cutoff run --apply
 ```
 
@@ -86,7 +86,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 效果较好的提示词：
 
 - “我们的哪些依赖在你的训练截止日期之后改了公开 API？”Agent 会运行 `since-cutoff scan` 或调用 MCP 工具 `project_changes`。
-- “测一下你实际会写错其中哪些变更，并把经过验证的说明加到 AGENTS.md。”Agent 会先征求你的同意，再运行 `since-cutoff run --quick --apply`。
+- “测一下你实际会写错其中哪些变更，并把说明加到 AGENTS.md。”Agent 会先征求你的同意，再运行 `since-cutoff run --quick --apply`。
 - “写 httpx 代码之前，先查一下 httpx 在你的截止日期之后改了什么。”Agent 会调用 MCP 工具 `api_changes`。
 
 ### 选择模型
@@ -129,13 +129,13 @@ npx skills add MohammadHijjawi97/since-cutoff
 | 探测的 API 变更 | 20 | 16 |
 | **过时** / 写错 / 已弃用 / 正确 | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
 | 出现过时用法的库 | 探测的 5 个中有 3 个 | 探测的 4 个中有 2 个 |
-| 写出的说明（其中通过类型检查验证的） | 8 条（7 条），约 391 token | 10 条（7 条），约 437 token |
+| 写出的说明（其中示例能通过类型检查的） | 8 条（7 条），约 391 token | 10 条（7 条），约 437 token |
 | **留出任务正确率：无说明 -> 有说明** | **14% -> 57%**（14 对） | **5% -> 65%**（20 对） |
 | 原本答对的 API 在加入说明后 | 6/6 仍正确 | 6/6 仍正确 |
 
 *留出任务*是对每个失败变更的探测任务的改写；每个任务回答两次，一次不带说明，一次带说明，用同样的方式打分。最后一行重新检查模型原本就答对的 API，用来发现会起反作用的说明。
 
-在这个样本中，更强的模型并没有更可靠：Opus 4.6 写出了在它截止日期之后已被移除的 API，例如 `anthropic.HUMAN_PROMPT` 配合 `client.completions`。两次运行中出现的过时代码（每一处都对模型学过的版本有效，对锁定版本无效）：`messages.create(temperature=...)`（anthropic 1.8），`hf_hub_download(resume_download=...)`、`local_dir_use_symlinks=...`、`force_filename=...` 和 `proxies=...`（huggingface-hub 2.0），以及 `client.beta.vector_stores`（openai 3.x）。
+在这个样本中，更强的模型并没有更可靠：Opus 4.6 写出了在它截止日期之后已被移除的 API，例如 `anthropic.HUMAN_PROMPT` 配合 `client.completions`。两次运行中出现的过时代码（每一处都在对照版本上有效，在锁定版本上无法通过类型检查）：`messages.create(temperature=...)`（anthropic 1.8），`hf_hub_download(resume_download=...)`、`local_dir_use_symlinks=...`、`force_filename=...` 和 `proxies=...`（huggingface-hub 2.0），以及 `client.beta.vector_stores`（openai 3.x）。在运行时，anthropic 1.8.0 遇到 `temperature` 会抛出 `TypeError`；huggingface-hub 2.0.0 仍接受这四个下载参数，但会忽略它们并发出警告。
 
 Claude Haiku 4.5 那次运行写出的说明（节选，原文照录）：
 
@@ -153,6 +153,8 @@ Claude Haiku 4.5 那次运行写出的说明（节选，原文照录）：
 - `client.beta.vector_stores` is removed in openai 3.19.2. Use `client.vector_stores` instead.
 <!-- since-cutoff:end -->
 ```
+
+huggingface-hub 那条说明并不完全准确：`resume_download` 是在 1.0 而不是 2.0.0 中从函数签名里去掉的，而且 2.0.0 在运行时仍接受它，只是忽略它并发出警告（[源码](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)）。不过“省略它”这个建议仍然是对的。
 
 下图是 Claude Opus 4.6 那次运行的终端摘要，用 0.1.0 录制。探测结果与上表一致。卡片上的对比数量是 0.1.0 的数字（“725 changes flagged”）；对比逻辑修正之后，0.2.0 的 `scan` 对同一截止日期报告 513 个破坏性变更和 48 个新的弃用。卡片上的“changes fixed”数量及其 95% 置信区间也是 0.1.0 的算法：这个区间属于这个数量，而不是 5% -> 65% 这两个比率；而且 0.2.0 及更早的版本即使某个留出任务在没有说明时就已经答对，也会把该变更算作已修复。
 
@@ -177,7 +179,7 @@ Claude Haiku 4.5 那次运行写出的说明（节选，原文照录）：
 | `project_changes(project_dir, model)` | 对项目的每个依赖按锁定版本做同样的检查，你的代码已经用到的 API 排在最前 |
 | `model_cutoff(model)` | 模型的训练截止日期，来自 [models.dev](https://models.dev) |
 
-Agent 传入自己的模型 id，所以结果涵盖的正是这个模型不可能见过的内容。这些工具只静态读取 PyPI 和包的源码：不调用模型，不需要 API key，不执行任何包代码。
+Agent 传入自己的模型 id，所以结果涵盖的是这个模型训练截止日期之后的变更。这些工具只静态读取 PyPI 和包的源码：不调用模型，不需要 API key，不执行任何包代码。
 
 **Claude Code**
 
@@ -250,7 +252,7 @@ gemini extensions install https://github.com/MohammadHijjawi97/since-cutoff
 Not listed: 76 breaking changes, 0 new deprecations (removed or moved 47, parameters removed 29). Narrow with symbol="..." or raise limit.
 ```
 
-加上 `symbol="hf_hub_download"` 后，只列出这个函数的 8 个变更（`resume_download=`、`force_filename=`、`local_dir_use_symlinks=` 和 `proxies=`，分别出现在该函数和 `HfApi` 上）。`symbol` 也可以按代码里的调用写法传入：`client.messages.create` 会找到 `Messages.create` 的变更。
+加上 `symbol="hf_hub_download"` 后，只列出这个函数的 8 个变更（`resume_download=`、`force_filename=`、`local_dir_use_symlinks=` 和 `proxies=`，分别出现在该函数和 `HfApi` 上）。`symbol` 也可以按代码里的调用写法传入：`client.messages.create` 会找到 `Messages.create` 的变更。这个对比只看签名：这四个参数在 huggingface-hub 1.0 中已从签名里去掉，但 2.0.0 在运行时仍接受它们，只是忽略并发出警告。
 
 ## 在 CI 中使用
 
@@ -325,7 +327,7 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 
 | 结果 | 含义 |
 |---|---|
-| **stale**（过时） | 代码对模型学过的版本有效、对你的版本无效，并且错误涉及一个有变更的 API |
+| **stale**（过时） | 代码在对照版本（模型截止日期时的版本）上有效、在你的版本上无效，并且错误涉及一个有变更的 API |
 | **wrong**（写错） | 对你的版本无效，但不能用变更来解释（臆造或误用了 API） |
 | **deprecated**（已弃用） | 有效，但用到了在你的版本中标记为 `@deprecated` 的 API |
 | **correct**（正确） | 对你的版本有效，并且确实用到了变更后的 API |
@@ -333,7 +335,7 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 
 从 0.3.0 起，留出任务的结果包括：无说明 -> 有说明时按任务计算的正确率（附上配对任务数和它们来自的 API 变更数）；两者之差及其 95% bootstrap 置信区间（按 API 变更重抽样）；说明修正了的变更数（无说明时错、有说明时对）及其 Wilson 95% 置信区间；说明弄坏了的变更数；修正与弄坏之间的精确符号检验；以及按原因列出的未计入的配对。回归检查报告模型原本答对的 API 在加入说明后有多少仍然正确。
 
-`run --compare template,signatures`（0.3.0 及以后）还会用两种不需要模型的基线说明，回答同样的留出任务和回归检查：`template` 用一句话陈述每个失败的变更，内容取自 API 对比结果；`signatures` 给出每个变更 API（或其所在库指明的替代 API）的新签名和文档字符串的第一段。所有区块都在相同的配对上、对照相同的无说明回答打分，并显示每个区块的 token 数，所以一次运行就能看出经过验证的说明究竟多带来了什么。
+`run --compare template,signatures`（0.3.0 及以后）还会用两种不需要模型的基线说明，回答同样的留出任务和回归检查：`template` 用一句话陈述每个失败的变更，内容取自 API 对比结果；`signatures` 给出每个变更 API（或其所在库指明的替代 API）的新签名和文档字符串的第一段。所有区块都在相同的配对上、对照相同的无说明回答打分，并显示每个区块的 token 数，所以一次运行就能看出 since-cutoff 自己写的说明比这些基线多带来了什么。
 
 所有回答都由类型检查器针对确切的包版本打分，每个包都在各自独立的环境中检查，环境里装有该包自己的运行时依赖。没有 LLM 当评判，每个数字都能追溯到 `results.json`。详见 [docs/how-it-works.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md)（英文）。
 
@@ -351,19 +353,50 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 - 类型检查器能发现错误的名称、错误的参数和 PEP 702 弃用，但看不到签名不变而行为改变的情况，也看不到只在运行时发出警告的弃用。`scan` 还会列出用库自己的装饰器（名称包含 "deprecat"）声明的弃用，以及已被移除、但模块仍通过 `__getattr__` 提供并发出警告的名称；不过 `run` 不会探测这些弃用。
 - 对比只覆盖公开 API：`_private` 名称，以及包内自带的测试、基准测试和示例，都会被跳过。
 - 探测的是破坏性变更中按优先级排序的一个**样本**（你的代码已经用到的符号优先），而不是全部。
-- “模型见过的版本”指截止日期当天或之前发布的最新版本。模型对最近的版本了解得更少，所以实际的过时可能开始得更早。
+- “对照版本”指截止日期当天或之前发布的最新版本。模型对最近的版本了解得更少，所以实际的过时可能开始得更早。
 - 留出任务是针对同一个变更的改写：它们能说明一条说明修正了*这个*变更，不能说明模型整体变强了。
+
+### 训练截止日期的用途
+
+截止日期只用来选定一个对照点，并不代表模型记住了什么。since-cutoff 从 models.dev 获取这个日期（或使用 `--cutoff`）；只写到月份时指该月的最后一天（`2025-07` 即 2025 年 7 月 31 日）。对每个依赖，它取在这一天或之前上传的最新正式版本（跳过被撤回（yanked）的版本；只有当这个包到那时还没有任何正式版本时才用预发布版本，从不使用开发版本），再把这个版本的公开 API 与你锁定的版本做对比。对比结果是一份候选清单：模型的训练数据大概率不包含的 API 变更。
+
+这个日期决定三件事：
+
+- 哪些包需要对比：锁定版本不比对照版本新的包没有可对比的内容；在这个日期之后才首次发布的包会被列为新包；
+- 在 `run` 中，对照版本一侧做类型检查时，该版本自身的依赖取哪些版本（每个依赖要求在那一天允许的最新版本）；
+- `run` 中每次探测的“旧”一侧：一个回答如果在对照版本上有效、在你的版本上无效，并且错误落在有变更的 API 上，就记为“过时”（stale），而不是“写错”（wrong）。
+
+模型可能了解其标称截止日期之后的某个版本，也可能不了解截止日期前不久的版本，所以扫描结果可能列出模型其实已经能处理的变更，也可能漏掉一些它处理不了的变更。模型是否真的会写出旧 API，只有 `run` 能说明：它在不给工具、只告诉模型项目锁定了哪个版本的情况下直接询问模型。
 
 ## 与其他工具的比较
 
-| 工具类型 | 做什么 | since-cutoff 与之的关系 |
+since-cutoff 针对一个项目回答一个问题：从模型训练截止日期所对应的版本到你锁定的版本，哪些公开 API 发生了变化（你的代码用到的排在最前）？`since-cutoff run` 另外回答两个可选的问题：这个模型是否真的会写错它们？一条简短的说明能否纠正？下表中的大多数工具回答的是另一个问题（“这个库的文档现在怎么说？”），可以和 since-cutoff 很好地配合使用。
+
+| 工具 | 做什么 | since-cutoff 与之的关系 |
 |---|---|---|
-| 文档检索类 MCP 服务器：[Context7](https://github.com/upstash/context7)、[Ref](https://github.com/ref-tools/ref-tools-mcp)、[docs-mcp-server](https://github.com/arabold/docs-mcp-server) | Agent 查询某个库时，在回答当下提供最新文档 | 互补：since-cutoff 找出这个模型会写错哪些变更，让你知道哪里需要查文档或写说明，并在仓库里保留一条经过验证的简短说明 |
-| 库自带的技能：[library-skills](https://github.com/tiangolo/library-skills)、[pydantic/skills](https://github.com/pydantic/skills) | 库的维护者随包发布给 Agent 的指引，与每个版本同步 | 适用于任何 PyPI 包，包括不提供任何指引的包，并能测出模型是否需要这些指引 |
-| 依赖更新机器人：[Renovate](https://github.com/renovatebot/renovate)、[Dependabot](https://github.com/dependabot/dependabot-core) | 创建更新锁定版本的 pull request | GitHub Action 可以在这些 pull request 上运行，列出模型没有见过的 API 变更 |
-| 基准测试：[GitChameleon 2.0](https://arxiv.org/abs/2507.12367)、[VersiCode](https://arxiv.org/abs/2406.07411)、[CodeUpdateArena](https://arxiv.org/abs/2407.06249)、[LibEvolutionEval](https://arxiv.org/abs/2412.04478) | 在固定的历史任务集上衡量模型处理库版本的能力 | 在你锁定的版本上测量这个模型，并用类型检查器验证修复效果 |
+| [Context7](https://github.com/upstash/context7)（MCP 服务器和 `ctx7` 命令行工具） | Agent 在工作时调用 `resolve-library-id` 和 `query-docs`，把文档片段拉进上下文。如果库的所有者添加了某个版本（git tag 或分支，最多 20 个），它就提供该版本的文档（`/org/project/version`）；否则提供已索引分支的文档。不用 API key 也能用，但匿名调用的速率限制更低。 | 互补。Context7 提供文档；它不读取你锁定的版本，也不检查 Agent 写出的代码。since-cutoff 列出你锁定的 API 中哪些在模型截止日期之后变了（你的代码用到的排在最前），让你知道哪里需要查文档或写说明。向 Context7 提问时，请写明你锁定的版本。 |
+| 其他文档服务：[Ref](https://github.com/ref-tools/ref-tools-mcp)、[docs-mcp-server](https://github.com/arabold/docs-mcp-server) | 在回答当下为 Agent 提供文档搜索；docs-mcp-server 可以在本地索引文档 | 与 Context7 相同。 |
+| [library-skills](https://github.com/tiangolo/library-skills) | FastAPI、Streamlit 等库在包内附带 Agent 技能；`uvx library-skills` 把你已安装版本的技能链接到 `.agents/skills` 或 `.claude/skills`，因此技能会随库一起更新 | 由维护者编写，并与你安装的版本同步：库提供了技能就用它。since-cutoff 覆盖没有提供任何指引的包，而且只陈述 API 层面的变更。 |
+| 厂商的技能插件，例如 [pydantic/skills](https://github.com/pydantic/skills) | 面向 Claude Code、Codex 和 Cursor 的插件，以及 Pydantic、Pydantic AI 和 Logfire 的 `SKILL.md` 文件，从仓库安装 | 维护者关于如何用好一个库的指引；随插件仓库发布，而不是随你锁定的版本发布。since-cutoff 的说明是针对你的 lockfile 写的。 |
+| 代码改写工具（codemod）：[ast-grep](https://ast-grep.github.io/) 规则、OpenAI 的 `openai migrate`（[Grit](https://github.com/openai/openai-python/discussions/742)） | 用手写的语法规则改写已有代码；ast-grep 的规则目录里有一个 [OpenAI SDK 迁移](https://ast-grep.github.io/catalog/python/#migrate-openai-sdk)（把 `openai.Completion.create(...)` 改成 `client.completions.create(...)`） | 迁移已有代码时，codemod 是合适的工具。since-cutoff 关注的是助手接下来要写的代码：它从 API 对比结果而不是从别人写的规则中找出变更，而且只给建议，不改写任何代码。 |
+| 依赖更新机器人：[Renovate](https://github.com/renovatebot/renovate)、[Dependabot](https://github.com/dependabot/dependabot-core) | 创建更新锁定版本的 pull request | GitHub Action 可以在这些 pull request 上运行，列出有变更的 API，你的代码用到的排在最前。 |
+| 基准测试：[GitChameleon 2.0](https://arxiv.org/abs/2507.12367)、[VersiCode](https://arxiv.org/abs/2406.07411)、[CodeUpdateArena](https://arxiv.org/abs/2407.06249)、[LibEvolutionEval](https://arxiv.org/abs/2412.04478) | 在固定的任务集上衡量模型，任务取自真实的版本变更，或是合成的（CodeUpdateArena）；GitChameleon 2.0 会运行单元测试 | 它们对模型做总体比较，其中一些通过运行测试来检查行为。since-cutoff 只看一个项目锁定的版本，而且是静态检查：类型检查器能看到名称、参数和弃用标记，看不到行为。 |
+
+`since-cutoff run` 的 `--compare signatures` 会把新版本的签名和文档字符串的第一段交给模型。它是文档查询在本地的替代做法，不是 Context7。
 
 另外两个较小的工具也在解决同一个问题：[cutoff](https://github.com/sandeepsirodia/cutoff) 面向库的维护者，让模型写程序，并在库的当前版本上运行这些程序来做检测；[postcut](https://github.com/justi/postcut) 把 Ruby 的 `Gemfile.lock` 转换成一份截止日期之后的变更简报。since-cutoff 基于 [griffe](https://mkdocstrings.github.io/griffe/)、[basedpyright](https://github.com/DetachHead/basedpyright)、[models.dev](https://models.dev) 和 [rich](https://github.com/Textualize/rich) 构建。
+
+### 配合 Context7 使用 since-cutoff
+
+`since-cutoff scan` 告诉你该查哪些 API；Context7 可以提供文档。提问时写明你锁定的版本（例如“anthropic 1.8.0”）。只有当库的所有者[添加了该版本](https://github.com/upstash/context7/blob/master/docs/howto/claiming-libraries.mdx)时，Context7 才能匹配到它：2026-09-27 当天，`/openai/openai-python` 提供 v1.68.0、v1_105_0、v2.8.1 和 v2.11.0，而 `/anthropics/anthropic-sdk-python` 一个版本都没有，所以你拿到的可能是默认分支的文档。
+
+## 相关研究
+
+- **代码补全中的弃用 API。** Wang 等，*LLMs Meet Library Evolution: Evaluating Deprecated API Usage in LLM-based Code Completion*（ICSE 2025；[arXiv:2406.09834](https://arxiv.org/abs/2406.09834)，最初的标题是 *How and Why LLMs Use Deprecated APIs in Code Completion? An Empirical Study*）。7 个模型，来自 8 个 Python 库的 145 组“弃用 API → 替代 API”映射，28,125 个补全提示。大多数补全两个 API 都没有用到。在用到其中之一的补全中（论文称之为“plausible”补全），就整个数据集而言有 25-38% 用的是弃用 API：提示取自使用弃用 API 的代码时为 70-90%，取自已更新代码时为 9-18%。论文在“模型用了弃用 API 的已更新代码提示”上测试了两种基线修复方法。ReplaceAPI 在解码时把弃用 API 的 token 换成替代 API，再让模型补完这一行：在六个开源模型上，之后有 85.2-99.6% 的情况用上了替代 API（它需要控制解码过程，所以不能用于 GPT-3.5）。InsertPrompt 插入注释 `# {dep} is deprecated, use {rep} instead and revise the return value and arguments.` 后重新生成：视模型不同为 25.7-97.2%，作者认为它的效果和准确性都还不够。since-cutoff 的说明接近 InsertPrompt，只是放进了项目的指令文件；`since-cutoff run` 会在留出任务上测量它们，而不是假定它们有效。
+- **只把文档放进上下文还不够。** Ashik 等，*When LLMs Lag Behind: Knowledge Conflicts from Evolving APIs in Code Generation*（[arXiv:2604.09515](https://arxiv.org/abs/2604.09515)，2026 年预印本）。270 个真实的 API 更新（45 个弃用或移除、128 个修改、97 个新增），来自 8 个 Python 库在 2023 年 12 月之后发布的版本；11 个模型来自 4 个系列，训练截止日期都在这个日期之前。只给出更新说明时，模型在 74.64% 的回答中至少部分采用了更新（由 GPT-5 mini 判定），这些回答中有 42.55% 能在引入该更新的库版本中运行；再加上 API 文档后，92.87% 采用了更新，66.36% 能运行。再加入思维链（chain-of-thought）和自我反思（self-reflection）提示，可运行率又提高了 11.33%（这是相对提升，不是百分点）。在没有采用更新的回答中，42.1% 完全忽略了更新，16.4% 用了旧 API；在最佳设置下仍无法运行的已采用回答中，与更新相关的最常见原因是参数错误（占这些失败的 26.6%）。这正是 since-cutoff 要针对你的确切版本检查代码、并用 `since-cutoff run` 带着说明重新测试模型、而不是假定模型会遵循说明的原因。
+- **基准测试。** [GitChameleon 2.0](https://arxiv.org/abs/2507.12367)：328 个 Python 补全问题，每个都绑定特定的库版本，并用可执行的单元测试检查；企业模型的基线成功率为 48-51%，检索文档最多提高约 10 个百分点（GPT-4.1：从 48.5% 到 58.5%），自我调试（self-debugging）提高约 10-20 个百分点。[VersiCode](https://arxiv.org/abs/2406.07411)：特定版本的代码补全和感知版本的代码迁移，覆盖 300 多个 Python 库、9 年间的 2,000 多个版本。[CodeUpdateArena](https://arxiv.org/abs/2407.06249)：针对 7 个 Python 包中 54 个函数的知识编辑，更新是由 GPT-4 生成的合成更新，共 670 个程序合成示例；把更新的文档放在前面，并不能让开源模型（DeepSeek、CodeLlama）用上它。[LibEvolutionEval](https://arxiv.org/abs/2412.04478)（[NAACL 2025](https://aclanthology.org/2025.naacl-long.348/)）：覆盖 8 个库的特定版本行内补全；检索特定版本的文档和提示方法都有帮助。
+
+这些研究在固定的任务集上衡量许多模型；GitChameleon 2.0 和 Ashik 等会运行生成的代码。since-cutoff 做的事情更窄：针对一个项目，它列出自对照版本以来的变更（你的代码用到的排在最前），`run` 则静态检查一个模型的回答。它看不到签名不变而行为改变的情况，而运行代码的测试可以看到。
 
 ## 参与贡献
 

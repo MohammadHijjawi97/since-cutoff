@@ -6,8 +6,8 @@ description: For 21 coding models from 8 vendors, how many of 36 widely used Pyt
 *The Python AI stack after each model's training cutoff · September 2026 ·
 [since-cutoff on GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
 
-A coding model knows each library as it was when its training data ends. The libraries keep
-moving. To see how far, I pinned **36 widely used Python AI and LLM libraries** at their releases
+A coding model's training data ends at some date; the libraries it writes against keep changing
+after it. To see how far, I pinned **36 widely used Python AI and LLM libraries** at their releases
 of 26 September 2026
 ([the list](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/examples/ai-stack/requirements.txt))
 and ran `since-cutoff scan` (version 0.2.0) against the training cutoff of **21 models from 8
@@ -71,8 +71,8 @@ in kind; "new deprecations" counts libraries that newly mark a public API as dep
 - **It counts libraries, not mistakes.** A library with a flagged break is one where code written
   from the model's memory *can* fail; whether a model actually writes the old call is what
   `since-cutoff run` measures, per project. On one sample project, measured with since-cutoff
-  0.1.0, Claude Haiku 4.5 and Claude Opus 4.6 wrote stale code (valid for the version they
-  learned, broken for the pinned one) for 3 of 5 and 2 of 4 probed libraries
+  0.1.0, Claude Haiku 4.5 and Claude Opus 4.6 wrote stale code (valid for the comparison
+  release, rejected by the type checker for the pinned one) for 3 of 5 and 2 of 4 probed libraries
   ([results](https://github.com/MohammadHijjawi97/since-cutoff#results)).
 - **It is a static diff.** It sees names, parameters and deprecation markers in the public API,
   not behaviour changes behind an unchanged signature. Large libraries such as `transformers`
@@ -99,7 +99,7 @@ since-cutoff scan --model anthropic:claude-opus-5-5 --json > scans/claude-opus-5
 python stack_report.py scans      # writes stack.md, stack.json and the two chart SVGs
 ```
 
-Your own project is the more useful test: `uvx since-cutoff scan` in its root shows what your
-model has not seen, and the
+Your own project is the more useful test: `uvx since-cutoff scan` in its root shows what changed
+after your model's cutoff, and the
 [MCP server](https://github.com/MohammadHijjawi97/since-cutoff#use-it-from-any-agent-mcp) lets
 your agent ask before it writes the code.

@@ -1,6 +1,6 @@
 ---
 title: Ce que votre modèle de code ignore de vos dépendances
-description: Mesurer sur quelles API de bibliothèques épinglées un modèle de code se trompe parce qu'elles ont changé après sa date limite d'entraînement, et corriger ces erreurs avec de courtes notes AGENTS.md validées par un vérificateur de types.
+description: Mesurer sur quelles API de bibliothèques épinglées un modèle de code se trompe parce qu'elles ont changé après sa date limite d'entraînement, et rédiger de courtes notes AGENTS.md sur ces changements.
 lang: fr
 locale: fr_FR
 image:
@@ -19,14 +19,14 @@ image:
 **since-cutoff** est un outil open source, utilisable en ligne de commande et comme serveur MCP,
 pour les projets Python écrits avec des agents de code. Il liste les changements d'API publique
 survenus dans vos dépendances épinglées depuis la date limite d'entraînement du modèle, mesure
-ceux sur lesquels le modèle se trompe et rédige de courtes notes AGENTS.md, chacune validée par
-un vérificateur de types ou tirée directement du diff d'API.
+ceux sur lesquels le modèle se trompe et rédige de courtes notes AGENTS.md, chacune avec un
+exemple qui passe le vérificateur de types pour votre version ou tirée directement du diff d'API.
 
 ```bash
 # ce qui a changé depuis la date limite de votre modèle (aucun appel au modèle, aucune clé d'API)
 uvx since-cutoff scan
 
-# mesurer le modèle, rédiger des notes vérifiées, les ajouter à AGENTS.md
+# mesurer le modèle, rédiger des notes, les ajouter à AGENTS.md
 uvx since-cutoff run --apply
 ```
 
@@ -76,11 +76,11 @@ et **Claude Opus 4.6** (mai 2025). Les tâches et les notes ont été rédigées
 3. **Des réponses sans rien à consulter.** Le modèle reçoit la tâche et le numéro de la version
    épinglée, sans outils, sans accès au web, sans fichiers du projet.
 4. **Une évaluation par un vérificateur de types, à deux reprises.** La réponse est vérifiée avec
-   basedpyright par rapport à la version que le modèle a pu voir, puis par rapport à la version
-   épinglée, chacune dans un environnement isolé avec ses propres dépendances. Seules comptent les
+   basedpyright par rapport à la version de comparaison (la plus récente à la date limite du
+   modèle), puis par rapport à la version épinglée, chacune dans un environnement isolé avec ses propres dépendances. Seules comptent les
    erreurs de connaissance de l'API (noms, imports et paramètres inconnus, arguments manquants,
    arité), jamais les remarques liées à la rigueur du typage.
-   - **stale** : valide pour la version que le modèle connaissait, invalide pour la version épinglée
+   - **stale** : valide pour la version de comparaison, invalide pour la version épinglée
    - **wrong** : invalide, sans que le changement de version l'explique
    - **deprecated** : valide, mais utilise une API marquée `@deprecated` dans la version épinglée
 5. **Correction et vérification.** Pour chaque échec, une note d'une ligne est rédigée pour
@@ -103,7 +103,7 @@ Ces exécutions ont été réalisées avec since-cutoff 0.1.0, sur le seul proje
 | changements d'API sondés | 20 | 16 |
 | **stale** / wrong / deprecated / correct | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
 | bibliothèques avec des appels *stale* | 3 sur 5 sondées | 2 sur 4 sondées |
-| notes rédigées (dont validées par le vérificateur de types) | 8 (7), environ 391 jetons | 10 (7), environ 437 jetons |
+| notes rédigées (dont avec un exemple qui passe le vérificateur de types) | 8 (7), environ 391 jetons | 10 (7), environ 437 jetons |
 | **tâches réservées correctes, sans -> avec notes** | **14 % -> 57 %** (14 paires) | **5 % -> 65 %** (20 paires) |
 | API déjà correctes, une fois les notes ajoutées | 6/6 toujours correctes | 6/6 toujours correctes |
 
@@ -112,19 +112,21 @@ limite plus tardive et a pourtant écrit du code périmé plus souvent :
 `anthropic.HUMAN_PROMPT` avec `client.completions`, `hf_hub_download(force_filename=...)`,
 `resume_download=...`.
 
-D'autres exemples de code périmé tirés de l'exécution Haiku, chacun valide dans la version que
-le modèle a apprise et cassé dans la version épinglée :
+D'autres exemples de code périmé tirés de l'exécution Haiku, chacun valide pour la version de
+comparaison et rejeté par le vérificateur de types dans la version épinglée :
 
-- `client.messages.create(..., temperature=...)` : supprimé dans anthropic 1.8
+- `client.messages.create(..., temperature=...)` : supprimé dans anthropic 1.8, qui lève
+  `TypeError` si on le passe
 - `hf_hub_download(..., resume_download=True)`, `local_dir_use_symlinks=...` et `proxies=...` :
-  supprimés dans huggingface-hub 2.0
+  retirés de la signature depuis huggingface-hub 1.0 ; la 2.0 les accepte encore à l'exécution,
+  les ignore et émet un avertissement
 - `client.beta.vector_stores` : une API d'openai 1.x que la 3.x a déplacée vers
   `client.vector_stores`
 
 ### Une note suffit-elle ?
 
-since-cutoff a rédigé **8 notes, environ 391 jetons**, dont 7 validées par le vérificateur de
-types (pour la huitième, l'outil s'est rabattu sur un simple constat tiré du diff d'API). Par
+since-cutoff a rédigé **8 notes, environ 391 jetons**, dont 7 avec un exemple qui passe le
+vérificateur de types (pour la huitième, l'outil s'est rabattu sur un simple constat tiré du diff d'API). Par
 exemple (texte original) :
 
 ```markdown
@@ -156,8 +158,8 @@ dans son contexte.
   échappent.
 - **Les tâches réservées sont des reformulations du même changement** : la comparaison
   avant/après mesure donc si une note corrige *ce* changement, pas une capacité générale.
-- **« La version que le modèle a vue » découle d'une règle de date** (la version la plus récente
-  avant la date limite). Les modèles connaissent mal les mois qui précèdent immédiatement leur
+- **« La version de comparaison » découle d'une règle de date** (la version la plus récente
+  publiée au plus tard à la date limite). Les modèles connaissent mal les mois qui précèdent immédiatement leur
   date limite, si bien que leurs connaissances peuvent être périmées plus tôt.
 
 ## Pourquoi ce sujet m'intéresse
@@ -173,7 +175,7 @@ un bénéfice très concret : la réponse est une liste de lignes à mettre dan
 # ce qui a changé depuis la date limite de votre modèle (aucun appel au modèle)
 uvx since-cutoff scan
 
-# mesurer, rédiger des notes vérifiées, les appliquer à AGENTS.md
+# mesurer, rédiger des notes, les appliquer à AGENTS.md
 uvx since-cutoff run --apply
 ```
 

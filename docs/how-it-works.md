@@ -42,8 +42,8 @@ scoring is done by a type checker against the exact package versions, and all in
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
    (`2025-07` means 31 July 2025). Without `--model`, the model is the one your coding agent is
    set up with (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
-3. **The version the model could have seen** is the newest final, non-yanked release published
-   on or before the cutoff date (PyPI upload time). A package that had only pre-releases by
+3. **The comparison release** is the newest final, non-yanked release published on or before the
+   cutoff date (PyPI upload time). A package that had only pre-releases by
    then is compared with the newest of them (development releases do not count). A package
    first released after the cutoff, or whose release at the cutoff only reserved the name (no
    modules, or only empty ones), is reported as newer than the model.
@@ -89,6 +89,30 @@ scoring is done by a type checker against the exact package versions, and all in
    - kind changes that do not break a call: a callable alias (`namedtuple(...)`,
      `X = ValueError`) becoming a function or class or the reverse, an attribute becoming a type
      alias, and definitions that depend on the Python version or `TYPE_CHECKING`.
+
+### What the training cutoff is used for
+
+The cutoff date picks a comparison point. It is not a claim about what a model memorised.
+since-cutoff takes the date from models.dev (or `--cutoff`); a month means its last day
+(`2025-07` is 31 July 2025). For each dependency it takes the newest final, non-yanked release
+uploaded on or before that date (a pre-release only if the package had no final release by then,
+never a development release), and diffs that release's public API against your locked version.
+That diff is a list of candidates: API changes that the model's training data probably does not
+include.
+
+The date decides three things:
+
+- which packages are diffed at all: a package whose locked version is no newer than that release
+  has nothing to diff, and a package first released after the date is listed as new;
+- in `run`, which versions of that release's own dependencies the old side is type-checked with
+  (the newest each requirement allowed on that date);
+- the "old" side of every probe in `run`, so an answer that is valid there and invalid for your
+  version, with the error on a changed API, is "stale" rather than "wrong".
+
+A model can know a release after its stated cutoff or not know releases shortly before it, so the
+scan can list changes the model already handles and miss some it does not. Whether the model
+actually writes the old API is shown only by `run`, which asks it: with no tools, told which
+version the project pins.
 
 ## 2. Probe
 
@@ -138,7 +162,7 @@ scoring is done by a type checker against the exact package versions, and all in
 
    | outcome | meaning |
    |---|---|
-   | **stale** | valid for the version the model knew, invalid for the version you use, and the error involves the changed API |
+   | **stale** | valid for the comparison release, invalid for the version you use, and the error involves the changed API |
    | **wrong** | invalid for your version, and not explained by the version change (hallucinated or misused API) |
    | **deprecated** | valid, but uses an API marked `@deprecated` in your version |
    | **correct** | valid for your version, and actually uses the changed API |
@@ -150,9 +174,9 @@ scoring is done by a type checker against the exact package versions, and all in
 
 1. **Notes.** For every failure, a note-writer model gets the change, the failing code and the
    type-checker errors, and returns one bullet plus a complete example. The note is kept only if
-   the example type-checks cleanly against your version *and* every API the bullet recommends
-   appears in that verified example. Otherwise a plain statement of the change, derived only
-   from the diff, is used instead.
+   basedpyright reports no error attributed to the package for the example, checked against your
+   version, *and* every API the bullet recommends appears in that example. Otherwise a plain
+   statement of the change, derived only from the diff, is used instead.
 2. **The block.** Notes are grouped by package into a block between
    `<!-- since-cutoff:start -->` and `<!-- since-cutoff:end -->`. `--apply` writes it into
    `AGENTS.md` (or `CLAUDE.md` if that is what the project uses); re-running replaces the block,
@@ -205,12 +229,12 @@ tasks, the baselines compared, and the date.
 ### Baselines (`--compare`)
 
 `run --compare template,signatures` (or either one; 0.3.0 and later) measures simpler
-notes next to the verified ones, so a run shows how much the verified notes add instead of
-assuming they are best. Neither baseline calls a model, and both use the verified block's
-header:
+notes next to since-cutoff's own (the `verified` arm in results.json), so a run shows how much
+its notes add instead of assuming they are best. Neither baseline calls a model, and both use the
+same block header:
 
 - **template** states each failing change in one sentence from the API diff: the text a
-  verified note falls back to when its example does not type-check.
+  model-written note falls back to when its example does not type-check.
 - **signatures** gives the new signature and first docstring paragraph of each changed API, or
   of the replacement its library names (for a removed object, also a line saying it is gone).
   It shows what the new version offers, not what changed.
@@ -220,13 +244,13 @@ all blocks are paired against the same answers without notes, and they are compa
 same pairs: a pair counts for every block only when its answer without notes is scorable and no
 block's answer with notes is an error (for the other blocks it is listed as "error with another
 block"). So a rate-limit error on the one task a baseline did not fix cannot hand it a win. The
-verified notes' own result keeps every pair it can count, as without `--compare`; when errors
-leave some of those out, the result card adds the verified notes' rates on the shared pairs.
+result for since-cutoff's own notes keeps every pair it can count, as without `--compare`; when
+errors leave some of those out, the result card adds their rates on the shared pairs.
 
 The result card adds a line per baseline: its size in tokens (about four characters per
 token), held-out correct without -> with, changes fixed with its 95% CI, and changes broken.
 report.md adds a table with the same for every block, the pairs it did not count and why, the
-regression check, and the changes that only the verified notes or only the baseline fixed,
+regression check, and the changes that only since-cutoff's notes or only the baseline fixed,
 with an exact sign test; results.json adds `arms`, and each held-out answer records the `arm`
 it saw. `--compare` needs held-out tasks, so it cannot be combined with `--no-fix` or
 `--heldout 0`.

@@ -1,6 +1,6 @@
 ---
 title: What your coding model doesn't know about your dependencies
-description: Measuring which pinned library APIs a coding model gets wrong because they changed after its training cutoff, and fixing them with small, type-checked AGENTS.md notes.
+description: Measuring which pinned library APIs a coding model gets wrong because they changed after its training cutoff, and writing short AGENTS.md notes about them.
 ---
 
 **English** · [Español](es/index.md) · [Français](fr/index.md)
@@ -12,13 +12,14 @@ description: Measuring which pinned library APIs a coding model gets wrong becau
 **since-cutoff** is an open-source command-line tool and MCP server for Python projects written
 with coding agents. It lists the public API changes in your pinned dependencies since the
 model's training cutoff, measures which of them the model gets wrong, and writes short
-AGENTS.md notes, each checked by a type checker or taken directly from the API diff.
+AGENTS.md notes, each with an example that type-checks against your version or stated directly
+from the API diff.
 
 ```bash
 # what changed since your model's cutoff (no model calls, no API key)
 uvx since-cutoff scan
 
-# measure the model, write verified notes, add them to AGENTS.md
+# measure the model, write notes, add them to AGENTS.md
 uvx since-cutoff run --apply
 ```
 
@@ -63,10 +64,10 @@ Two models were tested: **Claude Haiku 4.5** (training cutoff February 2025) and
 3. **Answers with nothing to look things up in.** The model gets the task and the pinned version
    number, and no tools, no web, no project files.
 4. **Scoring by a type checker, twice.** The answer is type-checked with basedpyright against the
-   version the model could have seen and against the pinned version, each in an isolated
-   environment with that version's own dependencies. Only API-knowledge errors count (unknown
+   comparison release (the newest at the model's cutoff) and against the pinned version, each in
+   an isolated environment with that version's own dependencies. Only API-knowledge errors count (unknown
    names, imports and parameters, missing arguments, arity), never type-strictness complaints.
-   - **stale**: valid for the version it knew, invalid for the pinned one
+   - **stale**: valid for the comparison release, invalid for the pinned one
    - **wrong**: invalid, and not explained by the version change
    - **deprecated**: valid, but uses an API marked `@deprecated` in the pinned version
 5. **Fix and verify.** For each failure, a one-line note is written for AGENTS.md. A note
@@ -87,7 +88,7 @@ These runs were made with since-cutoff 0.1.0, on the one project above.
 | API changes probed | 20 | 16 |
 | **stale** / wrong / deprecated / correct | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
 | libraries with stale use | 3 of 5 probed | 2 of 4 probed |
-| notes written (type-checker verified) | 8 (7), about 391 tokens | 10 (7), about 437 tokens |
+| notes written (with an example that type-checks) | 8 (7), about 391 tokens | 10 (7), about 437 tokens |
 | **held-out correct, without -> with notes** | **14% -> 57%** (14 pairs) | **5% -> 65%** (20 pairs) |
 | previously-correct APIs after notes | 6/6 still correct | 6/6 still correct |
 
@@ -95,18 +96,20 @@ In this sample the stronger model was not safer. Opus 4.6 has a later cutoff and
 stale code more often: `anthropic.HUMAN_PROMPT` with `client.completions`,
 `hf_hub_download(force_filename=...)`, `resume_download=...`.
 
-More stale code from the Haiku run, each valid in the version it learned and broken in the pinned
-one:
+More stale code from the Haiku run, each valid for the comparison release and rejected by the
+type checker for the pinned one:
 
-- `client.messages.create(..., temperature=...)`: removed in anthropic 1.8
+- `client.messages.create(..., temperature=...)`: removed in anthropic 1.8, which raises
+  `TypeError` for it
 - `hf_hub_download(..., resume_download=True)`, `local_dir_use_symlinks=...` and `proxies=...`:
-  removed in huggingface-hub 2.0
+  no longer in the signature since huggingface-hub 1.0; 2.0 still accepts them at run time,
+  ignores them and warns
 - `client.beta.vector_stores`: an openai 1.x API that 3.x moved to `client.vector_stores`
 
 ### Does a note fix it?
 
-since-cutoff wrote **8 notes, about 391 tokens**, 7 of them verified by the type checker (one fell
-back to a plain statement from the API diff). For example:
+since-cutoff wrote **8 notes, about 391 tokens**, 7 of them with an example that type-checks (one
+fell back to a plain statement from the API diff). For example:
 
 ```markdown
 **anthropic 1.8.0**
@@ -133,7 +136,7 @@ context.
   Behaviour changes behind an unchanged signature are invisible.
 - **Held-out tasks are paraphrases of the same change,** so the before/after measures whether a
   note fixes *that* change, not general ability.
-- **"The version the model saw" is a date rule** (newest release before the cutoff). Models know
+- **"The comparison release" is a date rule** (the newest release on or before the cutoff). Models know
   the months right before their cutoff poorly, so real staleness can begin earlier.
 
 ## Why I care about this
@@ -148,7 +151,7 @@ experiment with a very practical payoff: the answer is a list of lines to put in
 # what changed since your model's cutoff (no model calls)
 uvx since-cutoff scan
 
-# measure, write verified notes, apply them to AGENTS.md
+# measure, write notes, apply them to AGENTS.md
 uvx since-cutoff run --apply
 ```
 

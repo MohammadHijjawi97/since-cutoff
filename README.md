@@ -36,10 +36,10 @@ A few of the changes `since-cutoff scan` finds for Claude Sonnet 4.5 (training c
 which pins six of its nine dependencies to current releases (for the other three, which are
 unpinned, the tool uses the latest release):
 
-| library | release at the cutoff | pinned | what breaks |
+| library | release at the cutoff | pinned | what changed |
 |---|---|---|---|
 | anthropic | 0.60.0 | 1.8.0 | `messages.create(temperature=..., top_p=..., top_k=...)` is no longer accepted |
-| huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` removed |
+| huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` left the signature in 1.0 (2.0.0 still accepts them at run time, ignores them and warns) |
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()` and `llm.predict()` removed |
 | openai | 1.98.0 | 3.19.2 | 21 breaking changes, 6 new deprecations |
 
@@ -77,7 +77,7 @@ and to CI through a [GitHub Action and a pre-commit hook](https://github.com/Moh
 # list API changes since your model's cutoff (no model calls, no API key)
 uvx since-cutoff scan
 
-# probe the model, write verified notes, and add them to AGENTS.md
+# probe the model, write notes, and add them to AGENTS.md
 uvx since-cutoff run --apply
 ```
 
@@ -123,8 +123,8 @@ Prompts that work well:
 
 - "Which of our dependencies changed their public API after your training cutoff?" The agent
   runs `since-cutoff scan` or calls the MCP tool `project_changes`.
-- "Measure which of those changes you actually get wrong, and add the verified notes to
-  AGENTS.md." The agent asks you first, then runs `since-cutoff run --quick --apply`.
+- "Measure which of those changes you actually get wrong, and add the notes to AGENTS.md." The
+  agent asks you first, then runs `since-cutoff run --quick --apply`.
 - "Before you write the httpx code, check what changed in httpx since your cutoff." The agent
   calls the MCP tool `api_changes`.
 
@@ -185,7 +185,7 @@ Two Claude models on the 9-dependency sample project in
 | API changes probed | 20 | 16 |
 | **stale** / wrong / deprecated / correct | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
 | libraries with stale use | 3 of 5 probed | 2 of 4 probed |
-| notes written (type-checker verified) | 8 (7), about 391 tokens | 10 (7), about 437 tokens |
+| notes written (with an example that type-checks) | 8 (7), about 391 tokens | 10 (7), about 437 tokens |
 | **held-out correct, without -> with notes** | **14% -> 57%** (14 pairs) | **5% -> 65%** (20 pairs) |
 | previously-correct APIs after notes | 6/6 still correct | 6/6 still correct |
 
@@ -195,10 +195,12 @@ the model already got right, to catch notes that make things worse.
 
 In this sample the stronger model was not safer: Opus 4.6 wrote APIs that were removed after its
 cutoff, including `anthropic.HUMAN_PROMPT` with `client.completions`. Stale code from both runs,
-each valid for the version the model learned and broken for the pinned one:
+each valid for the comparison release and rejected by the type checker for the pinned one:
 `messages.create(temperature=...)` (anthropic 1.8), `hf_hub_download(resume_download=...)`,
 `local_dir_use_symlinks=...`, `force_filename=...` and `proxies=...` (huggingface-hub 2.0), and
-`client.beta.vector_stores` (openai 3.x).
+`client.beta.vector_stores` (openai 3.x). At run time, anthropic 1.8.0 raises `TypeError` for
+`temperature`; huggingface-hub 2.0.0 still accepts those four download arguments, ignores them
+and warns.
 
 The notes written in the Claude Haiku 4.5 run (excerpt, verbatim):
 
@@ -216,6 +218,11 @@ The notes written in the Claude Haiku 4.5 run (excerpt, verbatim):
 - `client.beta.vector_stores` is removed in openai 3.19.2. Use `client.vector_stores` instead.
 <!-- since-cutoff:end -->
 ```
+
+The huggingface-hub note is not quite right: `resume_download` left the signature in 1.0, not
+2.0.0, and 2.0.0 still accepts it at run time, ignores it and warns
+([source](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)).
+Omitting it is still the right advice.
 
 The terminal summary of the Claude Opus 4.6 run, recorded with 0.1.0. The probe results are the
 ones in the table above. The diff counts on the card are 0.1.0's ("725 changes flagged"); after
@@ -258,9 +265,9 @@ since my training cutoff?" before it writes code. It has three read-only tools:
 | `project_changes(project_dir, model)` | the same for every dependency of a project at its pinned version, starting with APIs your code already uses |
 | `model_cutoff(model)` | a model's training cutoff, from [models.dev](https://models.dev) |
 
-The agent passes its own model id, so the answer covers what that model could not have seen.
-The tools read PyPI and package sources statically: no model calls, no API key, no package code
-executed.
+The agent passes its own model id, so the answer covers what changed after that model's training
+cutoff. The tools read PyPI and package sources statically: no model calls, no API key, no
+package code executed.
 
 **Claude Code**
 
@@ -346,7 +353,8 @@ Not listed: 76 breaking changes, 0 new deprecations (removed or moved 47, parame
 With `symbol="hf_hub_download"` it lists only the 8 changes to that function (`resume_download=`,
 `force_filename=`, `local_dir_use_symlinks=` and `proxies=`, on the function and on `HfApi`).
 `symbol` also takes a call the way code writes it: `client.messages.create` finds the changes
-to `Messages.create`.
+to `Messages.create`. The diff reads signatures only: these four parameters left the signature in
+huggingface-hub 1.0, but 2.0.0 still accepts them at run time, ignores them and warns.
 
 ## Use in CI
 
@@ -433,7 +441,7 @@ and checks every note the model writes:
 
 | outcome | meaning |
 |---|---|
-| **stale** | the code is valid for the version the model knew and invalid for yours, and the error involves an API that changed |
+| **stale** | the code is valid for the comparison release (the one at the model's cutoff) and invalid for yours, and the error involves an API that changed |
 | **wrong** | invalid for your version, but not explained by a change (hallucinated or misused API) |
 | **deprecated** | valid, but uses an API marked `@deprecated` in your version |
 | **correct** | valid for your version and actually uses the changed API |
@@ -451,7 +459,7 @@ regression checks with baseline notes that need no model: `template` states each
 one sentence from the API diff, and `signatures` gives the new signature and first docstring
 paragraph of each changed API, or of the replacement its library names. All blocks are scored on
 the same pairs, against the same answers without notes, and each block's size is shown in tokens,
-so a run shows what the verified notes add.
+so a run shows what since-cutoff's own notes add over them.
 
 Everything is scored by a type checker against the exact package versions, each in an isolated
 environment with that package's own runtime dependencies. No LLM judges anything, and every
@@ -489,25 +497,121 @@ number traces back to `results.json`. Details: [docs/how-it-works.md](https://gi
   shipped inside a package, are skipped.
 - Probes cover a ranked **sample** of the breaking changes (symbols your code already uses
   first), not all of them.
-- "The version the model saw" is the newest release on or before the cutoff date. Models know
+- "The comparison release" is the newest release on or before the cutoff date. Models know
   recent releases less well, so real staleness can start earlier.
 - Held-out tasks are paraphrases of the same change: they show that a note fixes *that* change,
   not that the model got better in general.
 
+### What the training cutoff is used for
+
+The cutoff date picks a comparison point. It is not a claim about what a model memorised.
+since-cutoff takes the date from models.dev (or `--cutoff`); a month means its last day
+(`2025-07` is 31 July 2025). For each dependency it takes the newest final, non-yanked release
+uploaded on or before that date (a pre-release only if the package had no final release by then,
+never a development release), and diffs that release's public API against your locked version.
+That diff is a list of candidates: API changes that the model's training data probably does not
+include.
+
+The date decides three things:
+
+- which packages are diffed at all: a package whose locked version is no newer than that release
+  has nothing to diff, and a package first released after the date is listed as new;
+- in `run`, which versions of that release's own dependencies the old side is type-checked with
+  (the newest each requirement allowed on that date);
+- the "old" side of every probe in `run`, so an answer that is valid there and invalid for your
+  version, with the error on a changed API, is "stale" rather than "wrong".
+
+A model can know a release after its stated cutoff or not know releases shortly before it, so the
+scan can list changes the model already handles and miss some it does not. Whether the model
+actually writes the old API is shown only by `run`, which asks it: with no tools, told which
+version the project pins.
+
 ## How it compares
 
-| kind of tool | what it does | how since-cutoff relates |
+since-cutoff answers one question for one project: which public APIs of the versions you pin
+changed since the release a model's training cutoff points to, starting with the ones your code
+uses? `since-cutoff run` adds two optional questions: does this model actually get them wrong,
+and does a short note fix it? Most tools below answer a different question ("what do the
+library's docs say now?") and work well alongside it.
+
+| tool | what it does | how since-cutoff relates |
 |---|---|---|
-| Docs retrieval MCP servers: [Context7](https://github.com/upstash/context7), [Ref](https://github.com/ref-tools/ref-tools-mcp), [docs-mcp-server](https://github.com/arabold/docs-mcp-server) | give the agent current documentation when it looks a library up, at answer time | complementary: since-cutoff finds which changes this model gets wrong, so you know where a lookup or a note is needed, and keeps a small verified note in the repo |
-| Library-shipped skills: [library-skills](https://github.com/tiangolo/library-skills), [pydantic/skills](https://github.com/pydantic/skills) | the library's maintainers ship agent guidance with the package, in step with each release | works for any PyPI package, including those that ship no guidance, and measures whether the model needs it |
-| Dependency bots: [Renovate](https://github.com/renovatebot/renovate), [Dependabot](https://github.com/dependabot/dependabot-core) | open pull requests that update your pinned versions | the GitHub Action can run on those pull requests and list the API changes the model has not seen |
-| Benchmarks: [GitChameleon 2.0](https://arxiv.org/abs/2507.12367), [VersiCode](https://arxiv.org/abs/2406.07411), [CodeUpdateArena](https://arxiv.org/abs/2407.06249), [LibEvolutionEval](https://arxiv.org/abs/2412.04478) | measure how models handle library versions on fixed, historical task sets | measures this model on your pinned versions, and verifies the fix with a type checker |
+| [Context7](https://github.com/upstash/context7) (MCP server and `ctx7` CLI) | The agent calls `resolve-library-id` and `query-docs` to pull documentation snippets into its context while it works. It serves a specific version (`/org/project/version`) when the library's owners have added that version (git tags or branches, at most 20); otherwise it serves the indexed branch. Works without an API key at a lower, anonymous rate limit. | Complementary. Context7 supplies documentation; it does not read your locked versions or check the code the agent writes. since-cutoff lists which of your pinned APIs changed after the model's cutoff, the ones your code uses first, so you know where a lookup or a note is needed. When you ask Context7, name the version you pin. |
+| Other docs servers: [Ref](https://github.com/ref-tools/ref-tools-mcp), [docs-mcp-server](https://github.com/arabold/docs-mcp-server) | Documentation search for agents, at answer time; docs-mcp-server can index docs locally | Same as Context7. |
+| [library-skills](https://github.com/tiangolo/library-skills) | Libraries such as FastAPI and Streamlit ship agent skills inside their packages; `uvx library-skills` links the skills of the versions you have installed into `.agents/skills` or `.claude/skills`, so they update with the library | Written by the maintainers and in step with your installed version: when a library ships one, use it. since-cutoff covers packages that ship no guidance, and only states changes to the API surface. |
+| Vendor skill plugins, e.g. [pydantic/skills](https://github.com/pydantic/skills) | Claude Code, Codex and Cursor plugins and `SKILL.md` files for Pydantic, Pydantic AI and Logfire, installed from the repository | Maintainer guidance on how to use a library well; released with the plugin repository, not with the version you pin. since-cutoff's notes are written for your lockfile. |
+| Codemods: [ast-grep](https://ast-grep.github.io/) rules, OpenAI's `openai migrate` ([Grit](https://github.com/openai/openai-python/discussions/742)) | Rewrite code that already exists with hand-written syntactic rules; ast-grep's catalog has an [OpenAI SDK migration](https://ast-grep.github.io/catalog/python/#migrate-openai-sdk) (`openai.Completion.create(...)` to `client.completions.create(...)`) | For migrating code you already have, a codemod is the right tool. since-cutoff is about the code an assistant writes next: it finds the changes from the API diff instead of from rules someone wrote, and only suggests; it rewrites nothing. |
+| Dependency bots: [Renovate](https://github.com/renovatebot/renovate), [Dependabot](https://github.com/dependabot/dependabot-core) | Open pull requests that update your pinned versions | The GitHub Action can run on those pull requests and list the changed APIs, the ones your code uses first. |
+| Benchmarks: [GitChameleon 2.0](https://arxiv.org/abs/2507.12367), [VersiCode](https://arxiv.org/abs/2406.07411), [CodeUpdateArena](https://arxiv.org/abs/2407.06249), [LibEvolutionEval](https://arxiv.org/abs/2412.04478) | Measure models on fixed task sets built from real version changes, or synthetic ones (CodeUpdateArena); GitChameleon 2.0 runs unit tests | They compare models in general, and some check behaviour by running tests. since-cutoff looks at one project's pinned versions, statically: a type checker sees names, parameters and deprecations, not behaviour. |
+
+`--compare signatures` in `since-cutoff run` gives the model the new version's signature and the
+first paragraph of its docstring. It is a local stand-in for a documentation lookup, not Context7.
 
 Two smaller tools work on the same problem: [cutoff](https://github.com/sandeepsirodia/cutoff)
 probes a library you maintain by running model-written programs against its current version, and
 [postcut](https://github.com/justi/postcut) turns a Ruby `Gemfile.lock` into a brief of changes
 since the cutoff. since-cutoff is built on [griffe](https://mkdocstrings.github.io/griffe/),
 [basedpyright](https://github.com/DetachHead/basedpyright), [models.dev](https://models.dev) and [rich](https://github.com/Textualize/rich).
+
+### Using since-cutoff with Context7
+
+`since-cutoff scan` tells you which APIs to look up; Context7 can supply the docs. Name the
+version you pin when you ask ("anthropic 1.8.0"). Context7 matches it only when the library's
+owners [added that version](https://github.com/upstash/context7/blob/master/docs/howto/claiming-libraries.mdx):
+on 2026-09-27, `/openai/openai-python` offered v1.68.0, v1_105_0, v2.8.1 and v2.11.0, and
+`/anthropics/anthropic-sdk-python` offered none, so you may get the default branch's docs.
+
+## Related research
+
+- **Deprecated APIs in code completion.** Wang et al., *LLMs Meet Library Evolution: Evaluating
+  Deprecated API Usage in LLM-based Code Completion* (ICSE 2025;
+  [arXiv:2406.09834](https://arxiv.org/abs/2406.09834), first titled *How and Why LLMs Use
+  Deprecated APIs in Code Completion? An Empirical Study*). 7 models, 145 mappings from a
+  deprecated API to its replacement in 8 Python libraries, 28,125 completion prompts. Most
+  completions used neither API. Of those that used one of the two (the paper's "plausible"
+  completions), 25-38% used the deprecated one over the whole dataset: 70-90% when the prompt came
+  from code that used the deprecated API, 9-18% when it came from up-to-date code. Two baseline
+  fixes were tested on up-to-date prompts where a model had used the deprecated API. ReplaceAPI
+  swaps the deprecated API's tokens for the replacement during decoding and lets the model finish
+  the line: the replacement was then used in 85.2-99.6% of cases on the six open models (it needs
+  control of decoding, so not GPT-3.5). InsertPrompt adds the comment
+  `# {dep} is deprecated, use {rep} instead and revise the return value and arguments.` and
+  regenerates: 25.7-97.2%, depending on the model, which the authors judge not yet effective or
+  accurate enough. since-cutoff's notes are close to InsertPrompt, moved into the project's
+  instructions file; `since-cutoff run` measures them on held-out tasks instead of assuming they
+  work.
+- **Documentation in context is not enough on its own.** Ashik et al., *When LLMs Lag Behind:
+  Knowledge Conflicts from Evolving APIs in Code Generation*
+  ([arXiv:2604.09515](https://arxiv.org/abs/2604.09515), 2026 preprint). 270 real API updates (45
+  deprecated or removed, 128 modified, 97 new) from releases of 8 Python libraries after December
+  2023, and 11 models from 4 families with training cutoffs before that date. Given only a
+  description of the update, the models at least partly adopted it in 74.64% of answers (judged
+  by GPT-5 mini), and 42.55% of those answers ran in the library version that introduced the
+  update; with the API documentation as well, 92.87% adopted it and 66.36% ran. Adding
+  chain-of-thought and self-reflection prompts raised the executable rate by a further 11.33%, a
+  relative gain rather than percentage points. Of the answers that did not adopt the update, 42.1%
+  ignored it entirely and 16.4% used the old API; of the adopting answers that still failed to run
+  in the best setup, the most common update-related cause was wrong parameters (26.6% of those
+  failures). This is why since-cutoff checks code against your exact version, and why
+  `since-cutoff run` re-tests the model with the notes rather than assuming they are followed.
+- **Benchmarks.** [GitChameleon 2.0](https://arxiv.org/abs/2507.12367): 328 Python completion
+  problems, each tied to specific library versions and checked by executable unit tests;
+  enterprise models reach 48-51% at baseline, retrieved documentation adds up to about 10 points
+  (GPT-4.1: 48.5% to 58.5%) and self-debugging about 10-20.
+  [VersiCode](https://arxiv.org/abs/2406.07411): version-specific code completion and
+  version-aware code migration over more than 300 Python libraries and more than 2,000 versions
+  across 9 years. [CodeUpdateArena](https://arxiv.org/abs/2407.06249): knowledge editing for 54
+  functions from 7 Python packages, with synthetic, GPT-4-generated updates and 670
+  program-synthesis examples; prepending the update's documentation did not let open models
+  (DeepSeek, CodeLlama) use it. [LibEvolutionEval](https://arxiv.org/abs/2412.04478)
+  ([NAACL 2025](https://aclanthology.org/2025.naacl-long.348/)): version-specific inline completion
+  across 8 libraries; retrieved version-specific documentation and prompting help.
+
+These studies measure many models on fixed task sets; GitChameleon 2.0 and Ashik et al. run the
+generated code. since-cutoff does something narrower: for one project it lists the changes since a
+comparison release, the ones your code uses first, and `run` checks one model's answers
+statically. It cannot see behaviour changes behind an unchanged signature, which tests that run
+the code can.
 
 ## Contributing
 

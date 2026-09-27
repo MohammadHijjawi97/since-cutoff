@@ -1,6 +1,6 @@
 ---
 title: Lo que tu modelo de IA para programar no sabe de tus dependencias
-description: Cómo medir en qué API de las bibliotecas fijadas se equivoca un modelo de IA para programar porque cambiaron después de su fecha de corte de entrenamiento, y cómo corregir esos errores con notas breves en AGENTS.md comprobadas con un verificador de tipos.
+description: Cómo medir en qué API de las bibliotecas fijadas se equivoca un modelo de IA para programar porque cambiaron después de su fecha de corte de entrenamiento, y cómo escribir notas breves sobre esos cambios en AGENTS.md.
 lang: es
 locale: es_ES
 image:
@@ -20,14 +20,14 @@ image:
 proyectos de Python escritos con agentes de programación. Enumera los cambios que ha tenido la API
 pública de tus dependencias, en las versiones que tienes fijadas, desde la fecha de corte de
 entrenamiento del modelo; mide en cuáles se equivoca el modelo y escribe notas breves en
-AGENTS.md, cada una comprobada con un verificador de tipos o tomada directamente del diff de la
-API.
+AGENTS.md, cada una con un ejemplo que pasa el verificador de tipos para tu versión o redactada
+directamente a partir del diff de la API.
 
 ```bash
 # qué ha cambiado desde la fecha de corte de tu modelo (sin llamadas al modelo, sin clave de API)
 uvx since-cutoff scan
 
-# medir el modelo, escribir notas verificadas y añadirlas a AGENTS.md
+# medir el modelo, escribir notas y añadirlas a AGENTS.md
 uvx since-cutoff run --apply
 ```
 
@@ -76,11 +76,11 @@ y **Claude Opus 4.6** (mayo de 2025). Las tareas y las notas las escribió Claud
 3. **Respuestas sin nada que consultar.** El modelo recibe la tarea y el número de la versión
    fijada, sin herramientas, sin web y sin archivos del proyecto.
 4. **Puntuación con un verificador de tipos, dos veces.** La respuesta se verifica con
-   basedpyright frente a la versión que el modelo pudo haber visto y frente a la versión fijada,
-   cada una en un entorno aislado con sus propias dependencias. Solo cuentan los errores de
+   basedpyright frente a la versión de comparación (la más reciente en la fecha de corte del modelo)
+   y frente a la versión fijada, cada una en un entorno aislado con sus propias dependencias. Solo cuentan los errores de
    conocimiento de la API (nombres, importaciones y parámetros desconocidos, argumentos que
    faltan, aridad), nunca los avisos del modo estricto de tipado.
-   - **stale**: válida para la versión que conocía el modelo, inválida para la fijada
+   - **stale**: válida para la versión de comparación, inválida para la fijada
    - **wrong**: inválida, y no se explica por el cambio de versión
    - **deprecated**: válida, pero usa una API marcada con `@deprecated` en la versión fijada
 5. **Corrección y verificación.** Para cada fallo se escribe una nota de una línea para
@@ -101,7 +101,7 @@ Estas ejecuciones se hicieron con since-cutoff 0.1.0 y en un único proyecto, el
 | cambios de API sondeados | 20 | 16 |
 | **stale** / wrong / deprecated / correct | **5** / 1 / 2 / 12 | **7** / 0 / 3 / 6 |
 | bibliotecas con uso desactualizado | 3 de 5 sondeadas | 2 de 4 sondeadas |
-| notas escritas (comprobadas con el verificador de tipos) | 8 (7), unos 391 tokens | 10 (7), unos 437 tokens |
+| notas escritas (con un ejemplo que pasa el verificador de tipos) | 8 (7), unos 391 tokens | 10 (7), unos 437 tokens |
 | **aciertos en tareas reservadas, sin -> con notas** | **14% -> 57%** (14 pares) | **5% -> 65%** (20 pares) |
 | API que el modelo ya usaba bien, con las notas | 6/6 siguen bien | 6/6 siguen bien |
 
@@ -110,18 +110,20 @@ posterior y, aun así, escribió código desactualizado con más frecuencia:
 `anthropic.HUMAN_PROMPT` con `client.completions`, `hf_hub_download(force_filename=...)`,
 `resume_download=...`.
 
-Más código desactualizado de la ejecución con Haiku, en cada caso válido en la versión que aprendió
-el modelo y roto en la fijada:
+Más código desactualizado de la ejecución con Haiku, en cada caso válido para la versión de
+comparación y rechazado por el verificador de tipos en la fijada:
 
-- `client.messages.create(..., temperature=...)`: eliminado en anthropic 1.8
+- `client.messages.create(..., temperature=...)`: eliminado en anthropic 1.8, que lanza
+  `TypeError` si se pasa
 - `hf_hub_download(..., resume_download=True)`, `local_dir_use_symlinks=...` y `proxies=...`:
-  eliminados en huggingface-hub 2.0
+  fuera de la firma desde huggingface-hub 1.0; la 2.0 todavía los acepta en tiempo de
+  ejecución, los ignora y emite un aviso
 - `client.beta.vector_stores`: una API de openai 1.x que la 3.x trasladó a `client.vector_stores`
 
 ### ¿Lo corrige una nota?
 
-since-cutoff escribió **8 notas, unos 391 tokens**, 7 de ellas comprobadas con el verificador de
-tipos (en un caso se recurrió a una simple afirmación extraída del diff de la API). Por ejemplo:
+since-cutoff escribió **8 notas, unos 391 tokens**, 7 de ellas con un ejemplo que pasa el verificador
+de tipos (en un caso se recurrió a una simple afirmación extraída del diff de la API). Por ejemplo:
 
 ```markdown
 **anthropic 1.8.0**
@@ -150,8 +152,8 @@ modelo siguió usando bien, con las notas en su contexto, las seis API que ya ac
   invisibles.
 - **Las tareas reservadas son paráfrasis sobre el mismo cambio,** así que el antes y el después
   miden si una nota corrige *ese* cambio, no la capacidad general.
-- **«La versión que vio el modelo» es una regla basada en fechas** (la versión más reciente
-  anterior a la fecha de corte). Los modelos conocen mal los meses inmediatamente anteriores a su
+- **«La versión de comparación» es una regla basada en fechas** (la versión más reciente
+  publicada en la fecha de corte o antes). Los modelos conocen mal los meses inmediatamente anteriores a su
   fecha de corte, así que la desactualización real puede empezar antes.
 
 ## Por qué me importa
@@ -167,7 +169,7 @@ una utilidad muy práctica: la respuesta es una lista de líneas para poner en A
 # qué ha cambiado desde la fecha de corte de tu modelo (sin llamadas al modelo)
 uvx since-cutoff scan
 
-# medir, escribir notas verificadas y aplicarlas a AGENTS.md
+# medir, escribir notas y aplicarlas a AGENTS.md
 uvx since-cutoff run --apply
 ```
 
