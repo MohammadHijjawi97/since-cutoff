@@ -1,6 +1,38 @@
 # Contributing
 
-Thanks for helping! Issues and pull requests are welcome.
+Thanks for helping! Issues, pull requests, results from your own projects and questions are all
+welcome, and first-time contributors are very welcome.
+
+## Where to start
+
+- **Pick an issue.** [Good first issues](https://github.com/MohammadHijjawi97/since-cutoff/labels/good%20first%20issue)
+  are small and self-contained; [help wanted](https://github.com/MohammadHijjawi97/since-cutoff/labels/help%20wanted)
+  ones are bigger. Comment on the issue to say you're taking it, and I'll assign it to you.
+- **Share a result.** Ran it on your project? Post what it found in
+  [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6).
+  False positives in the API diff are especially useful ([template](https://github.com/MohammadHijjawi97/since-cutoff/issues/new?template=false_positive.yml)).
+- **Translate.** The README exists in English, Chinese, Spanish and French; another language
+  is a great first pull request.
+- **Not sure?** Open a draft pull request early, or ask in
+  [Discussions](https://github.com/MohammadHijjawi97/since-cutoff/discussions).
+
+## How the code is organised
+
+| Module | What it does |
+|---|---|
+| `project.py` | Reads lockfiles, requirements files and `.venv`, and scans the project's imports |
+| `pypi.py` | PyPI metadata and release dates; downloads and safely extracts sources |
+| `models.py` | Training cutoffs (models.dev plus a bundled snapshot) and model-id normalisation |
+| `apidiff.py` | The static API diff between two versions (griffe): removals, moves, parameters, deprecations |
+| `selection.py` | Ranks the changes and picks which ones to probe |
+| `prompts.py` | Task, solver and note prompts, and the leak filter for tasks |
+| `checker.py` | Type-checks answers with basedpyright against a version, in an isolated environment |
+| `engine.py` | Ties it together: scan, probe, classify (stale / wrong / deprecated / correct), notes, held-out tests |
+| `notes.py` | Renders, applies and removes the notes block in `AGENTS.md` / `CLAUDE.md` |
+| `report.py` | Terminal, Markdown and JSON reports |
+| `mcp_server.py` | The `since-cutoff mcp` server and its tools |
+| `providers/` | Model providers (Claude Code CLI, Anthropic, OpenAI-compatible APIs) |
+| `cli.py` | Command-line interface |
 
 ## Development setup
 
@@ -23,6 +55,19 @@ mypy
 The offline suite needs no API keys: `tests/conftest.py` defines a toy library with two versions
 and a scripted model that "knows" only the old one, so the whole pipeline (scan, probe, notes,
 held-out verification) runs end to end in CI.
+
+Run one file or one test while you work: `pytest tests/test_project.py -k conda -q`.
+CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so keep paths
+`pathlib`-based and never assume `/` in file names.
+
+## Pull requests
+
+- One topic per pull request, with a test that fails without the change.
+- Add a line to the "Unreleased" section of `CHANGELOG.md` for anything users would notice.
+- AI-assisted contributions are fine, as long as you have read and understood every line, ran
+  the checks yourself, and wrote the pull request description in your own words.
+- I try to review within a couple of days. If a pull request has conflicts after a release,
+  say so and I can rebase it for you.
 
 ## Good first contributions
 

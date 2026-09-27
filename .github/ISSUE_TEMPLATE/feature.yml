@@ -1,0 +1,28 @@
+name: Feature request
+description: A new lockfile format, provider, output, integration or language
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation and what gets in the way today. A real project or command helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: What since-cutoff should do. Sketches of output or flags are welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to work on it?
+      options:
+        - Yes, I'd like to open a pull request
+        - Maybe, with some pointers
+        - No, just suggesting it
+    validations:
+      required: true

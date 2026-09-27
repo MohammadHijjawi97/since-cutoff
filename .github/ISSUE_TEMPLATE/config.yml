@@ -1,1 +1,11 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Share your results
+    url: https://github.com/MohammadHijjawi97/since-cutoff/discussions/6
+    about: Ran since-cutoff on your project? Post what it found for your model.
+  - name: Questions and ideas
+    url: https://github.com/MohammadHijjawi97/since-cutoff/discussions
+    about: Ask how something works or discuss an idea before opening an issue.
+  - name: Report a security problem
+    url: https://github.com/MohammadHijjawi97/since-cutoff/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
