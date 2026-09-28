@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.5.0 - 2026-09-28
+## Unreleased
 
 - Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
   `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
   are supported, and unknown aliases are reported instead of guessed.
+## 0.5.0 - 2026-09-28
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
   agent to run to remove the notes (found in a catalogue's review of the skill).
