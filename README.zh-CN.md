@@ -46,6 +46,8 @@ uvx since-cutoff scan
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 [![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
+<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="观看 2 分半钟的讲解视频（带配音）"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ 观看 2 分半钟的讲解视频（带配音）</a></p>
+
 [English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | **简体中文** | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
 
 ## 问题是什么
@@ -95,7 +97,7 @@ uvx since-cutoff run
 
 `scan` 在示例项目上的输出：
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="在示例项目上运行 since-cutoff scan --model anthropic:claude-sonnet-4-5。你的代码用到了 2 个在 claude-sonnet-4-5 训练截止日期（2025-07-31）之后发生变化的 API。huggingface-hub 0.34.3 -> 2.0.0：app/main.py 用到的 hf_hub_download 的签名中不再有 force_filename、local_dir_use_symlinks、resume_download 和 proxies；它的说明标为 [diff]，一行 Runtime 提示指出 2.0.0 的源码仍会处理这些参数，所以传入它们的调用可能会带着警告运行。anthropic 0.60.0 -> 1.8.0：app/main.py 调用的 Messages.create 不再接受 temperature、top_k 和 top_p；它的说明标为 [diff]。2 条说明可以写入 AGENTS.md；uses this API 和 [diff] 的含义；代码没有用到的另外 7 个包中的 326 个变更。"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="在示例项目上运行 since-cutoff scan --model anthropic:claude-sonnet-4-5。你的代码用到了 2 个在 claude-sonnet-4-5 训练截止日期（2025-07-31）之后发生变化的 API。huggingface-hub 0.34.3 -> 2.0.0：app/main.py 用到的 hf_hub_download 的签名中不再有 force_filename、local_dir_use_symlinks、resume_download 和 proxies；它的说明标为 [diff]，一行 Runtime 提示指出 2.0.0 的源码仍会处理这些参数，所以传入它们的调用可能会带着警告运行。anthropic 0.60.0 -> 1.8.0：app/main.py 调用的 Messages.create 不再接受 temperature、top_k 和 top_p；它的说明标为 [diff]。2 条说明可以写入 AGENTS.md；uses this API 和 [diff] 的含义；代码没有用到的另外 7 个包中的 323 个变更。"></p>
 
 这两个 API 都是“uses this API”；如果某个文件传了 `resume_download=True` 或 `temperature=0.2`，它们就会变成“old form”。`scan -v` 列出用到某个 API 的所有文件（默认显示 3 个），`scan --all` 会逐个包列出其余所有变更。`scan --json` 和 `.since-cutoff/results.json` 的 `used_apis` 中有同样的内容（每个 API、用到它的位置、它的变更和说明，以及说明的标签、适用的版本和检查了什么），`.since-cutoff/report.md` 以“Used by your code”开头。
 
@@ -210,7 +212,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 目前测到的结果，各自注明范围：
 
 - **一个项目、一个模型、since-cutoff 0.1.0**：下面的卡片，Claude Opus 4.6 在示例项目上的结果。卡片后面的表格加上了 Claude Haiku 4.5 在同一项目上的结果。
-- **基准测试**：24 个带隐藏测试的编程任务，每个任务分别由 Claude Code 单独完成、配合 Context7 文档服务、配合 since-cutoff 0.4.1 的说明、两者同时使用，以及强制使用 Context7。报告运行完成后会链接在这里，无论结果如何。
+- **基准测试**：360 次无头模式的 Claude Code 会话（`claude-opus-5-5`），24 个带隐藏测试的 Python 任务，协议在正式运行之前冻结。在 17 个训练截止日期之后发生变更的任务上，配合 since-cutoff 0.4.1 的说明时，成本是单独使用 Claude Code 的 0.80 倍（95% CI 0.70-0.90），轮数是 0.83 倍，耗时是 0.87 倍。不对通过率下结论：单独使用的 Claude Code 已经通过了其中 94.1% 的任务，高于预先注册的 90% 天花板阈值。Context7 的几组没有使用 API key，从 360 次会话中的第 215 次起只收到“Monthly quota exceeded”，这不影响说明与单独使用之间的对比。仅一个模型、一个 Agent：[结果](https://mohammadhijjawi97.github.io/since-cutoff/benchmark.html)（英文），[任务、协议和会话记录](https://github.com/MohammadHijjawi97/since-cutoff-benchmark)。
 - **独立开发者的报告**：会列在这里，每份都注明项目、模型和日期。欢迎把你的报告发到 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)。
 
 <p align="center"><picture>
@@ -333,7 +335,11 @@ gemini extensions install https://github.com/MohammadHijjawi97/since-cutoff
 
 - From 0.29.1 (2025-02-20): the newest release on or before 2025-02-28 (training cutoff of claude-haiku-4-5, from models.dev)
 - To 2.0.0 (2026-09-24): as requested
-- 114 breaking changes, 0 new deprecations (removed or moved 62, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+- 109 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 56, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+
+## Dependencies switched
+
+- huggingface-hub requires `httpx2` instead of `requests`; its Requires-Dist lists `httpx2<3,>=2.0.0`, and `requests` only for its `gradio` extra; 6 places in its public API that named `requests` types name `httpx2` types: `get_session()` returns `httpx2.Client`, `HfHubHTTPError(response=...)` takes `httpx2.Response` and `HfFileSystemStreamFile.response` is `httpx2.Response`; `InferenceTimeoutError`, `HfHubHTTPError` and `TextGenerationError` derive from `httpx2.HTTPError` instead of `requests.HTTPError`
 
 ## Removed or moved
 
@@ -344,10 +350,10 @@ gemini extensions install https://github.com/MohammadHijjawi97/since-cutoff
 
 - `huggingface_hub.InferenceClient.text_generation(stop_sequences=...)`: parameter `stop_sequences` was removed; the old docs said: Deprecated argument. Use `stop` instead; also changed under 1 other path, e.g. `huggingface_hub.AsyncInferenceClient.text_generation`
 ...
-- `huggingface_hub.file_download.hf_hub_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
+- `huggingface_hub.snapshot_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
 ...
 
-Not listed: 74 breaking changes, 0 new deprecations (removed or moved 46, parameters removed 28). Narrow with symbol="..." or raise limit.
+Not listed: 69 breaking changes, 0 new deprecations (removed or moved 41, parameters removed 28). Narrow with symbol="..." or raise limit.
 ```
 
 加上 `symbol="hf_hub_download"` 后，只列出这个函数的 8 个变更（`resume_download=`、`force_filename=`、`local_dir_use_symlinks=` 和 `proxies=`，分别出现在该函数和 `HfApi` 上）。`symbol` 也可以按代码里的调用写法传入：`client.messages.create` 会找到 `Messages.create` 的变更。这个对比读取的是签名：这四个参数在 huggingface-hub 1.0 中已从签名里去掉，回答中还会补充说明 2.0.0 的源码仍会处理它们，所以传入它们的调用可能会带着警告运行。
@@ -463,6 +469,7 @@ since-cutoff 从不单独使用“verified”（已验证）这个词。每条�
 | `[diff]` | 这个变更出现在对两个版本公开 API 的静态对比（griffe）中：模型训练截止日期当天或之前发布的最新版本，以及你的项目锁定的版本。源码只被读取，不被导入。只有 `[diff]` 时，说明不会给出任何替代项：它转述库自己的弃用说明中的话（“there is no replacement for `resume_download`”，没有替代项），或者说明 since-cutoff 在其中没有找到替代项。 | 行为，以及调用是否仍能运行：锁定的版本可能仍会接受一个已移除的参数并发出警告，比如 huggingface-hub 2.0.0 对 `resume_download` 就是这样。当锁定版本的源码仍会处理某个参数时，终端、report.md、MCP 工具和 JSON 会加上一行“Runtime:”；区块中不写，因为建议是一样的。你的模型是否会写错。 |
 | `[diff + library]` | 同 `[diff]`，并且库自己的弃用说明（docstring、docstring 中某个参数的条目、`@deprecated` 消息或 `warnings.warn` 文本，来自旧版本；对于弃用，则来自锁定版本）明确给出了替代项（“Use `stop` instead”），而且这个名称在你锁定的版本中存在。只是作为建议提到某个名称的文字，会在 `[diff]` 下引用，不被当作替代项。 | 替代项的行为是否相同。 |
 | `[diff + move checked]` | 同 `[diff]`，并且就能统计的方面而言，新路径上的对象就是同一个对象：类或模块至少保留了旧对象一半的公开名称，函数保留了它的参数，值保持不变。 | 行为。 |
+| `[diff + metadata]` | 旧版本的 Requires-Dist（其 wheel 的 METADATA）列出了一个锁定的版本不再列出的库，而公开 API 中原先用到该库类型的位置（参数、返回类型、属性、基类、重新导出）改为用到锁定的版本所依赖的另一个库的类型，或它自带的旧库副本的类型，旧库的类型一个也没有留下：openai 3.x、anthropic 1.8、huggingface-hub 2.0 和 mcp 2.2 在原先接受 `httpx` 对象的地方改为接受 `httpx2` 对象。 | 行为：锁定的版本是否仍接受旧库的对象（根据各自的源码，openai 3 会转换其中一部分，anthropic 1.8 会抛出 `TypeError`）。终端、report.md、MCP 工具和 JSON 会加上一行“Installed:”（你的项目，包括其虚拟环境，是否仍有旧库）和一行“Runtime:”，指出锁定版本的源码在哪里仍提到它。 |
 | `[diff; probable rename]` | 位置相同、类型注解相同的参数换了新名字。这是推测，并标明为推测。 | 它是否就是同一个参数。 |
 | `[type-checked]` | 由模型在 `since-cutoff run` 中写出，因为它的示例通过了下面的类型检查而被保留。 | 行为；这条说明的解释在它展示的名称之外是否也正确。 |
 | `[not confirmed]` | 仅在使用 `sync --suggestions` 时出现：锁定版本中与被移除内容相似的名称（这时说明条目的标签写作 `[diff; not confirmed]`）。 | 其中任何一个能替代它。 |

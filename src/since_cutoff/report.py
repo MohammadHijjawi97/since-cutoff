@@ -20,9 +20,7 @@ from rich.text import Text
 
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
-    DEPRECATED as CHANGE_DEPRECATED,
-)
-from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
     DIFF_SCHEMA,
     KIND_CHANGED,
     KIND_PRIORITY,
@@ -33,6 +31,9 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     REMOVED,
     APIChange,
+)
+from since_cutoff.apidiff import (
+    DEPRECATED as CHANGE_DEPRECATED,
 )
 from since_cutoff.baselines import ARM_SIGNATURES, ARM_TEMPLATE, ARM_VERIFIED
 from since_cutoff.engine import (
@@ -60,6 +61,7 @@ from since_cutoff.engine import (
 )
 from since_cutoff.notes import (
     EVIDENCE_LIBRARY,
+    EVIDENCE_METADATA,
     EVIDENCE_MOVE,
     EVIDENCE_RENAME,
     NOTE_DIFF,
@@ -69,6 +71,7 @@ from since_cutoff.notes import (
     Note,
     agents_import_tip,
     block_targets,
+    dependency_detail,
     rename_text,
     runtime_text,
     similar_text,
@@ -77,10 +80,12 @@ from since_cutoff.notes import (
 )
 from since_cutoff.project import LOCKFILES, VENV_DIRS, FileUse
 from since_cutoff.selection import (
+    CATCHES,
     FORM_LABELS,
     NAME_MATCH,
     OLD_FORM,
     USE_CALL,
+    USE_DEPENDENCY,
     USE_KEYWORD,
     USE_MEMBER,
     USES_API,
@@ -774,6 +779,9 @@ def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> N
             line = change_text(c, short=True)
             line += f" (your code uses {uses})" if uses else ""
             console.print(Text("  - " + line.replace("`", "")))
+            if c.kind == DEPENDENCY_SWITCHED:  # the counts and places the note leaves out
+                places_text = f"    Places: {dependency_detail(c)}".replace("`", "")
+                console.print(Text(places_text, style="dim"))
             runtime = runtime_text([c])
             if runtime:
                 console.print(Text(f"    Runtime: {runtime}".replace("`", ""), style="dim"))
@@ -986,6 +994,8 @@ def changes_text(changes: Sequence[APIChange], *, code: bool = False) -> tuple[b
             text = f"{names} {'is' if one else 'are'} now positional-only"
         elif kind == CHANGE_DEPRECATED and params:
             text = f"{names} {'is' if one else 'are'} deprecated"
+        elif kind == DEPENDENCY_SWITCHED:
+            text = group[0].describe() if code else group[0].describe().replace("`", "")
         else:  # a change to the API itself
             c = group[0]
             if kind == REMOVED:
@@ -1023,6 +1033,8 @@ def use_text(uses: Sequence[Use], *, code: bool = False) -> str:
     ``passes temperature to create``, ``calls create``, ``uses hf_hub_download``."""
     q = (lambda s: f"`{s}`") if code else (lambda s: s)
     first = uses[0]
+    if first.kind == USE_DEPENDENCY:
+        return _dependency_use_text(first.names, q)
     if first.kind == USE_KEYWORD:
         params = list(dict.fromkeys(u.names[1] for u in uses if u.kind == USE_KEYWORD))
         text = f"passes {_joined([q(p) for p in params], 'and')} to {q(first.names[0])}"
@@ -1033,6 +1045,58 @@ def use_text(uses: Sequence[Use], *, code: bool = False) -> str:
     else:
         text = f"uses {q(first.names[0])}"
     return text + (" (matched by name)" if first.how == NAME_MATCH else "")
+
+
+def _dependency_use_text(names: Sequence[str], q: Callable[[str], str]) -> str:
+    """``reads httpx.Client, httpx.Timeout; passes http_client to OpenAI; catches
+    httpx.HTTPError``, or ``imports httpx``: what one file does with a distribution its
+    package switched away from (selection.dependency_names)."""
+    caught = [n.removeprefix(CATCHES) for n in names[1:] if n.startswith(CATCHES)]
+    reads = [n for n in names[1:] if "(" not in n and not n.startswith(CATCHES)]
+    passed: dict[str, list[str]] = {}
+    for n in names[1:]:
+        if "(" in n and not n.startswith(CATCHES):
+            callable_name, _, keyword = n.rstrip(")").partition("(")
+            passed.setdefault(callable_name, []).append(keyword)
+    parts = [f"reads {', '.join(q(r) for r in reads)}"] if reads else []
+    parts += [
+        f"passes {_joined([q(k) for k in keywords], 'and')} to {q(name)}"
+        for name, keywords in passed.items()
+    ]
+    if caught:
+        parts.append(f"catches {', '.join(q(c) for c in caught)}")
+    return "; ".join(parts) or f"imports {q(names[0])}"
+
+
+def installed_text(scan: ScanResult, u: UsedAPI) -> str | None:
+    """The "Installed:" line of a switched dependency: whether the project still installs the
+    distribution its package no longer requires (UsedAPI.installed), and what that means for
+    code that imports it; None for another API. Another package may still require it, so
+    removing it is never suggested."""
+    change = u.note.change
+    if change.kind != DEPENDENCY_SWITCHED:
+        return None
+    old, new = change.name, change.switched_to or "?"
+    module = next(iter((change.dependency or {}).get("old_modules") or ()), old)
+    found = u.installed
+    if found is None:
+        if scan.project.transitive:
+            where = scan.project.versions_word
+            return f"{where} has no {old}: code that imports it needs it installed."
+        return (
+            f"your declared dependencies do not list {old} (no lockfile or environment "
+            "lists the others): code that imports it needs it installed."
+        )
+    version, source = found.get("version"), str(found.get("source") or "")
+    if source == "installed":
+        fact = f"your virtual environment also has {old} {version}"
+    elif source == "unpinned" or not version:
+        fact = f"your project also declares {old}"
+    else:
+        fact = f"{source} also pins {old} {version}"
+    if found.get("direct"):
+        fact += " (a direct dependency)"
+    return f"{fact}, so `import {module}` still works; {old} objects are not {new} objects."
 
 
 def places(u: UsedAPI) -> list[tuple[str, list[Use]]]:
@@ -1086,6 +1150,10 @@ def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[
     if len(shown) > LOCATIONS_SHOWN and not verbose:
         out.append(Text(f"    and {len(shown) - LOCATIONS_SHOWN} more (-v lists them)", "dim"))
     out += [Text(t) for t in _wrap(f"Note: {u.note.line}", width, "    ", "          ")]
+    installed = installed_text(scan, u)
+    if installed:
+        text = f"Installed: {installed.replace('`', '')}"
+        out += [Text(t, "dim") for t in _wrap(text, width, "    ", "               ")]
     runtime = runtime_text(u.changes)
     if runtime:
         out += [
@@ -1113,17 +1181,25 @@ def _new_package_text(p: PackageScan) -> str:
 def _form_legend(used: Sequence[UsedAPI]) -> list[str]:
     """What "old form" and "uses this API" mean, for the labels shown."""
     forms = {u.form for u in used}
-    packages = {(u.package.cutoff_version, u.package.locked) for u in used if u.form == OLD_FORM}
+    old_form = [u for u in used if u.form == OLD_FORM]
+    packages = {(u.package.cutoff_version, u.package.locked) for u in old_form}
     out = []
     if OLD_FORM in forms:
+        # What the pinned release did; a switched dependency is another library's types.
+        switched = {u.note.change.kind == DEPENDENCY_SWITCHED for u in old_form}
+        did = {
+            frozenset({False}): "removed, moved or deprecated what it uses",
+            frozenset({True}): "switched to another library for the types it uses",
+        }.get(
+            frozenset(switched),
+            "removed, moved or deprecated what it uses, or switched to another library for the "
+            "types it uses",
+        )
         if len(packages) == 1:
             old, new = next(iter(packages))
-            valid = f"valid for {old}; {new} removed, moved or deprecated what it uses"
+            valid = f"valid for {old}; {new} {did}"
         else:
-            valid = (
-                "valid for the release at the cutoff; the pinned release removed, moved or "
-                "deprecated what it uses"
-            )
+            valid = f"valid for the release at the cutoff; the pinned release {did}"
         out.append(f"old form: {valid} (a static name match; nothing was run)")
     if USES_API in forms:
         out.append(
@@ -1412,6 +1488,11 @@ def _used_report_md(scan: ScanResult) -> list[str]:
         out.append(f"- **{api_head(u, code=True)}** · {FORM_LABELS[u.form]}")
         out.append(f"  - Used in: {', '.join(wheres) or 'a file of your code'}")
         out.append(f"  - Note: {u.note.line}")
+        if u.note.change.kind == DEPENDENCY_SWITCHED:
+            out.append(f"  - Places: {dependency_detail(u.note.change)}")
+        installed = installed_text(scan, u)
+        if installed:
+            out.append(f"  - Installed: {installed}")
         runtime = runtime_text(u.changes)
         if runtime:
             out.append(f"  - Runtime: {runtime}")
@@ -1654,6 +1735,8 @@ def _md_change(
         mark += f" · used in {shown}{more}" if shown else ""
     runtime = runtime_text([change])
     below = f"\n  - Runtime: {runtime}" if runtime else ""
+    if change.kind == DEPENDENCY_SWITCHED:
+        below = f"\n  - Places: {dependency_detail(change)}{below}"
     return f"- {change_text(change)}{f' ({others})' if others else ''}{mark}{below}"
 
 
@@ -1663,6 +1746,12 @@ def change_text(change: APIChange, *, short: bool = False) -> str:
     position and type)``), and the names that merely look similar, labelled as not confirmed.
     """
     text = change.describe(short=short, versioned=False)
+    if change.kind == DEPENDENCY_SWITCHED:
+        sites = int((change.dependency or {}).get("sites") or 0)
+        return (
+            f"{text} ({sites} place{'' if sites == 1 else 's'} in its public API that named "
+            f"`{change.name}` types name `{change.switched_to}` types)"
+        )
     renamed = rename_text(change)
     similar = similar_text(change) if change.kind in (PARAM_REMOVED, REMOVED) else None
     if renamed:
@@ -1750,6 +1839,7 @@ def render_scan_markdown(
 
 
 _EVIDENCE_WORDS = {
+    EVIDENCE_METADATA: "diff + metadata",
     EVIDENCE_LIBRARY: "named in the library's deprecation text",
     EVIDENCE_MOVE: "move checked",
     EVIDENCE_RENAME: "probable rename",
@@ -1780,6 +1870,9 @@ def _used_markdown(scan: ScanResult, env: Mapping[str, str] | None) -> list[str]
                 wheres.append(f"and {len(shown) - LOCATIONS_SHOWN} more")
             p = u.package
             api = f"`{api_display(u)}` ({p.name} {p.cutoff_version} -> {p.locked})"
+            if u.note.change.kind == DEPENDENCY_SWITCHED:
+                was, now = u.note.change.name, u.note.change.switched_to
+                api = f"`{was}` -> `{now}` ({p.name} {p.cutoff_version} -> {p.locked} dependency)"
             _, change = changes_text(u.changes, code=True)
             replacement = ", ".join(
                 f"`{r.text}`"
@@ -1941,7 +2034,7 @@ def _used_api_json(scan: ScanResult, u: UsedAPI) -> dict[str, Any]:
                 "kind": c.kind,
                 "parameter": c.parameter,
                 "form": u.forms.get(c.id, USES_API),
-                "runtime": {"checked": False, "still_handled_at": c.still_handled_at},
+                "runtime": _runtime_json(c),
             }
             for c in u.changes
         ],
@@ -1950,8 +2043,19 @@ def _used_api_json(scan: ScanResult, u: UsedAPI) -> dict[str, Any]:
         "used_in": u.files,
         "locations": locations,
         "locations_total": len(locations),
+        "installed": u.installed,
         "note": _note_json(note),
     }
+
+
+def _runtime_json(change: APIChange) -> dict[str, Any]:
+    """What the source of the pinned version shows at run time (nothing was run): where it
+    still reads a removed parameter, or, for a switched dependency, still names the
+    distribution it no longer requires."""
+    out: dict[str, Any] = {"checked": False, "still_handled_at": change.still_handled_at}
+    if change.kind == DEPENDENCY_SWITCHED:
+        out["still_named_at"] = list((change.dependency or {}).get("still_named_at") or [])
+    return out
 
 
 def _note_json(note: Note) -> dict[str, Any]:
@@ -2034,6 +2138,8 @@ def _source_md(note: Note) -> str:
     if note.source == NOTE_MODEL:
         writer = f" by `{note.writer}`" if note.writer else ""
         parts.append(f"written{writer}; its example type-checks against {c.package} {c.to_version}")
+    elif note.source == NOTE_DIFF and c.kind == DEPENDENCY_SWITCHED:
+        parts.append("stated from both releases' Requires-Dist and the API diff")
     elif note.source == NOTE_DIFF:
         parts.append("stated from the API diff")
     for r in note.replacements:

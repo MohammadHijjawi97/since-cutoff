@@ -1,0 +1,649 @@
+{
+ "schema": 19,
+ "package": "openai",
+ "from_version": "2.44.0",
+ "to_version": "3.19.2",
+ "import_names": [
+  "openai"
+ ],
+ "kinds": [
+  "dependency_switched"
+ ],
+ "changes": [
+  {
+   "package": "openai",
+   "from_version": "2.44.0",
+   "to_version": "3.19.2",
+   "kind": "dependency_switched",
+   "path": "openai",
+   "name": "httpx",
+   "owner": null,
+   "parameter": null,
+   "old_signature": null,
+   "new_signature": null,
+   "old_doc": null,
+   "new_doc": null,
+   "moved_to": null,
+   "deprecation": null,
+   "hint": null,
+   "suggestions": [],
+   "occurrences": 1,
+   "also": [],
+   "old_kind": null,
+   "new_kind": null,
+   "namesake": null,
+   "deprecated_by": null,
+   "call_form": null,
+   "import_paths": [
+    "openai",
+    "openai.APIConnectionError",
+    "openai.APIError",
+    "openai.APIResponseValidationError",
+    "openai.APIStatusError",
+    "openai.APITimeoutError",
+    "openai.AsyncBedrockOpenAI",
+    "openai.AsyncClient",
+    "openai.AsyncOpenAI",
+    "openai.AsyncStream",
+    "openai.BedrockOpenAI",
+    "openai.Client",
+    "openai.DefaultAioHttpClient",
+    "openai.DefaultAsyncHttpxClient",
+    "openai.DefaultHttpxClient",
+    "openai.HttpxBinaryResponseContent",
+    "openai.OAuthError",
+    "openai.OpenAI",
+    "openai.Stream",
+    "openai.Timeout",
+    "openai.Transport",
+    "openai.auth.azure_managed_identity_token_provider",
+    "openai.auth.gcp_id_token_provider",
+    "openai.pagination.PageInfo",
+    "openai.lib.azure.AsyncAzureOpenAI",
+    "openai.lib.azure.AzureOpenAI",
+    "openai.lib.azure.BaseAzureClient",
+    "openai.lib.azure.BaseClient",
+    "openai.lib.bedrock.AsyncBedrockOpenAI",
+    "openai.lib.bedrock.BedrockOpenAI",
+    "openai.providers.bedrock.bedrock",
+    "openai.resources.batches.make_request_options"
+   ],
+   "hint_source": null,
+   "move_evidence": null,
+   "alias_of": null,
+   "still_handled_at": null,
+   "still_handled_text": null,
+   "library_names": [],
+   "hint_file": null,
+   "deprecation_file": null,
+   "renamed": false,
+   "request_extras": null,
+   "dependency": {
+    "old": "httpx",
+    "new": "httpx2",
+    "old_modules": [
+     "httpx"
+    ],
+    "new_modules": [
+     "httpx2"
+    ],
+    "old_requirement": "httpx<1,>=0.23.0",
+    "new_requirement": "httpx2<3,>=2.12.0",
+    "old_in_extras": [],
+    "extras": [],
+    "new_added": true,
+    "vendored": false,
+    "public_names": [],
+    "sites": 655,
+    "sites_same_name": 655,
+    "names": [
+     "AsyncClient",
+     "Auth",
+     "BaseTransport",
+     "Client",
+     "Request",
+     "Response",
+     "Timeout",
+     "URL"
+    ],
+    "parameters": {
+     "timeout": 580,
+     "http_client": 14,
+     "base_url": 12,
+     "websocket_base_url": 12,
+     "response": 6,
+     "request": 3,
+     "url": 1
+    },
+    "parameter_types": {
+     "base_url": [
+      {
+       "new": "httpx2.URL",
+       "direct": true,
+       "count": 12
+      }
+     ],
+     "http_client": [
+      {
+       "new": "httpx2.Client",
+       "direct": true,
+       "count": 8
+      },
+      {
+       "new": "httpx2.AsyncClient",
+       "direct": true,
+       "count": 6
+      }
+     ],
+     "request": [
+      {
+       "new": "httpx2.Request",
+       "direct": true,
+       "count": 3
+      }
+     ],
+     "response": [
+      {
+       "new": "httpx2.Response",
+       "direct": true,
+       "count": 6
+      }
+     ],
+     "timeout": [
+      {
+       "new": "httpx2.Timeout",
+       "direct": true,
+       "count": 580
+      }
+     ],
+     "url": [
+      {
+       "new": "httpx2.URL",
+       "direct": true,
+       "count": 1
+      }
+     ],
+     "websocket_base_url": [
+      {
+       "new": "httpx2.URL",
+       "direct": true,
+       "count": 12
+      }
+     ]
+    },
+    "examples": [
+     {
+      "path": "openai.OpenAI.__init__",
+      "display": "OpenAI",
+      "parameter": "http_client",
+      "context": "param",
+      "old": "httpx.Client",
+      "new": "httpx2.Client",
+      "direct": true,
+      "exclusive": true,
+      "import_paths": [
+       "openai.Client",
+       "openai.OpenAI"
+      ]
+     },
+     {
+      "path": "openai.OpenAI.__init__",
+      "display": "OpenAI",
+      "parameter": "timeout",
+      "context": "param",
+      "old": "httpx.Timeout",
+      "new": "httpx2.Timeout",
+      "direct": true,
+      "exclusive": false,
+      "import_paths": [
+       "openai.Client",
+       "openai.OpenAI"
+      ]
+     },
+     {
+      "path": "openai.OpenAI.__init__",
+      "display": "OpenAI",
+      "parameter": "base_url",
+      "context": "param",
+      "old": "httpx.URL",
+      "new": "httpx2.URL",
+      "direct": true,
+      "exclusive": false,
+      "import_paths": [
+       "openai.Client",
+       "openai.OpenAI"
+      ]
+     },
+     {
+      "path": "openai.OpenAI.__init__",
+      "display": "OpenAI",
+      "parameter": "websocket_base_url",
+      "context": "param",
+      "old": "httpx.URL",
+      "new": "httpx2.URL",
+      "direct": true,
+      "exclusive": false,
+      "import_paths": [
+       "openai.Client",
+       "openai.OpenAI"
+      ]
+     },
+     {
+      "path": "openai.Stream.__init__",
+      "display": "Stream",
+      "parameter": "response",
+      "context": "param",
+      "old": "httpx.Response",
+      "new": "httpx2.Response",
+      "direct": true,
+      "exclusive": true,
+      "import_paths": [
+       "openai.Stream"
+      ]
+     },
+     {
+      "path": "openai.AsyncOpenAI.__init__",
+      "display": "AsyncOpenAI",
+      "parameter": "http_client",
+      "context": "param",
+      "old": "httpx.AsyncClient",
+      "new": "httpx2.AsyncClient",
+      "direct": true,
+      "exclusive": true,
+      "import_paths": [
+       "openai.AsyncClient",
+       "openai.AsyncOpenAI"
+      ]
+     },
+     {
+      "path": "openai.APIError.__init__",
+      "display": "APIError",
+      "parameter": "request",
+      "context": "param",
+      "old": "httpx.Request",
+      "new": "httpx2.Request",
+      "direct": true,
+      "exclusive": true,
+      "import_paths": [
+       "openai.APIError"
+      ]
+     },
+     {
+      "path": "openai.timeout",
+      "display": "openai.timeout",
+      "parameter": null,
+      "context": "attr",
+      "old": "httpx.Timeout",
+      "new": "httpx2.Timeout",
+      "direct": true
+     },
+     {
+      "path": "openai.base_url",
+      "display": "openai.base_url",
+      "parameter": null,
+      "context": "attr",
+      "old": "httpx.URL",
+      "new": "httpx2.URL",
+      "direct": true
+     },
+     {
+      "path": "openai.http_client",
+      "display": "openai.http_client",
+      "parameter": null,
+      "context": "attr",
+      "old": "httpx.Client",
+      "new": "httpx2.Client",
+      "direct": true
+     },
+     {
+      "path": "openai.pagination.PageInfo.__init__",
+      "display": "PageInfo",
+      "parameter": "url",
+      "context": "param",
+      "old": "httpx.URL",
+      "new": "httpx2.URL",
+      "direct": true,
+      "exclusive": false,
+      "import_paths": [
+       "openai.pagination.PageInfo"
+      ]
+     },
+     {
+      "path": "openai.OpenAI.websocket_base_url",
+      "display": "OpenAI.websocket_base_url",
+      "parameter": null,
+      "context": "attr",
+      "old": "httpx.URL",
+      "new": "httpx2.URL",
+      "direct": true
+     }
+    ],
+    "bases": [],
+    "bases_count": 0,
+    "reexports": [
+     {
+      "path": "openai.DefaultHttpxClient",
+      "display": "openai.DefaultHttpxClient",
+      "parameter": null,
+      "context": "re-export",
+      "old": "httpx.Client",
+      "new": "httpx2.Client",
+      "direct": true
+     },
+     {
+      "path": "openai.Timeout",
+      "display": "openai.Timeout",
+      "parameter": null,
+      "context": "re-export",
+      "old": "httpx.Timeout",
+      "new": "httpx2.Timeout",
+      "direct": true
+     },
+     {
+      "path": "openai.Transport",
+      "display": "openai.Transport",
+      "parameter": null,
+      "context": "re-export",
+      "old": "httpx.BaseTransport",
+      "new": "httpx2.BaseTransport",
+      "direct": true
+     },
+     {
+      "path": "openai.DefaultAioHttpClient",
+      "display": "openai.DefaultAioHttpClient",
+      "parameter": null,
+      "context": "re-export",
+      "old": "httpx.AsyncClient",
+      "new": "httpx2.AsyncClient",
+      "direct": true
+     },
+     {
+      "path": "openai.DefaultAsyncHttpxClient",
+      "display": "openai.DefaultAsyncHttpxClient",
+      "parameter": null,
+      "context": "re-export",
+      "old": "httpx.AsyncClient",
+      "new": "httpx2.AsyncClient",
+      "direct": true
+     }
+    ],
+    "calls": [
+     [
+      "openai.APIConnectionError",
+      "request",
+      null
+     ],
+     [
+      "openai.APIError",
+      "request",
+      1
+     ],
+     [
+      "openai.APIResponseValidationError",
+      "response",
+      0
+     ],
+     [
+      "openai.APIStatusError",
+      "response",
+      null
+     ],
+     [
+      "openai.APITimeoutError",
+      "request",
+      0
+     ],
+     [
+      "openai.AsyncBedrockOpenAI",
+      "base_url",
+      null
+     ],
+     [
+      "openai.AsyncBedrockOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.AsyncBedrockOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.AsyncBedrockOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.AsyncClient",
+      "base_url",
+      null
+     ],
+     [
+      "openai.AsyncClient",
+      "http_client",
+      null
+     ],
+     [
+      "openai.AsyncClient",
+      "timeout",
+      null
+     ],
+     [
+      "openai.AsyncClient",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.AsyncOpenAI",
+      "base_url",
+      null
+     ],
+     [
+      "openai.AsyncOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.AsyncOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.AsyncOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.AsyncStream",
+      "response",
+      null
+     ],
+     [
+      "openai.BedrockOpenAI",
+      "base_url",
+      null
+     ],
+     [
+      "openai.BedrockOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.BedrockOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.BedrockOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.Client",
+      "base_url",
+      null
+     ],
+     [
+      "openai.Client",
+      "http_client",
+      null
+     ],
+     [
+      "openai.Client",
+      "timeout",
+      null
+     ],
+     [
+      "openai.Client",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.HttpxBinaryResponseContent",
+      "response",
+      0
+     ],
+     [
+      "openai.OAuthError",
+      "response",
+      null
+     ],
+     [
+      "openai.OpenAI",
+      "base_url",
+      null
+     ],
+     [
+      "openai.OpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.OpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.OpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.Stream",
+      "response",
+      null
+     ],
+     [
+      "openai.auth.azure_managed_identity_token_provider",
+      "http_client",
+      null
+     ],
+     [
+      "openai.auth.gcp_id_token_provider",
+      "http_client",
+      null
+     ],
+     [
+      "openai.pagination.PageInfo",
+      "url",
+      null
+     ],
+     [
+      "openai.lib.azure.AsyncAzureOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.lib.azure.AsyncAzureOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.lib.azure.AsyncAzureOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.lib.azure.AzureOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.lib.azure.AzureOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.lib.azure.AzureOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.lib.azure.BaseClient",
+      "base_url",
+      null
+     ],
+     [
+      "openai.lib.azure.BaseClient",
+      "timeout",
+      null
+     ],
+     [
+      "openai.lib.bedrock.AsyncBedrockOpenAI",
+      "base_url",
+      null
+     ],
+     [
+      "openai.lib.bedrock.AsyncBedrockOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.lib.bedrock.AsyncBedrockOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.lib.bedrock.AsyncBedrockOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.lib.bedrock.BedrockOpenAI",
+      "base_url",
+      null
+     ],
+     [
+      "openai.lib.bedrock.BedrockOpenAI",
+      "http_client",
+      null
+     ],
+     [
+      "openai.lib.bedrock.BedrockOpenAI",
+      "timeout",
+      null
+     ],
+     [
+      "openai.lib.bedrock.BedrockOpenAI",
+      "websocket_base_url",
+      null
+     ],
+     [
+      "openai.providers.bedrock.bedrock",
+      "base_url",
+      null
+     ],
+     [
+      "openai.resources.batches.make_request_options",
+      "timeout",
+      null
+     ]
+    ],
+    "still_named_at": [
+     "openai/_httpx2.py:27"
+    ],
+    "still_named_count": 1
+   }
+  }
+ ]
+}

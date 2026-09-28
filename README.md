@@ -66,6 +66,8 @@ measures; it calls your model and is optional.
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 [![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
+<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="Watch the 2½-minute explainer (video with voice-over)"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ Watch the 2½-minute explainer (video with voice-over)</a></p>
+
 **English** | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
 
 ## The problem
@@ -143,7 +145,7 @@ provider and uses your API credits or Claude Code usage.
 
 What `scan` prints for the sample project:
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 on the sample project. Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, used in app/main.py, no longer has force_filename, local_dir_use_symlinks, resume_download and proxies in its signature; its note is tagged [diff], and a Runtime line says that 2.0.0's source still handles them, so calls passing them may run with a warning. anthropic 0.60.0 -> 1.8.0: Messages.create, called in app/main.py, no longer accepts temperature, top_k and top_p; its note is tagged [diff]. 2 notes ready for AGENTS.md; what uses this API and [diff] mean; 326 more changes in 7 packages that the code does not use."></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 on the sample project. Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, used in app/main.py, no longer has force_filename, local_dir_use_symlinks, resume_download and proxies in its signature; its note is tagged [diff], and a Runtime line says that 2.0.0's source still handles them, so calls passing them may run with a warning. anthropic 0.60.0 -> 1.8.0: Messages.create, called in app/main.py, no longer accepts temperature, top_k and top_p; its note is tagged [diff]. 2 notes ready for AGENTS.md; what uses this API and [diff] mean; 323 more changes in 7 packages that the code does not use."></p>
 
 Both APIs are "uses this API"; a file that passed `resume_download=True` or `temperature=0.2`
 would make them "old form". `scan -v` lists every file that uses an API (3 are shown), and
@@ -333,9 +335,15 @@ What has been measured so far, each with its scope:
 
 - **One project, one model, since-cutoff 0.1.0**: the card below, Claude Opus 4.6 on the sample
   project. The table after it adds Claude Haiku 4.5 on the same project.
-- **Benchmark**: 24 coding tasks with hidden tests, each run by Claude Code alone, with the
-  Context7 docs server, with since-cutoff 0.4.1's notes, with both, and with Context7 use
-  required. The report will be linked here once it has run, whatever the outcome.
+- **Benchmark**: 360 headless Claude Code sessions (`claude-opus-5-5`) on 24 Python tasks with
+  hidden tests, protocol frozen before the main run. On the 17 post-cutoff tasks, sessions with
+  since-cutoff 0.4.1's notes cost 0.80 times as much as Claude Code alone (95% CI 0.70-0.90),
+  with 0.83 times the turns and 0.87 times the wall time. No pass-rate claim: Claude Code alone
+  already passed 94.1% of them, above the pre-registered 90% ceiling. The Context7 arms ran
+  without an API key and got only "Monthly quota exceeded" from the 215th of 360 sessions on,
+  which does not touch the notes-vs-alone comparison. One model, one agent:
+  [results](https://mohammadhijjawi97.github.io/since-cutoff/benchmark.html),
+  [tasks, protocol and transcripts](https://github.com/MohammadHijjawi97/since-cutoff-benchmark).
 - **Reports from independent developers** will be listed here, each with its project, model and
   date. Post yours in [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6).
 
@@ -505,7 +513,11 @@ What `api_changes("huggingface-hub", model="claude-haiku-4-5", to_version="2.0.0
 
 - From 0.29.1 (2025-02-20): the newest release on or before 2025-02-28 (training cutoff of claude-haiku-4-5, from models.dev)
 - To 2.0.0 (2026-09-24): as requested
-- 114 breaking changes, 0 new deprecations (removed or moved 62, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+- 109 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 56, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+
+## Dependencies switched
+
+- huggingface-hub requires `httpx2` instead of `requests`; its Requires-Dist lists `httpx2<3,>=2.0.0`, and `requests` only for its `gradio` extra; 6 places in its public API that named `requests` types name `httpx2` types: `get_session()` returns `httpx2.Client`, `HfHubHTTPError(response=...)` takes `httpx2.Response` and `HfFileSystemStreamFile.response` is `httpx2.Response`; `InferenceTimeoutError`, `HfHubHTTPError` and `TextGenerationError` derive from `httpx2.HTTPError` instead of `requests.HTTPError`
 
 ## Removed or moved
 
@@ -516,10 +528,10 @@ What `api_changes("huggingface-hub", model="claude-haiku-4-5", to_version="2.0.0
 
 - `huggingface_hub.InferenceClient.text_generation(stop_sequences=...)`: parameter `stop_sequences` was removed; the old docs said: Deprecated argument. Use `stop` instead; also changed under 1 other path, e.g. `huggingface_hub.AsyncInferenceClient.text_generation`
 ...
-- `huggingface_hub.file_download.hf_hub_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
+- `huggingface_hub.snapshot_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
 ...
 
-Not listed: 74 breaking changes, 0 new deprecations (removed or moved 46, parameters removed 28). Narrow with symbol="..." or raise limit.
+Not listed: 69 breaking changes, 0 new deprecations (removed or moved 41, parameters removed 28). Narrow with symbol="..." or raise limit.
 ```
 
 With `symbol="hf_hub_download"` it lists only the 8 changes to that function (`resume_download=`,
@@ -679,6 +691,7 @@ was checked, and nothing else is claimed:
 | `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release on or before the model's training cutoff, and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download`. The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
+| `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
 | `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name. A guess, labelled as one. | That it is the same parameter. |
 | `[type-checked]` | Written by a model during `since-cutoff run` and kept because its example passed the type check below. | Behaviour; that the bullet's explanation is true beyond the names it shows. |
 | `[not confirmed]` | Only with `sync --suggestions`: names in the pinned version that look similar to what was removed (the bullet's tag then reads `[diff; not confirmed]`). | That any of them replaces it. |

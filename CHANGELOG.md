@@ -4,6 +4,81 @@
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
   agent to run to remove the notes (found in a catalogue's review of the skill).
+- The skill's frontmatter keeps to the six fields of the Agent Skills spec, which claude.ai
+  uploads and the Skills API enforce ("Unexpected key(s) in SKILL.md frontmatter:
+  argument-hint"): `argument-hint` is gone (Claude Code still hands the skill the arguments of
+  `/since-cutoff:since-cutoff scan`, now without the `$ARGUMENTS` placeholder, a Claude Code
+  feature the spec does not have), the author and the version are strings under `metadata`
+  (`scripts/check_versions.py` checks the version with the other release fields), and
+  `compatibility` has no backticks, which skill catalogues read as shell substitution. The body
+  has the sections those catalogues look for: Overview, Prerequisites, Instructions (the steps
+  as before, plus `sync --scope imported` when `scan` suggests it), Output (what is written
+  where, and what each tag says was checked), Error Handling (with the exit codes of `sync` and
+  `status`), three Examples and Resources. `skills-ref validate` passes; the tons-of-skills
+  marketplace grader gives it 92/100 (A, from 73, C), its remaining errors being the top-level
+  `version`, `author` and `tags` that the spec does not allow.
+- A dependency the pinned version switched is now a change of its own (DIFF_SCHEMA 19,
+  `dependency_switched`, tagged `[diff + metadata]`): openai 3.x, anthropic 1.8, huggingface-hub
+  2.0 and mcp 2.2 require `httpx2` and no longer `httpx`, and their public signatures take
+  `httpx2` objects; code that hands them `httpx` clients or timeouts, or catches
+  `httpx.HTTPError` around huggingface-hub's calls, is flagged with where it does so. A diff of
+  the package's own API showed `httpx` only inside other changes' signatures. The diff reads both
+  releases' Requires-Dist (the wheels' METADATA, already stored with the sources) and, only when
+  the pinned release dropped a requirement, where the public API names that library's types: a
+  switch needs places (parameters, returns, attributes, base classes, re-exports) that named the
+  dropped library's types and name the types of another library the release requires, or of a
+  copy of the dropped one it ships, the same type names at half of them or more, and no trace of
+  the dropped library left in the pinned public API. Measured with the first version of the
+  rule (base requirements only) on 283 real release pairs: 16 switches (`httpx` -> `httpx2` in
+  openai, anthropic, huggingface-hub and mcp; `requests` -> `httpx2` or `httpx` in
+  huggingface-hub, litellm and gradio) and none of the rewrites a looser rule counts (crewai's
+  langchain -> pydantic).
+- The rule also covers a requirement dropped from an extra both releases define ("fastmcp-slim
+  4.0.10's `client`, `mcp` and `server` extras require `httpx2` instead of `httpx`"), a copy of
+  the dropped library the package ships ("typer 0.27.2 no longer requires `click` and ships
+  `typer._click` instead", with typer's own names to use: `typer.BadParameter`, `typer.Context`),
+  and a library the older release already required ("gradio 4.28.3 no longer requires
+  `requests`; its API names `httpx` types instead"). A private module named after the dropped
+  library that imports it is a shim, not a copy: langsmith 0.7.1 -> 0.14.1 stays no switch. A
+  switched parameter is counted by the type it names now (openai 3's `http_client`: 8
+  signatures take `httpx2.Client`, 6 `httpx2.AsyncClient`), a constructor is recorded under its
+  class's path and a classmethod or staticmethod under its class's
+  (`fastmcp.FastMCP.from_openapi`), each switched parameter with its position in the call.
+- The note is one or two sentences of at most 300 characters: "openai 3.19.2 requires `httpx2`
+  instead of `httpx`: `OpenAI(http_client=...)` takes `httpx2.Client` (`httpx2.AsyncClient` for
+  `AsyncOpenAI`), `OpenAI(timeout=...)` takes `httpx2.Timeout` and `OpenAI(base_url=...)` takes
+  `httpx2.URL`. Use `httpx2` there, not `httpx`." The Requires-Dist entries, how many places
+  switched and more of them (with how many other signatures name the same type) are in a
+  "Places:" line of `scan --all` and report.md, and in the MCP tools.
+- Code uses a switched dependency in the old form only where a file hands the package a value
+  that reads the old library: by keyword or by position, at a switched parameter of a switched
+  constructor, function, or classmethod or staticmethod called on its class
+  (`OpenAI(http_client=httpx.Client())`, or `OpenAI(http_client=c)` after `c = httpx.Client()`
+  or with `c: httpx.Client`; `hf_raise_for_status(httpx.get(url))`, the way huggingface-hub's
+  own code calls it; `FastMCP.from_openapi(spec, client=httpx.AsyncClient())`), or by catching
+  a switched type of it around a call into the package. Reading its names or importing it next
+  to the package is "uses this API": `OpenAI(timeout=30.0)` next to an unrelated `httpx.get` or
+  `httpx.Client()` hands nothing over, and an old object passed to an instance method is not
+  counted. The switch comes first in `sync --scope imported`, `scan --all` and the MCP tools (a
+  new first section, "Dependencies switched", in `api_changes`, whose `symbol` matches the
+  libraries, the switched type names, parameters and callables), and `run` does not probe it
+  yet. The terminal, report.md, the MCP
+  tools and the JSON add an "Installed:" line (whether the project's lockfile or pins, or else
+  its virtual environment, transitive distributions included, still have the old library,
+  `used_apis[].installed`; 12 of the 36 pins of the AI stack example require `httpx`) and a
+  "Runtime:" line pointing to where the pinned source still names it (`openai/_httpx2.py:27`;
+  a name a module only exports, in `__all__`, a module-level `__getattr__` or `__dir__`, is not
+  one, nor is a package name in a list of requirements or a documentation example, such as
+  fastmcp 4's `Field(examples=[["fastmcp>=2.0,<3", "httpx", "pandas>=2.0"]])`): what a library
+  does with the old objects differs (openai 3 converts some, anthropic 1.8 raises `TypeError`,
+  according to their sources), so the note does not say.
+- The header of the notes block explains `[metadata]` when a note has it: "the two releases'
+  declared requirements (Requires-Dist in their wheels' METADATA)". A notes block puts a
+  package's switched dependency first, and the "old form" legend says what the pinned release
+  did: "switched to another library for the types it uses".
+- README: the Results list links the benchmark (360 Claude Code sessions, since-cutoff 0.4.1's
+  notes against Claude Code alone on the 17 post-cutoff tasks: cost ratio 0.80, 95% CI
+  0.70-0.90) to its write-up and repository, with the Context7 arms' quota caveat.
 
 ## 0.4.1 - 2026-09-28
 

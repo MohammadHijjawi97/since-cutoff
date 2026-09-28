@@ -69,6 +69,8 @@ llama a tu modelo y es opcional.
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 [![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
+<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="Mira el vídeo explicativo de 2 minutos y medio (con voz en off)"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ Mira el vídeo explicativo de 2 minutos y medio (con voz en off)</a></p>
+
 [English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | **Español** | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
 
 ## El problema
@@ -151,7 +153,7 @@ prompts al proveedor del modelo y consume tus créditos de API o tu cuota de uso
 
 Lo que muestra `scan` para el proyecto de ejemplo:
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 en el proyecto de ejemplo. Tu código usa 2 API que cambiaron después de la fecha de corte de entrenamiento de claude-sonnet-4-5 (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, usada en app/main.py, ya no tiene force_filename, local_dir_use_symlinks, resume_download ni proxies en su firma; su nota lleva la etiqueta [diff], y una línea Runtime dice que el código fuente de la 2.0.0 todavía los gestiona, así que las llamadas que los pasan pueden ejecutarse con un aviso. anthropic 0.60.0 -> 1.8.0: Messages.create, llamada en app/main.py, ya no acepta temperature, top_k ni top_p; su nota lleva la etiqueta [diff]. 2 notas listas para AGENTS.md; qué significan uses this API y [diff]; otros 326 cambios en 7 paquetes que el código no usa."></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 en el proyecto de ejemplo. Tu código usa 2 API que cambiaron después de la fecha de corte de entrenamiento de claude-sonnet-4-5 (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, usada en app/main.py, ya no tiene force_filename, local_dir_use_symlinks, resume_download ni proxies en su firma; su nota lleva la etiqueta [diff], y una línea Runtime dice que el código fuente de la 2.0.0 todavía los gestiona, así que las llamadas que los pasan pueden ejecutarse con un aviso. anthropic 0.60.0 -> 1.8.0: Messages.create, llamada en app/main.py, ya no acepta temperature, top_k ni top_p; su nota lleva la etiqueta [diff]. 2 notas listas para AGENTS.md; qué significan uses this API y [diff]; otros 323 cambios en 7 paquetes que el código no usa."></p>
 
 Las dos API aparecen como «uses this API»; un archivo que pasara `resume_download=True` o
 `temperature=0.2` las convertiría en «old form». `scan -v` lista todos los archivos que usan una
@@ -354,10 +356,16 @@ Lo que se ha medido hasta ahora, cada cosa con su alcance:
 
 - **Un proyecto, un modelo, since-cutoff 0.1.0**: la tarjeta de abajo, Claude Opus 4.6 en el
   proyecto de ejemplo. La tabla que le sigue añade Claude Haiku 4.5 en el mismo proyecto.
-- **Benchmark**: 24 tareas de programación con tests ocultos, cada una ejecutada por Claude Code
-  solo, con el servidor de documentación Context7, con las notas de since-cutoff 0.4.1, con ambos
-  y con el uso de Context7 obligatorio. El informe se enlazará aquí cuando se haya ejecutado, sea
-  cual sea el resultado.
+- **Benchmark**: 360 sesiones de Claude Code en modo headless (`claude-opus-5-5`) con 24 tareas
+  de Python con tests ocultos, con el protocolo congelado antes de la ejecución principal. En las
+  17 tareas posteriores al corte, las sesiones con las notas de since-cutoff 0.4.1 costaron 0,80
+  veces lo que Claude Code solo (IC del 95 %: 0,70-0,90), con 0,83 veces los turnos y 0,87 veces
+  el tiempo. Ninguna conclusión sobre la tasa de aciertos: Claude Code solo ya superó el 94,1 % de
+  esas tareas, por encima del techo prerregistrado del 90 %. Las variantes con Context7 se
+  ejecutaron sin clave de API y desde la sesión 215 de 360 solo recibieron «Monthly quota
+  exceeded», lo que no afecta a la comparación entre las notas y Claude Code solo. Un modelo, un
+  agente: [resultados](https://mohammadhijjawi97.github.io/since-cutoff/benchmark.html) (en inglés),
+  [tareas, protocolo y transcripciones](https://github.com/MohammadHijjawi97/since-cutoff-benchmark).
 - **Informes de desarrolladores independientes**: se listarán aquí, cada uno con su proyecto, su
   modelo y su fecha. Publica el tuyo en
   [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)
@@ -542,7 +550,11 @@ Lo que devuelve `api_changes("huggingface-hub", model="claude-haiku-4-5", to_ver
 
 - From 0.29.1 (2025-02-20): the newest release on or before 2025-02-28 (training cutoff of claude-haiku-4-5, from models.dev)
 - To 2.0.0 (2026-09-24): as requested
-- 114 breaking changes, 0 new deprecations (removed or moved 62, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+- 109 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 56, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+
+## Dependencies switched
+
+- huggingface-hub requires `httpx2` instead of `requests`; its Requires-Dist lists `httpx2<3,>=2.0.0`, and `requests` only for its `gradio` extra; 6 places in its public API that named `requests` types name `httpx2` types: `get_session()` returns `httpx2.Client`, `HfHubHTTPError(response=...)` takes `httpx2.Response` and `HfFileSystemStreamFile.response` is `httpx2.Response`; `InferenceTimeoutError`, `HfHubHTTPError` and `TextGenerationError` derive from `httpx2.HTTPError` instead of `requests.HTTPError`
 
 ## Removed or moved
 
@@ -553,10 +565,10 @@ Lo que devuelve `api_changes("huggingface-hub", model="claude-haiku-4-5", to_ver
 
 - `huggingface_hub.InferenceClient.text_generation(stop_sequences=...)`: parameter `stop_sequences` was removed; the old docs said: Deprecated argument. Use `stop` instead; also changed under 1 other path, e.g. `huggingface_hub.AsyncInferenceClient.text_generation`
 ...
-- `huggingface_hub.file_download.hf_hub_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
+- `huggingface_hub.snapshot_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
 ...
 
-Not listed: 74 breaking changes, 0 new deprecations (removed or moved 46, parameters removed 28). Narrow with symbol="..." or raise limit.
+Not listed: 69 breaking changes, 0 new deprecations (removed or moved 41, parameters removed 28). Narrow with symbol="..." or raise limit.
 ```
 
 Con `symbol="hf_hub_download"` solo lista los 8 cambios de esa función (`resume_download=`,
@@ -726,6 +738,7 @@ dice qué se comprobó, y no se afirma nada más:
 | `[diff]` | El cambio aparece en una comparación estática (griffe) de las API públicas de dos versiones: la más reciente publicada en la fecha de corte de entrenamiento del modelo o antes, y la versión que fija tu proyecto. El código fuente se lee, no se importa. Con `[diff]` solo, no se nombra ningún sustituto: la nota dice lo que dice el propio texto de obsolescencia de la biblioteca («there is no replacement for `resume_download`», no hay sustituto) o que since-cutoff no encontró ninguno en él. | El comportamiento, y si una llamada sigue funcionando: la versión fijada puede seguir aceptando un parámetro eliminado con un aviso, como hace huggingface-hub 2.0.0 con `resume_download`. La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Runtime:» cuando el código fuente fijado todavía gestiona uno; el bloque no, porque el consejo es el mismo. Si tu modelo se equivoca con él. |
 | `[diff + library]` | Como `[diff]`, y el propio texto de obsolescencia de la biblioteca (un docstring, la entrada de un parámetro en el docstring, un mensaje de `@deprecated` o un texto de `warnings.warn`, en la versión anterior o, para una obsolescencia, en la fijada) indica el sustituto («Use `stop` instead»), y ese nombre existe en tu versión fijada. Un texto que solo menciona un nombre como consejo se cita bajo `[diff]`; no se toma como sustituto. | Que el sustituto se comporte igual. |
 | `[diff + move checked]` | Como `[diff]`, y el objeto en la nueva ruta es el mismo objeto hasta donde se puede contar: una clase o un módulo conserva al menos la mitad de los nombres públicos del anterior, una función conserva sus parámetros, un valor es el mismo. | El comportamiento. |
+| `[diff + metadata]` | El Requires-Dist de la versión anterior (el METADATA de su wheel) incluye una biblioteca que la versión fijada ya no incluye, y los lugares de la API pública que nombraban tipos de esa biblioteca (parámetros, tipos de retorno, atributos, clases base, reexportaciones) nombran tipos de otra biblioteca que la versión fijada requiere, o de una copia de la anterior que incluye, sin que quede ninguno de la anterior: openai 3.x, anthropic 1.8, huggingface-hub 2.0 y mcp 2.2 aceptan objetos de `httpx2` donde aceptaban objetos de `httpx`. | El comportamiento: si la versión fijada todavía acepta objetos de la biblioteca anterior (openai 3 convierte algunos, anthropic 1.8 lanza `TypeError`, según su código fuente). La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Installed:» (si tu proyecto, incluido su entorno virtual, todavía tiene la biblioteca anterior) y una línea «Runtime:» que señala dónde el código fuente fijado todavía la nombra. |
 | `[diff; probable rename]` | Un parámetro en la misma posición y con la misma anotación tiene un nombre nuevo. Una suposición, señalada como tal. | Que sea el mismo parámetro. |
 | `[type-checked]` | La escribió un modelo durante `since-cutoff run` y se conservó porque su ejemplo pasó la comprobación de tipos descrita abajo. | El comportamiento; que la explicación de la viñeta sea cierta más allá de los nombres que muestra. |
 | `[not confirmed]` | Solo con `sync --suggestions`: nombres de la versión fijada que se parecen a lo que se eliminó (la etiqueta de la viñeta es entonces `[diff; not confirmed]`). | Que alguno de ellos lo sustituya. |

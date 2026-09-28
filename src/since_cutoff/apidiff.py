@@ -61,7 +61,23 @@ log = logging.getLogger(__name__)
 # 17: request_extras (a removed parameter's callable still takes ``extra_body`` /
 # ``extra_query``, read from all its parameters: the recorded signature is cut at 400
 # characters, and anthropic 1.8's ``Messages.create`` is longer than that).
-DIFF_SCHEMA = 17
+# 18: DEPENDENCY_SWITCHED and ``dependency``: a distribution the older release required and the
+# pinned one no longer does, where the public API that named its types names another required
+# distribution's types instead (openai 3, anthropic 1.8, huggingface-hub 2 and mcp 2.2 require
+# ``httpx2`` instead of ``httpx``): diff_sources reads both releases' Requires-Dist.
+# 19 (18 was never released): a switch inside the extras both releases define (fastmcp-slim 4's
+# ``client``, ``mcp`` and ``server`` extras list ``httpx2`` where 3.4 listed ``httpx``), to a
+# copy the package ships (typer 0.27's ``typer._click`` for ``click``; not a shim that imports
+# it, like langsmith 0.14's ``_openapi_client._httpx``), and to a distribution the
+# older release already required (gradio 4: ``httpx``); a switched parameter counted by the type
+# it names now (``parameter_types``: 8 ``http_client`` of openai 3 take ``httpx2.Client``, 6
+# ``httpx2.AsyncClient``); a constructor's calls under its class's path, and with each
+# switched parameter's position (``hf_raise_for_status(response)`` is called positionally),
+# classmethods and staticmethods called on their class included (fastmcp's
+# ``FastMCP.from_openapi``); and "still names" leaves out the names a module only exports
+# (``__all__``, ``__getattr__``, ``__dir__``) and a package name in a list of requirements or a
+# documentation example (``examples=``, ``description=``).
+DIFF_SCHEMA = 19
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
@@ -78,6 +94,9 @@ PARAM_KEYWORD_ONLY = "param_keyword_only"
 PARAM_POSITIONAL_ONLY = "param_positional_only"
 KIND_CHANGED = "kind_changed"
 DEPRECATED = "deprecated"
+# The package requires another distribution instead of one its older release required, and its
+# public API names the new one's types where it named the old one's (``_dependency_switches``).
+DEPENDENCY_SWITCHED = "dependency_switched"
 
 # Where APIChange.hint comes from (APIChange.hint_source).
 HINT_DECORATOR = "decorator"  # the old version's deprecation decorator
@@ -86,6 +105,7 @@ HINT_PARAM_DOC = "param_doc"  # the removed parameter's own entry in the old doc
 HINT_WARNING = "warnings.warn"  # the old code's warnings.warn text when the parameter is passed
 
 KIND_PRIORITY = {
+    DEPENDENCY_SWITCHED: 0,
     REMOVED: 0,
     MOVED: 0,
     PARAM_REMOVED: 1,
@@ -238,10 +258,47 @@ class APIChange:
     # has no parameter for go there). [] when neither; None in a diff made before
     # DIFF_SCHEMA 17. Whether the API itself still takes the removed field is not known.
     request_extras: list[str] | None = None
+    # DEPENDENCY_SWITCHED (DIFF_SCHEMA 18; ``name`` is the distribution no longer required,
+    # ``path`` the package's import name): the evidence, from both releases' Requires-Dist
+    # and public APIs. ``old`` / ``new`` (canonical distribution names), ``old_modules`` /
+    # ``new_modules`` (the module names looked for), ``old_requirement`` / ``new_requirement``
+    # (as Requires-Dist lists them, without markers; ``new_requirement`` None for a copy the
+    # package ships), ``old_in_extras`` (the pinned release's extras that still list ``old``),
+    # ``extras`` (DIFF_SCHEMA 19: the extras whose requirements switched, both releases
+    # defining them; [] for the base requirements), ``new_added`` (``new`` is not among the
+    # older release's requirements it is compared with: gradio 3.45 already required
+    # ``httpx``), ``vendored`` (``new`` is a module the package ships, ``typer._click``) with
+    # ``public_names`` (the package's top-level names that are switched names:
+    # ``typer.Context``), ``sites`` (places of the public API, a parameter, a return, an
+    # attribute, a base class or its type argument, or a re-export, that named ``old`` types
+    # and name ``new`` types), ``sites_same_name`` (of them, those where a type kept its name:
+    # ``httpx.Client`` -> ``httpx2.Client``), ``names`` (those names), ``parameters``
+    # (switched parameters and how many signatures each is in) and ``parameter_types`` (by
+    # parameter, ``{"new", "direct", "count"}`` for each type those signatures name now,
+    # ``direct`` when it is the annotation or a member of its union), ``examples``, ``bases``
+    # and ``reexports`` (a few of the sites; ``bases_count`` all the base classes), ``calls``
+    # (``[path, parameter, position]`` of each switched parameter of a constructor, a function,
+    # or a classmethod or staticmethod on its class, under every public path, to match the
+    # project's code; ``position`` counts from 0 after ``self`` / ``cls`` and is None for a
+    # keyword-only parameter; a diff made earlier in schema 19 has ``[path, parameter]``),
+    # ``still_named_at`` (where the pinned release's source still imports ``old`` or has a
+    # string that is its name, other than a name it only exports, ``pkg/module.py:line``;
+    # nothing is run) and ``still_named_count``. None for every other kind.
+    dependency: dict[str, Any] | None = None
 
     @property
     def id(self) -> str:
+        if self.kind == DEPENDENCY_SWITCHED:
+            return stable_hash(self.package, self.kind, self.name, self.switched_to)
         return stable_hash(self.package, self.kind, self.path, self.parameter, self.moved_to)
+
+    @property
+    def switched_to(self) -> str | None:
+        """DEPENDENCY_SWITCHED: the distribution the pinned release requires instead of
+        ``name`` (``httpx2`` for ``httpx``); None for another kind."""
+        if self.kind != DEPENDENCY_SWITCHED:
+            return None
+        return str((self.dependency or {}).get("new") or "") or None
 
     @property
     def fingerprint(self) -> str:
@@ -255,12 +312,16 @@ class APIChange:
     @property
     def group_key(self) -> str:
         """Identity used to merge sync/async twins and response wrappers in the same module."""
+        if self.kind == DEPENDENCY_SWITCHED:
+            return f"{self.kind}:{self.name}:{self.switched_to or ''}"
         owner = _OWNER_NORMALIZE.sub("", self.owner or "")
         return f"{self.kind}:{self.module}:{owner}.{self.name}:{self.parameter or ''}"
 
     @property
     def concept_key(self) -> str:
         """Coarser identity used to avoid probing near-duplicates (e.g. beta mirrors of an API)."""
+        if self.kind == DEPENDENCY_SWITCHED:
+            return f"{self.package}:{self.group_key}"
         kind = REMOVED if self.kind == MOVED else self.kind
         owner = _OWNER_NORMALIZE.sub("", self.owner or "")
         return f"{self.package}:{kind}:{owner}.{self.name}:{self.parameter or ''}"
@@ -271,7 +332,10 @@ class APIChange:
         package, module, normalised owner (sync/async twins and response wrappers, which live
         in the same module, are one) and name. ``Messages.create`` losing three parameters is
         one API with three changes; ``anthropic.resources.beta.messages.messages.Messages.create``
-        is another API than ``anthropic.resources.messages.messages.Messages.create``."""
+        is another API than ``anthropic.resources.messages.messages.Messages.create``. A
+        dependency switch is an API of its own: ``openai:dependency:httpx->httpx2``."""
+        if self.kind == DEPENDENCY_SWITCHED:
+            return f"{self.package}:dependency:{self.name}->{self.switched_to or ''}"
         owner = _OWNER_NORMALIZE.sub("", self.owner or "")
         return f"{self.package}:{self.module}:{owner}.{self.name}"
 
@@ -284,6 +348,8 @@ class APIChange:
 
     @property
     def display(self) -> str:
+        if self.kind == DEPENDENCY_SWITCHED:
+            return f"{self.name} -> {self.switched_to or '?'}"
         target = f"{self.owner}.{self.name}" if self.owner else self.path
         if self.parameter and self.kind in (
             PARAM_REMOVED,
@@ -316,6 +382,8 @@ class APIChange:
     def describe(self, *, short: bool = False, versioned: bool = True) -> str:
         """One human sentence describing the change (``versioned=False`` drops "(pkg 1.2)")."""
         pkg = f" ({self.package} {self.to_version})" if versioned else ""
+        if self.kind == DEPENDENCY_SWITCHED:
+            return self._describe_switch(versioned)
         path = self.short_path if short else self.path
         call = f"{path}({_argument(self.parameter)})" if self.parameter else path
         if self.kind == PARAM_REMOVED and self.parameter and self.parameter.startswith("*"):
@@ -360,6 +428,28 @@ class APIChange:
                 return f"`{path}` called as `{self.call_form}` is deprecated{pkg}{extra}"
             return f"`{path}` is deprecated{pkg}{extra}"
         return f"`{path}` changed{pkg}"
+
+    def _describe_switch(self, versioned: bool) -> str:
+        """DEPENDENCY_SWITCHED: ``openai 3.19.2 requires `httpx2` instead of `httpx```; for
+        extras only, ``fastmcp-slim 4.0.10's `client` and `server` extras require ...``; for a
+        distribution the older release already required, ``gradio 4.28.3 no longer requires
+        `requests`; its API names `httpx` types instead``; for a copy the package ships, ``typer
+        0.27.2 no longer requires `click` and ships `typer._click` instead``."""
+        d = self.dependency or {}
+        old, new = self.name, self.switched_to or "?"
+        who = f"{self.package} {self.to_version}" if versioned else self.package
+        extras = [f"`{e}`" for e in d.get("extras") or ()]
+        many = len(extras) > 1
+        if extras:
+            listed = ", ".join(extras[:-1]) + f" and {extras[-1]}" if many else extras[0]
+            who = f"{who}'s {listed} extra{'s' if many else ''}"
+        s = "" if many else "s"
+        if d.get("vendored"):
+            ships = f", and {self.package} ships" if extras else " and ships"
+            return f"{who} no longer require{s} `{old}`{ships} `{new}` instead"
+        if d.get("new_added", True):
+            return f"{who} require{s} `{new}` instead of `{old}`"
+        return f"{who} no longer require{s} `{old}`; its API names `{new}` types instead"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -552,14 +642,31 @@ def diff_sources(
     new_version: str,
     new_root: Path,
     import_names: list[str],
+    *,
+    old_requires: Sequence[str] = (),
+    new_requires: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Diff two extracted source trees. Returns plain dicts (picklable across processes).
+
+    ``old_requires`` / ``new_requires`` are the releases' Requires-Dist (SourceTree.requires):
+    with them, a distribution the pinned release requires instead of one the older release
+    required is a change of its own when the public API switched to its types
+    (DEPENDENCY_SWITCHED).
 
     Never raises for problems in the analysed package: griffe can fail on unusual code, and one
     bad top-level module must not hide the changes found in the others.
     """
     with _quiet():
-        changes = _diff_imports(package, old_version, old_root, new_version, new_root, import_names)
+        changes = _diff_imports(
+            package,
+            old_version,
+            old_root,
+            new_version,
+            new_root,
+            import_names,
+            old_requires=old_requires,
+            new_requires=new_requires,
+        )
     return [c.to_dict() for c in _group(changes)]
 
 
@@ -570,8 +677,16 @@ def _diff_imports(
     new_version: str,
     new_root: Path,
     import_names: list[str],
+    *,
+    old_requires: Sequence[str] = (),
+    new_requires: Sequence[str] = (),
 ) -> list[APIChange]:
     changes: list[APIChange] = []
+    # The trees are kept for the dependency pass only when a requirement went (a base one, or
+    # one of an extra both releases define): in most release pairs none did (87% of 1991
+    # measured for the base requirements), and the pass is skipped.
+    dropped = _dropped_requirements(old_requires, new_requires, import_names, new_root)
+    loaded: list[tuple[Any, Any]] = []
     for import_name in import_names:
         try:
             old = load_api(import_name, old_root)
@@ -599,10 +714,28 @@ def _diff_imports(
             else:
                 log.debug("cannot load %s %s from %s: %s", package, new_version, import_name, exc)
             continue
+        if dropped:
+            loaded.append((old, new))
         try:
             changes.extend(_Differ(package, old_version, new_version, old, new).run())
         except Exception as exc:
             log.debug("diff of %s failed: %s", import_name, exc)
+    if dropped and loaded:
+        try:
+            changes.extend(
+                _dependency_switches(
+                    package,
+                    old_version,
+                    new_version,
+                    loaded,
+                    dropped,
+                    old_requires,
+                    new_requires,
+                    new_root,
+                )
+            )
+        except Exception as exc:
+            log.debug("dependency pass of %s failed: %s", package, exc)
     return changes
 
 
@@ -3482,6 +3615,1067 @@ def doc_summary(obj: Any, limit: int = 400) -> str | None:
     first = doc.value.strip().split("\n\n", 1)[0]
     first = " ".join(first.split())
     return first if len(first) <= limit else first[: limit - 3] + "..."
+
+
+# ----------------------------------------------------------- dependency switches
+# Distributions a release drops for typing features its Python (``typing``) now has: its API
+# then names ``typing`` instead, which is no switch to another distribution it requires.
+_TYPING_HELPERS = frozenset(
+    {"typing-extensions", "typing-inspection", "mypy-extensions", "eval-type-backport", "typed-ast"}
+)
+# Module segments where a switch is not counted: a package's command line (typed with its CLI
+# framework), its test helpers, its experimental corner. A reference to the old distribution
+# there still counts as the pinned release naming it.
+_DEPENDENCY_SIDE = frozenset({"cli", "commands", "testing", "experimental"})
+# Where a public API names another distribution's type (a site's context): what code hands it
+# (a parameter), gets from it (a return, an attribute), subclasses or catches (a base class,
+# and a base's type argument) or imports from it (a re-export). A parameter's default and an
+# attribute's value only count as the API still naming a distribution.
+SITE_PARAM = "param"
+SITE_RETURN = "return"
+SITE_ATTR = "attr"
+SITE_BASE = "base"
+SITE_TYPE_ARG = "type-arg"
+SITE_REEXPORT = "re-export"
+_SWITCH_SITES = (SITE_PARAM, SITE_RETURN, SITE_ATTR, SITE_BASE, SITE_TYPE_ARG, SITE_REEXPORT)
+_EXTRA_MARKER = re.compile(r"""\bextra\s*==\s*['"]([^'"]+)['"]""")
+# How much of the evidence a change keeps (APIChange.dependency): the counts are of everything.
+_DEPENDENCY_EXAMPLES = 12
+_DEPENDENCY_LISTED = 10
+_DEPENDENCY_POINTERS = 5
+_DEPENDENCY_CALLS = 128
+_DEPENDENCY_PATHS = 64
+
+
+@dataclass
+class Requirements:
+    """A release's Requires-Dist, by canonical distribution name: ``base`` what installing it
+    installs (a marker on the Python version or the platform stays base), ``extras`` what only
+    an extra asks for (``httpx2[http2]``: the extras that list it)."""
+
+    base: dict[str, str] = field(default_factory=dict)  # name -> "httpx2<3,>=2.12.0"
+    extras: dict[str, list[str]] = field(default_factory=dict)  # name -> ["http2"]
+    # The text of a requirement listed only for extras (the first one), as ``base`` has it.
+    extra_text: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def extra_names(self) -> set[str]:
+        """The extras the requirements mention."""
+        return {e for listed in self.extras.values() for e in listed}
+
+    def for_extra(self, extra: str) -> set[str]:
+        """What installing the release with ``extra`` installs: the base requirements and that
+        extra's."""
+        return set(self.base) | {n for n, listed in self.extras.items() if extra in listed}
+
+    def text(self, name: str) -> str:
+        return self.base.get(name) or self.extra_text.get(name) or name
+
+
+def requirements(lines: Iterable[str]) -> Requirements:
+    """Read Requires-Dist lines. A requirement whose marker tests ``extra`` belongs to that
+    extra; the text kept is the name, its extras and its version range, without the marker
+    (the first one of a name listed several times, for several Pythons). Unreadable lines are
+    skipped."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+
+    out = Requirements()
+    for line in lines:
+        try:
+            req = Requirement(str(line))
+        except InvalidRequirement:
+            continue
+        name = canonicalize_name(req.name)
+        extras = _EXTRA_MARKER.findall(str(req.marker) if req.marker else "")
+        wanted = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+        text = f"{req.name}{wanted}{req.specifier}"
+        if extras:
+            listed = out.extras.setdefault(name, [])
+            listed += [e for e in map(canonicalize_name, extras) if e not in listed]
+            out.extra_text.setdefault(name, text)
+            continue
+        out.base.setdefault(name, text)
+    return out
+
+
+def dependency_module(name: str) -> str:
+    """The module a distribution is looked for under: its normalised name (``httpx2``,
+    ``huggingface_hub``). Only the name: an import name read from elsewhere (a cached tree)
+    would make the same diff differ between machines. A distribution whose modules are named
+    otherwise (Pillow's ``PIL``) is not found, which misses a switch and never makes one up."""
+    from packaging.utils import canonicalize_name
+
+    return canonicalize_name(name).replace("-", "_")
+
+
+@dataclass(frozen=True)
+class _Dropped:
+    """A requirement of the older release that the pinned one no longer has: a base one, or
+    one of the extras both releases define (``for_extras``)."""
+
+    name: str  # canonical: "httpx"
+    module: str  # "httpx"
+    requirement: str  # as the older release lists it: "httpx<1,>=0.23.0"
+    extras: tuple[str, ...]  # the pinned release's extras that still list it
+    # The extras it was dropped from (fastmcp-slim 4.0's ``client``, ``mcp`` and ``server``);
+    # () for a base requirement.
+    for_extras: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _SwitchTarget:
+    """What a dropped requirement may have been switched to: another requirement of the pinned
+    release (``httpx2``), or a copy of it the package ships (``typer._click``)."""
+
+    module: str  # "httpx2", "typer._click"
+    name: str  # the distribution's canonical name, or the module of a copy
+    requirement: str | None  # as the pinned release lists it; None for a copy
+    extras: tuple[str, ...] = ()  # the extras the switch is for; () for the base requirements
+    added: bool = True  # not among the older release's requirements compared with
+    vendored: bool = False
+
+
+def _dropped_requirements(
+    old_requires: Sequence[str],
+    new_requires: Sequence[str],
+    import_names: Sequence[str],
+    new_root: Path,
+) -> list[_Dropped]:
+    """The requirements the pinned release dropped that may be switches: a base requirement it
+    no longer has, or a requirement of an extra both releases define that installing the
+    pinned release with that extra no longer installs; not a typing helper, not one of the
+    package's own modules, and not a module the pinned release ships itself (pytest 7.2
+    dropped ``py`` and has a ``py.py``). Nothing when either release lists no requirement: an
+    sdist without Requires-Dist says nothing about what it dropped."""
+    if not old_requires or not new_requires:
+        return []
+    old, new = requirements(old_requires), requirements(new_requires)
+    own = {n.split(".")[0].removesuffix("-stubs") for n in import_names}
+
+    def candidate(name: str) -> bool:
+        module = dependency_module(name)
+        return not (name in _TYPING_HELPERS or module in own or _module_exists(new_root, module))
+
+    out = []
+    for name in sorted(set(old.base) - set(new.base)):
+        if candidate(name):
+            extras = tuple(new.extras.get(name, ()))
+            out.append(_Dropped(name, dependency_module(name), old.base[name], extras))
+    # Dropped from an extra (not from the base requirements, above): fastmcp-slim 4.0 lists
+    # ``httpx2`` where 3.4 listed ``httpx`` for its client, mcp and server extras (the
+    # ``fastmcp`` distribution installs the client and server ones).
+    for_extras: dict[str, list[str]] = {}
+    for extra in sorted(old.extra_names & new.extra_names):
+        for name in sorted(old.for_extra(extra) - new.for_extra(extra) - set(old.base)):
+            for_extras.setdefault(name, []).append(extra)
+    for name, dropped_from in sorted(for_extras.items()):
+        if candidate(name):
+            still = tuple(new.extras.get(name, ()))
+            requirement = old.text(name)
+            out.append(
+                _Dropped(name, dependency_module(name), requirement, still, tuple(dropped_from))
+            )
+    return out
+
+
+def _vendored_copy(roots: Sequence[Any], module: str, new_root: Path) -> str | None:
+    """A module the pinned release ships that looks like a copy of ``module``: a private
+    subpackage or module named after it (``typer._click`` for ``click``, ``pkg._vendor.click``),
+    the shortest one; None when there is none. Not one whose source imports ``module`` itself:
+    that is a shim over it (langsmith 0.14's ``_openapi_client._httpx`` imports ``httpx2``, or
+    ``httpx`` where that is what is installed), not a copy."""
+    found = []
+    for root in roots:
+        for mod in _walk_modules(root):
+            path = str(mod.path)
+            named = _has_private_segment(path) and path.rsplit(".", 1)[-1].lstrip("_") == module
+            if named and not _imports_module(new_root, path, module):
+                found.append(path)
+    return min(found, key=lambda p: (p.count("."), p)) if found else None
+
+
+def _imports_module(root: Path, dotted: str, module: str) -> bool:
+    """Whether the source of the module or package ``dotted`` in ``root`` imports ``module``
+    (an absolute import of it or of a module in it), anywhere in its files."""
+    base = root.joinpath(*dotted.split("."))
+    if base.is_dir():
+        files = sorted(p for p in base.rglob("*") if p.suffix in (".py", ".pyi"))
+    else:
+        files = [p for p in (base.with_suffix(".py"), base.with_suffix(".pyi")) if p.is_file()]
+    for f in files:
+        try:
+            with _quiet():
+                tree = ast.parse(f.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, ValueError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            else:
+                continue
+            if any(_under(name, module) for name in names):
+                return True
+    return False
+
+
+def _switch_targets(
+    x: _Dropped,
+    old_req: Requirements,
+    new_req: Requirements,
+    ys: dict[str, str],
+    copy: str | None,
+) -> list[_SwitchTarget]:
+    """The targets a dropped requirement is compared with: for a base requirement, the pinned
+    release's base requirements; for an extra's, those it installs with those extras (a target
+    that only some of them list is for those only); and a copy the package ships of it."""
+    out = [_SwitchTarget(copy, copy, None, x.for_extras, vendored=True)] if copy else []
+    for y_module, y_name in sorted(ys.items()):
+        if not x.for_extras:
+            if y_name in new_req.base:
+                added = y_name not in old_req.base
+                out.append(_SwitchTarget(y_module, y_name, new_req.base[y_name], (), added))
+            continue
+        extras = tuple(
+            e for e in x.for_extras if y_name in new_req.base or e in new_req.extras.get(y_name, ())
+        )
+        if extras:
+            added = not any(y_name in old_req.for_extra(e) for e in extras)
+            requirement = new_req.text(y_name)
+            out.append(_SwitchTarget(y_module, y_name, requirement, extras, added))
+    return out
+
+
+def _dependency_switches(
+    package: str,
+    old_version: str,
+    new_version: str,
+    loaded: Sequence[tuple[Any, Any]],
+    dropped: Sequence[_Dropped],
+    old_requires: Sequence[str],
+    new_requires: Sequence[str],
+    new_root: Path,
+) -> list[APIChange]:
+    """DEPENDENCY_SWITCHED changes: for a dropped requirement X and a target Y (a requirement
+    of the pinned release, or a copy of X it ships: :func:`_switch_targets`), the sites
+    (public path, parameter, context: SITE_*) of the older release's API that named X types
+    and whose same site in the pinned release names Y types.
+
+    A switch needs at least one such site, and a type that kept its name at half of them or
+    more (``httpx.Client`` -> ``httpx2.Client``): crewai's ``TokenCalcHandler`` deriving from
+    pydantic's ``BaseModel`` instead of langchain's ``BaseCallbackHandler`` is a rewrite, not
+    a switch. None when the pinned release's public API still names X anywhere, a default or a
+    command-line module included (compatibility code, optional use: langsmith 0.14 still names
+    ``httpx``). The trees are the ones the diff loaded (``loaded``, old and new per import
+    name); only their public API is read, statically.
+    """
+    old_req, new_req = requirements(old_requires), requirements(new_requires)
+    xs = {d.module for d in dropped}
+    own = {str(new.path).split(".")[0] for _, new in loaded}
+    ys = {
+        dependency_module(name): name
+        for name in {*new_req.base, *new_req.extras}
+        if dependency_module(name) not in xs | own
+    }
+    new_roots = [new for _, new in loaded]
+    copies = {x.module: _vendored_copy(new_roots, x.module, new_root) for x in dropped}
+    vendored = {c for c in copies.values() if c}
+    old_refs = _ApiRefs([old for old, _ in loaded], xs)
+    new_refs = _ApiRefs(new_roots, xs | set(ys) | vendored, outside=vendored)
+    out: list[APIChange] = []
+    for x in dropped:
+        if x.module in new_refs.named:
+            continue
+        old_sites = {
+            key: {t: top for t, top in targets.items() if _under(t, x.module)}
+            for key, targets in old_refs.sites.items()
+            if any(_under(t, x.module) for t in targets)
+        }
+        if not old_sites:
+            continue
+        for y in _switch_targets(x, old_req, new_req, ys, copies[x.module]):
+            switched = []
+            for key, old_targets in old_sites.items():
+                new_targets = {
+                    t: top
+                    for t, top in new_refs.sites.get(key, {}).items()
+                    if new_refs.module_of(t) == y.module
+                }
+                if new_targets:
+                    switched.append((key, old_targets, new_targets))
+            # A subclass of a class whose own base switched says nothing more (every error of
+            # huggingface_hub derives from ``HfHubHTTPError``, which derives from
+            # ``httpx2.HTTPError``): only the class that switched counts.
+            keys = {key for key, _, _ in switched}
+            switched = [
+                s
+                for s in switched
+                if not any((p, "", SITE_BASE) in keys for p in new_refs.through.get(s[0], ()))
+            ]
+            same = [s for s in switched if _last_names(s[1]) & _last_names(s[2])]
+            if not switched or 2 * len(same) < len(switched):
+                continue
+            evidence = _switch_evidence(x, y, switched, same, new_refs, new_root)
+            roots = [str(new.path) for _, new in loaded]
+            path = max(roots, key=lambda r: sum(_under(key[0], r) for key, _, _ in switched))
+            out.append(
+                APIChange(
+                    package=package,
+                    from_version=old_version,
+                    to_version=new_version,
+                    kind=DEPENDENCY_SWITCHED,
+                    path=path,
+                    name=x.name,
+                    import_paths=evidence.pop("import_paths"),
+                    library_names=[],
+                    dependency=evidence,
+                )
+            )
+    return out
+
+
+def _under(path: str, prefix: str) -> bool:
+    """``path`` is ``prefix`` or a dotted name inside it (``httpx.Client`` in ``httpx``)."""
+    return path == prefix or path.startswith(prefix + ".")
+
+
+def _last_names(targets: Iterable[str]) -> set[str]:
+    """``{"Client"}`` for ``{"httpx.Client"}``: the names a switch keeps."""
+    return {t.rsplit(".", 1)[-1] for t in targets if "." in t}
+
+
+def _dependency_side(path: str) -> bool:
+    return any(part in _DEPENDENCY_SIDE for part in path.split(".")[1:])
+
+
+class _Scope:
+    """Names in one loaded package, followed to what they stand for: re-exports and ``X =
+    other.Name`` to the object they name (another package's, by its canonical path), and the
+    package's own type aliases to the types in them (two levels deep). A copy of another
+    distribution the package ships (``outside``: ``typer._click``) counts as another package."""
+
+    def __init__(self, root: Any, outside: Iterable[str] = ()) -> None:
+        self.root = root
+        self.package = str(root.path)
+        self.outside = tuple(outside)
+        self._chased: dict[str, str] = {}
+
+    def inside(self, path: str) -> bool:
+        return _under(path, self.package) and not any(_under(path, o) for o in self.outside)
+
+    def lookup(self, path: str) -> Any:
+        if not self.inside(path):
+            return None
+        obj = self.root
+        try:
+            for part in path[len(self.package) + 1 :].split(".") if path != self.package else ():
+                if getattr(obj, "is_alias", False):
+                    obj = obj.final_target
+                obj = obj.members.get(part)
+                if obj is None:
+                    return None
+        except Exception:
+            return None
+        return obj
+
+    def chase(self, path: str) -> str:
+        """Where ``path`` leads: a re-export and ``X = other.Name`` followed, inside the
+        package, to the object's own path (another package's canonical path, for a name the
+        package takes from it)."""
+        import griffe
+
+        if path in self._chased:
+            return self._chased[path]
+        start, seen = path, set()
+        while self.inside(path) and path not in seen:
+            seen.add(path)
+            obj = self.lookup(path)
+            if obj is None:
+                break
+            if getattr(obj, "is_alias", False):
+                path = str(obj.target_path)
+                continue
+            value = getattr(obj, "value", None) if getattr(obj, "is_attribute", False) else None
+            if not isinstance(value, (griffe.ExprName, griffe.ExprAttribute)):
+                break
+            try:
+                path = str(value.canonical_path)
+            except Exception:
+                break
+        self._chased[start] = path
+        return path
+
+    def resolve(self, expr: Any, top: bool = True, depth: int = 0) -> dict[str, bool]:
+        """The canonical paths outside the package that an annotation names, each with whether
+        it is the annotation itself or a member of its union (``httpx.Client | None``: True;
+        ``Callable[[], httpx.Client]``: False). ``Annotated`` counts only its type, and
+        ``Literal`` values are not names."""
+        import griffe
+
+        out: dict[str, bool] = {}
+        for leaf, is_top in _annotation_names(expr, top):
+            try:
+                path = leaf.canonical_path
+            except Exception:
+                continue
+            if not isinstance(path, str) or not path:
+                continue
+            final = self.chase(path)
+            if not self.inside(final):
+                out[final] = out.get(final, False) or is_top
+                continue
+            if depth >= 2:
+                continue
+            obj = self.lookup(final)
+            if obj is None or getattr(obj, "is_alias", False):
+                continue
+            value = getattr(obj, "value", None)
+            if isinstance(value, griffe.Expr) and (
+                getattr(obj, "is_attribute", False) or getattr(obj, "is_type_alias", False)
+            ):
+                for t, t_top in self.resolve(value, is_top, depth + 1).items():
+                    out[t] = out.get(t, False) or t_top
+        return out
+
+    def top_types(self, expr: Any, depth: int = 0) -> set[str]:
+        """What an annotation accepts: the canonical paths of the annotation itself or of the
+        members of its union (``float | httpx2.Timeout | None``: ``float`` and
+        ``httpx2.Timeout``), the package's own type aliases followed; ``None`` and the
+        ``Optional`` / ``Union`` forms left out. A class of the package itself is its own
+        path."""
+        import griffe
+
+        out: set[str] = set()
+        for leaf, is_top in _annotation_names(expr):
+            if not is_top or str(getattr(leaf, "name", "")) in ("None", "Optional", "Union"):
+                continue
+            try:
+                path = leaf.canonical_path
+            except Exception:
+                continue
+            if not isinstance(path, str) or not path:
+                continue
+            final = self.chase(path)
+            obj = self.lookup(final) if self.inside(final) and depth < 2 else None
+            value = getattr(obj, "value", None)
+            if (
+                obj is not None
+                and not getattr(obj, "is_alias", False)
+                and isinstance(value, griffe.Expr)
+                and (getattr(obj, "is_attribute", False) or getattr(obj, "is_type_alias", False))
+            ):
+                out |= self.top_types(value, depth + 1)
+                continue
+            out.add(final)
+        return out
+
+    def ancestors(self, head: Any, seen: set[str], depth: int = 0) -> dict[str, bool]:
+        """The outside base classes of the package's own classes that ``head`` names, through
+        its own classes (mcp 2.2's ``OAuthClientProvider`` derives from its
+        ``RedirectAwareAuth``, which derives from ``httpx2.Auth``); ``seen`` gets the
+        canonical paths of the package's classes gone through."""
+        import griffe
+
+        out: dict[str, bool] = {}
+        if depth > 5:
+            return out
+        for leaf, _ in _annotation_names(head):
+            try:
+                path = self.chase(str(leaf.canonical_path))
+            except Exception:
+                continue
+            obj = self.lookup(path) if self.inside(path) else None
+            if obj is None or path in seen or not getattr(obj, "is_class", False):
+                continue
+            seen.add(path)
+            for base in getattr(obj, "bases", None) or ():
+                inner = base.left if isinstance(base, griffe.ExprSubscript) else base
+                out.update(self.resolve(inner))
+                out.update(self.ancestors(inner, seen, depth + 1))
+        return out
+
+
+def _annotation_names(expr: Any, top: bool = True) -> Iterator[tuple[Any, bool]]:
+    """The names in an annotation (the last name of each dotted one), each with whether it is
+    the annotation itself or a member of its union (``X | None``, ``Optional[X]``,
+    ``Union[X, Y]``). ``Annotated`` gives only its type, ``Literal`` nothing."""
+    import griffe
+
+    if isinstance(expr, griffe.ExprName):
+        yield expr, top
+    elif isinstance(expr, griffe.ExprAttribute):
+        yield expr.last, top
+    elif isinstance(expr, griffe.ExprSubscript):
+        form = _form_name(expr.left)
+        if form == "Literal":
+            return
+        inner = expr.slice
+        elements = list(inner.elements) if isinstance(inner, griffe.ExprTuple) else [inner]
+        if form == "Annotated":
+            if elements:
+                yield from _annotation_names(elements[0], top)
+            return
+        yield from _annotation_names(expr.left, top)
+        union = top and form in ("Optional", "Union")
+        for element in elements:
+            yield from _annotation_names(element, union)
+    elif isinstance(expr, griffe.ExprBinOp) and expr.operator == "|":
+        yield from _annotation_names(expr.left, top)
+        yield from _annotation_names(expr.right, top)
+    elif isinstance(expr, griffe.Expr):
+        for child in expr.iterate(flat=False):
+            if isinstance(child, griffe.Expr):
+                yield from _annotation_names(child, False)
+
+
+def _form_name(expr: Any) -> str:
+    import griffe
+
+    if isinstance(expr, griffe.ExprName):
+        return str(expr.name)
+    if isinstance(expr, griffe.ExprAttribute):
+        return str(expr.last.name)
+    return ""
+
+
+class _ApiRefs:
+    """What one release's public API names under ``modules`` (other distributions'), read
+    statically from the trees the diff loaded.
+
+    ``sites``: by site ``(public path, parameter or "", context)`` (SITE_*, outside the side
+    modules), the canonical paths named there, each with whether it is the annotation itself
+    or a member of its union. ``named``: the modules named anywhere in the public API,
+    defaults, values and side modules included. ``objects``: the object of each site.
+    ``through``: for a base class site, the public paths of the package's own classes it
+    derives from on the way (huggingface_hub's ``BadRequestError`` through
+    ``HfHubHTTPError``). ``modules`` may name a module inside the package, a copy of another
+    distribution it ships (``outside``: ``typer._click``), which then counts as another
+    package's.
+    """
+
+    def __init__(
+        self, roots: Sequence[Any], modules: set[str], outside: Iterable[str] = ()
+    ) -> None:
+        self.modules = modules
+        self.outside = tuple(outside)
+        self.sites: dict[tuple[str, str, str], dict[str, bool]] = {}
+        self.objects: dict[tuple[str, str, str], Any] = {}
+        self.named: set[str] = set()
+        self.through: dict[tuple[str, str, str], set[str]] = {}
+        # For a parameter site: whether its annotation accepts only types of ``modules``
+        # (``None`` aside), in every overload.
+        self.exclusive: dict[tuple[str, str, str], bool] = {}
+        self.roots = {str(root.path): root for root in roots}
+        self._indexes: dict[str, dict[str, list[str]]] = {}
+        for root in roots:
+            try:
+                self._scan(root)
+            except Exception as exc:
+                log.debug("reference scan of %s stopped: %s", getattr(root, "path", "?"), exc)
+
+    def _scan(self, root: Any) -> None:
+        import griffe
+
+        scope = _Scope(root, self.outside)
+        found_objects = list(iter_public_objects(root))
+        public_of = {str(obj.path): public for obj, public in found_objects}
+        for obj, public in found_objects:
+            side = _dependency_side(public)
+            try:
+                if getattr(obj, "is_function", False):
+                    for fn in (obj, *(getattr(obj, "overloads", None) or ())):
+                        for p in fn.parameters:
+                            if p.name in ("self", "cls") or p.name.startswith("_"):
+                                continue
+                            key = (public, p.name, SITE_PARAM)
+                            self._add(scope.resolve(p.annotation), key, obj, side)
+                            if key in self.sites:
+                                # Only the other distributions' types: ``http_client:
+                                # httpx2.Client | None``, not ``timeout: float | Timeout``.
+                                only = all(self.module_of(t) for t in scope.top_types(p.annotation))
+                                self.exclusive[key] = self.exclusive.get(key, True) and only
+                            self._add(scope.resolve(p.default), (public, p.name, "default"), obj)
+                        self._add(scope.resolve(fn.returns), (public, "", SITE_RETURN), obj, side)
+                elif getattr(obj, "is_class", False):
+                    for base in obj.bases:
+                        if isinstance(base, griffe.ExprSubscript):
+                            head, args = base.left, base.slice
+                            found = scope.resolve(args, top=False)
+                            self._add(found, (public, "", SITE_TYPE_ARG), obj, side)
+                        else:
+                            head = base
+                        seen: set[str] = set()
+                        found = {**scope.resolve(head), **scope.ancestors(head, seen)}
+                        key = (public, "", SITE_BASE)
+                        self._add(found, key, obj, side)
+                        if seen and key in self.sites:
+                            self.through.setdefault(key, set()).update(
+                                public_of[c] for c in seen if c in public_of
+                            )
+                elif getattr(obj, "is_attribute", False) or getattr(obj, "is_type_alias", False):
+                    annotation = getattr(obj, "annotation", None)
+                    self._add(scope.resolve(annotation), (public, "", SITE_ATTR), obj, side)
+                    self._add(
+                        scope.resolve(getattr(obj, "value", None)), (public, "", "value"), obj
+                    )
+            except Exception as exc:
+                log.debug("reference scan skipped %s: %s", public, exc)
+        for module in _walk_modules(root):
+            path = str(module.path)
+            if _has_private_segment(path) or _non_api_path(path, module=True):
+                continue
+            for name, member in list(module.members.items()):
+                if _private(name) or not getattr(member, "is_alias", False):
+                    continue
+                if not _exported(member):
+                    continue
+                target = scope.chase(str(member.target_path))
+                if not scope.inside(target):
+                    key = (f"{path}.{name}", "", SITE_REEXPORT)
+                    self._add({target: True}, key, member, _dependency_side(path))
+
+    def _add(
+        self, found: dict[str, bool], key: tuple[str, str, str], obj: Any, side: bool = True
+    ) -> None:
+        """Record what a site names under ``modules``; ``side`` (or a context other than
+        SITE_*) records it only as named."""
+        found = {t: top for t, top in found.items() if self.module_of(t)}
+        if not found:
+            return
+        self.named.update(self.module_of(t) or "" for t in found)
+        if side or key[2] not in _SWITCH_SITES:
+            return
+        site = self.sites.setdefault(key, {})
+        for target, top in found.items():
+            site[target] = site.get(target, False) or top
+        self.objects.setdefault(key, obj)
+
+    def module_of(self, path: str) -> str | None:
+        """The module of ``modules`` that ``path`` is in (the longest), or None."""
+        parts = path.split(".")
+        for i in range(len(parts), 0, -1):
+            if (head := ".".join(parts[:i])) in self.modules:
+                return head
+        return None
+
+    def top_level(self, names: Iterable[str], copy: str) -> list[str]:
+        """The package's public top-level classes that are a re-export of a class of the copy
+        it ships (``typer.BadParameter``) or have a switched name and derive from a class of
+        the copy (``typer.Context``), in alphabetical order. A class of the package's own that
+        only shares a name with a switched type (an SDK's ``Client``) is none of them."""
+        import griffe
+
+        wanted = set(names)
+        found = set()
+        for package, root in self.roots.items():
+            for name, member in list(root.members.items()):
+                if _private(name):
+                    continue
+                target = member
+                try:
+                    if getattr(member, "is_alias", False):
+                        if not _exported(member):
+                            continue
+                        target = member.final_target
+                    if not getattr(target, "is_class", False):
+                        continue
+                    bases = [
+                        b.left if isinstance(b, griffe.ExprSubscript) else b
+                        for b in getattr(target, "bases", None) or ()
+                    ]
+                    derives = any(_under(str(getattr(b, "canonical_path", b)), copy) for b in bases)
+                    if _under(str(target.path), copy) or (name in wanted and derives):
+                        found.add(f"{package}.{name}")
+                except Exception:
+                    continue
+        return sorted(found)
+
+    def paths_of(self, obj: Any) -> list[str]:
+        """Every public path of a module-level object (a class for a member), shortest first."""
+        try:
+            if getattr(obj, "is_alias", False):
+                obj = obj.final_target
+            path = str(obj.path)
+        except Exception:
+            return []
+        for package, root in self.roots.items():
+            if _under(path, package):
+                if package not in self._indexes:
+                    self._indexes[package] = path_index(root)
+                return list(self._indexes[package].get(path, ()))
+        return []
+
+
+def _switch_evidence(
+    x: _Dropped,
+    y: _SwitchTarget,
+    switched: list[tuple[tuple[str, str, str], dict[str, bool], dict[str, bool]]],
+    same: list[tuple[tuple[str, str, str], dict[str, bool], dict[str, bool]]],
+    refs: _ApiRefs,
+    new_root: Path,
+) -> dict[str, Any]:
+    """APIChange.dependency for one switch (with ``import_paths``, which becomes the change's)."""
+    names = sorted({n for _, old, new in same for n in _last_names(old) & _last_names(new)})
+    counts: dict[str, int] = {}
+    for (_, parameter, context), _, _ in switched:
+        if context == SITE_PARAM:
+            counts[parameter] = counts.get(parameter, 0) + 1
+    sites = [_site(key, old, new, refs) for key, old, new in switched]
+    # A parameter's signatures by the type they name now: openai 3's ``http_client`` is an
+    # ``httpx2.Client`` in 8 of them and an ``httpx2.AsyncClient`` in 6.
+    types: dict[str, dict[tuple[str, bool], int]] = {}
+    for site in sites:
+        if site["context"] == SITE_PARAM:
+            kinds = types.setdefault(site["parameter"], {})
+            kind = (str(site["new"]), bool(site["direct"]))
+            kinds[kind] = kinds.get(kind, 0) + 1
+    # One example per parameter and type it names now, at the signature code most likely
+    # calls (the shortest public path; a function, then a constructor, then a method; sync
+    # before async), and each return and attribute; then in the same order (an SDK's own
+    # client first: ``OpenAI`` before ``Stream``), a parameter (what code hands over) before a
+    # return or an attribute, one that takes nothing but the new distribution's types
+    # (``http_client``) before one that takes a builtin too (``timeout: float | Timeout``), in
+    # the most signatures first.
+    by_parameter: dict[tuple[str, str, bool], dict[str, Any]] = {}
+    others: list[dict[str, Any]] = []
+    for site in sorted(sites, key=_site_order):
+        if site["context"] == SITE_PARAM:
+            key = (site["parameter"], str(site["new"]), bool(site["direct"]))
+            by_parameter.setdefault(key, site)
+        elif site["context"] in (SITE_RETURN, SITE_ATTR):
+            others.append(site)
+
+    def signatures(site: dict[str, Any]) -> int:
+        kinds = types.get(site["parameter"] or "", {})
+        return kinds.get((str(site["new"]), bool(site["direct"])), 1)
+
+    examples = sorted(
+        [*by_parameter.values(), *others],
+        key=lambda s: (
+            _site_order(s)[:3],
+            s["context"] != SITE_PARAM,
+            not s.get("exclusive", True),
+            -signatures(s),
+            _site_order(s),
+            s["parameter"] or "",
+        ),
+    )
+    bases = sorted((s for s in sites if s["context"] == SITE_BASE), key=_site_order)
+    reexports = sorted(
+        (s for s in sites if s["context"] == SITE_REEXPORT),
+        key=lambda s: (s["path"].count("."), _secondary_name(s["path"]), s["path"]),
+    )
+    # What code calls by its path: a function, a class (its constructor), a classmethod or a
+    # staticmethod on its class; not a method, whose instance a file may have from anywhere.
+    positions: dict[tuple[str, str], int | None] = {}
+    for s in sites:
+        if s["context"] == SITE_PARAM and (
+            s["callable"] in ("constructor", "function") or s["on_class"]
+        ):
+            for path in s["import_paths"]:
+                positions.setdefault((path, str(s["parameter"])), s["position"])
+    calls = sorted(
+        ((path, parameter, position) for (path, parameter), position in positions.items()),
+        key=lambda c: (c[0].count("."), c[0], c[1]),
+    )
+    paths = [
+        p
+        for s in sorted(sites, key=_site_order)
+        if s["callable"] in ("constructor", "function", "class", "re-export")
+        for p in s["import_paths"]
+    ]
+    skip = [y.module] if y.vendored else []
+    pointers = _still_named(new_root, list(refs.roots), x.module, skip)
+    return {
+        "old": x.name,
+        "new": y.name,
+        "old_modules": [x.module],
+        "new_modules": [y.module],
+        "old_requirement": x.requirement,
+        "new_requirement": y.requirement,
+        "old_in_extras": list(x.extras),
+        "extras": list(y.extras),
+        "new_added": y.added,
+        "vendored": y.vendored,
+        "public_names": refs.top_level(names, y.module)[:_DEPENDENCY_LISTED] if y.vendored else [],
+        "sites": len(switched),
+        "sites_same_name": len(same),
+        "names": names,
+        "parameters": dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "parameter_types": {
+            parameter: [
+                {"new": new, "direct": direct, "count": n}
+                for (new, direct), n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))
+            ]
+            for parameter, kinds in sorted(types.items())
+        },
+        "examples": [_short_site(s) for s in examples[:_DEPENDENCY_EXAMPLES]],
+        "bases": [_short_site(s) for s in bases[:_DEPENDENCY_LISTED]],
+        "bases_count": len(bases),
+        "reexports": [_short_site(s) for s in reexports[:_DEPENDENCY_LISTED]],
+        "calls": [list(c) for c in calls[:_DEPENDENCY_CALLS]],
+        "still_named_at": pointers[:_DEPENDENCY_POINTERS],
+        "still_named_count": len(pointers),
+        "import_paths": _ordered(paths)[:_DEPENDENCY_PATHS],
+    }
+
+
+# At the same depth, what code is most likely to call: a module-level function, a class.
+_CALLABLE_ORDER = {"function": 0, "constructor": 1, "method": 2}
+
+
+def _secondary_name(path: str) -> bool:
+    """An async twin or an alternative transport, listed after the plain one."""
+    last = path.rsplit(".", 1)[-1].lower()
+    return "async" in last or "aio" in last
+
+
+def _site_order(site: dict[str, Any]) -> tuple[int, int, bool, bool, int, str]:
+    """Sites in the order code most likely reaches them: by their shortest public path (a
+    class's for its constructor), then kind (:data:`_CALLABLE_ORDER`), then an SDK's own
+    client first (a class named like its package: ``openai.OpenAI``, ``anthropic.Anthropic``),
+    sync before async, the shorter name first (``OpenAI`` before ``BedrockOpenAI``)."""
+    shortest = (site.get("import_paths") or [site["path"]])[0]
+    display = site["display"]
+    package = site["path"].split(".")[0].replace("_", "").lower()
+    return (
+        shortest.count("."),
+        _CALLABLE_ORDER.get(site["callable"], 3),
+        display.split(".")[0].lower() != package,
+        _secondary_name(display),
+        len(display),
+        site["path"],
+    )
+
+
+def _site(
+    key: tuple[str, str, str], old: dict[str, bool], new: dict[str, bool], refs: _ApiRefs
+) -> dict[str, Any]:
+    """One switched site as the evidence shows it: which object, how code reaches it, and the
+    types named there before and now (one that kept its name, when there is one)."""
+    public, parameter, context = key
+    obj: Any = refs.objects.get(key)
+    parent: Any = getattr(obj, "parent", None)
+    # A classmethod or a staticmethod, which code calls on the class itself
+    # (``FastMCP.from_openapi(...)``), as it calls a constructor. A parameter's site is a
+    # function's (a re-export's object may be an alias that does not resolve).
+    labels = set(getattr(obj, "labels", None) or ()) if context == SITE_PARAM else set()
+    on_class = False
+    if context == SITE_REEXPORT:
+        what, display, paths = "re-export", public, [public]
+    elif obj is not None and getattr(parent, "is_class", False):
+        class_paths = refs.paths_of(parent)
+        name = str(obj.name)
+        if name == "__init__":
+            # Code calls the class: its path (the site's own, without ``.__init__``, when the
+            # class is reached only through a module the index does not list).
+            paths = class_paths or [public.removesuffix(".__init__")]
+            what, display = "constructor", str(parent.name)
+        else:
+            what = "method" if getattr(obj, "is_function", False) else "attribute"
+            display = f"{parent.name}.{name}"
+            paths = [f"{p}.{name}" for p in class_paths]
+            on_class = bool(labels & {"classmethod", "staticmethod"})
+    else:
+        paths = refs.paths_of(obj) if obj is not None else []
+        if getattr(obj, "is_class", False):
+            what = "class"
+        else:
+            what = "function" if getattr(obj, "is_function", False) else "attribute"
+        display = str(getattr(obj, "name", "") or public.rsplit(".", 1)[-1])
+        if what == "attribute":
+            display = public
+    paths = paths or [public]
+    common = sorted(_last_names(old) & _last_names(new))
+    before = sorted(old, key=lambda t: (t.rsplit(".", 1)[-1] not in common, t))[0]
+    after = sorted(new, key=lambda t: (t.rsplit(".", 1)[-1] not in common, not new[t], t))[0]
+    # Under the object's own name where a path has it (``openai.OpenAI``, not the
+    # ``openai.Client`` alias that iter_public_objects reaches first).
+    own = [p for p in paths if p == display or p.endswith("." + display)]
+    shown = (own or paths)[0]
+    bound = what in ("constructor", "method")  # a staticmethod has no self or cls
+    return {
+        "path": f"{shown}.__init__" if what == "constructor" else shown,
+        "display": display,
+        "parameter": parameter or None,
+        "context": context,
+        "old": before,
+        "new": after,
+        "direct": bool(new[after]),
+        **({"exclusive": refs.exclusive.get(key, False)} if context == SITE_PARAM else {}),
+        "callable": what,
+        "on_class": on_class,
+        "position": _position(obj, parameter, bound) if context == SITE_PARAM else None,
+        "import_paths": paths[:_DEPENDENCY_LISTED],
+    }
+
+
+def _position(obj: Any, parameter: str, bound: bool) -> int | None:
+    """Where a call passes ``parameter`` by position, from 0 (``self`` or ``cls`` left out
+    for a constructor, a method or a classmethod: ``bound``); None for a parameter that is
+    keyword-only or not found, or after one whose kind is not known. The first signature
+    that has it counts, the function's own before its overloads."""
+    import griffe
+
+    positional = (griffe.ParameterKind.positional_only, griffe.ParameterKind.positional_or_keyword)
+    for fn in (obj, *(getattr(obj, "overloads", None) or ())):
+        params = list(getattr(fn, "parameters", None) or ())
+        if bound and params and params[0].name in ("self", "cls"):
+            params = params[1:]
+        for i, p in enumerate(params):
+            if p.kind not in positional:
+                if p.name == parameter:
+                    return None
+                if p.kind in (griffe.ParameterKind.var_positional, None):
+                    break  # what follows is keyword-only, or its position is not known
+                continue
+            if p.name == parameter:
+                return i
+    return None
+
+
+def _short_site(site: dict[str, Any]) -> dict[str, Any]:
+    """A site for the evidence: the import paths of a re-export or an attribute are its path."""
+    out = dict(site)
+    for key in ("callable", "on_class", "position"):
+        out.pop(key, None)
+    if out["context"] in (SITE_REEXPORT, SITE_ATTR, SITE_BASE, SITE_TYPE_ARG):
+        out.pop("import_paths", None)
+    return out
+
+
+def _still_named(
+    new_root: Path, packages: Sequence[str], module: str, skip: Sequence[str] = ()
+) -> list[str]:
+    """Where the pinned release's source still names ``module``: an import of it, or a string
+    that is its name or a dotted name in it (``sys.modules.get("httpx")``), as
+    ``pkg/module.py:line``, relative to the tree (never an absolute path: diffs are cached and
+    shared). Comments are not code; a sentence that mentions it is not a name, and nor is a
+    name the module only exports (:func:`_export_strings`: huggingface_hub 2.0's
+    ``utils.httpx``, which returns ``httpx2``) or a package name in a list of requirements or
+    a documentation example (:func:`_package_name_strings`: fastmcp 4's ``Field(examples=[[
+    "fastmcp>=2.0,<3", "httpx", "pandas>=2.0"]])``). Nothing under the modules ``skip`` (a
+    copy of ``module`` the package ships) is read."""
+    places: set[tuple[str, int]] = set()
+    # Only files where the name appears as a word are parsed (``httpx2`` is not ``httpx``).
+    word = re.compile(rf"(?<![\w.]){re.escape(module)}(?!\w)")
+    skipped = [new_root.joinpath(*s.split(".")) for s in skip]
+    for package in packages:
+        base = new_root.joinpath(*package.split("."))
+        if base.is_dir():
+            files = sorted(p for p in base.rglob("*") if p.suffix in (".py", ".pyi"))
+        else:
+            files = [p for p in (base.with_suffix(".py"), base.with_suffix(".pyi")) if p.is_file()]
+        for f in files:
+            rel = f.relative_to(new_root).as_posix()
+            if any(_skipped_segment(part) for part in rel.split("/")[:-1]):
+                continue
+            if any(f.with_suffix("") == s or s in f.parents for s in skipped):
+                continue
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+                if not word.search(text):
+                    continue
+                with _quiet():
+                    tree = ast.parse(text)
+            except (SyntaxError, ValueError, OSError):
+                continue
+            exports = _export_strings(tree) | _package_name_strings(tree)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    hit = any(_under(a.name, module) for a in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    hit = node.level == 0 and _under(node.module or "", module)
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    hit = id(node) not in exports and (
+                        node.value == module
+                        or (node.value.startswith(module + ".") and " " not in node.value)
+                    )
+                else:
+                    continue
+                if hit:
+                    places.add((rel, node.lineno))
+    return [f"{rel}:{line}" for rel, line in sorted(places)]
+
+
+# A requirement with a version (``fastmcp>=2.0,<3``, ``pandas[excel]==2.2``).
+_REQUIREMENT = re.compile(r"[A-Za-z0-9][\w.-]*\s*(?:\[[^\]]*\])?\s*(?:===|==|~=|!=|>=|<=|<|>)")
+# Keyword arguments whose value documents something (pydantic's ``Field(examples=...)``).
+_DOC_KEYWORDS = frozenset({"description", "example", "examples"})
+
+
+def _package_name_strings(tree: ast.AST) -> set[int]:
+    """The ``id`` of each string of a module that names a package to install or shows an
+    example, not a module the code uses: in the value of a documentation keyword
+    (``Field(examples=[["fastmcp>=2.0,<3", "httpx"]])``, ``description=``), or in a list,
+    tuple or set with a requirement that has a version (``["httpx", "pandas>=2.0"]``)."""
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg in _DOC_KEYWORDS:
+            found.update(
+                id(n)
+                for n in ast.walk(node.value)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            )
+        elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            strings = {
+                id(e): e.value
+                for e in node.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            }
+            if any(_REQUIREMENT.match(value.strip()) for value in strings.values()):
+                found.update(strings)
+    return found
+
+
+def _export_strings(tree: ast.AST) -> set[int]:
+    """The ``id`` of each string of a module that only names what it exports: in its
+    ``__all__`` (assigned, extended or appended to), compared with the name its module-level
+    ``__getattr__`` is asked for (``if name == "httpx":``), or returned by its module-level
+    ``__dir__``."""
+    found: set[int] = set()
+
+    def strings(node: ast.AST | None) -> None:
+        for n in ast.walk(node) if node is not None else ():
+            if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                found.add(id(n))
+
+    methods = {
+        id(f)
+        for c in ast.walk(tree)
+        if isinstance(c, ast.ClassDef)
+        for f in c.body
+        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+                strings(node.value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("append", "extend")
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "__all__"
+        ):
+            for arg in node.args:
+                strings(arg)
+        elif isinstance(node, ast.FunctionDef) and id(node) not in methods:
+            if node.name == "__getattr__" and node.args.args:
+                asked = node.args.args[0].arg
+                for c in ast.walk(node):
+                    operands = [c.left, *c.comparators] if isinstance(c, ast.Compare) else []
+                    if any(isinstance(o, ast.Name) and o.id == asked for o in operands):
+                        for o in operands:
+                            strings(o)
+            elif node.name == "__dir__":
+                for r in ast.walk(node):
+                    if isinstance(r, ast.Return):
+                        strings(r.value)
+    return found
 
 
 def _group(changes: list[APIChange]) -> list[APIChange]:

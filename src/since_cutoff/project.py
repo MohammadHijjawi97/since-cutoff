@@ -16,7 +16,7 @@ import json
 import re
 import sys
 import warnings
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -126,6 +126,10 @@ class Project:
     resolution_python: str | None = None
     # What the scan should say about where the versions come from (a lockfile it ignored).
     warnings: list[str] = field(default_factory=list)
+    # Every distribution the project's virtual environment has, by canonical name (its
+    # ``*.dist-info``): ``dependencies`` lists the declared and locked ones only when there is
+    # no lockfile, and a transitive one may matter too (engine.ScanResult.installed).
+    installed: dict[str, str] = field(default_factory=dict)
 
     def direct(self) -> list[Dependency]:
         return [d for d in self.dependencies if d.direct]
@@ -249,6 +253,7 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
         transitive=bool(lock.versions or installed or found.compiled),
         resolution_python=pv,
         warnings=notices,
+        installed=installed,
     )
 
 
@@ -993,6 +998,23 @@ class FileUse:
     # ``(chain, keyword)`` of each keyword argument passed to a method read at the end of a
     # chain (``chains``): ``("client.messages.create", "temperature")``.
     keyword_chains: frozenset[tuple[str, str]] = frozenset()
+    # ``(callable, keyword, module)`` for each keyword argument of ``keyword_paths`` and each
+    # top-level module its value reads, directly or through a name the file assigns it to:
+    # ``("openai.OpenAI", "http_client", "httpx")`` for ``OpenAI(http_client=httpx.Client())``
+    # and for ``c = httpx.Client()`` then ``OpenAI(http_client=c)``. ``OpenAI(timeout=30.0)``
+    # reads no module.
+    keyword_modules: frozenset[tuple[str, str, str]] = frozenset()
+    # ``(callable, position, module)`` the same way for each argument passed by position, from
+    # 0, up to a ``*args`` (after it, positions are not known):
+    # ``("huggingface_hub.hf_raise_for_status", 0, "httpx")`` for
+    # ``hf_raise_for_status(httpx.get(url))``. On ``self`` or ``super()``
+    # (``super().__init__(c)``), 0 is the argument after ``self``.
+    positional_modules: frozenset[tuple[str, int, str]] = frozenset()
+    # ``(exception, module)`` for each exception an ``except`` names and each top-level module
+    # its ``try`` body reaches (a name imported from it, or what the file shows is an instance
+    # of one of its classes): ``("httpx.HTTPError", "huggingface_hub")`` for ``try:
+    # hf_hub_download(...)`` ``except httpx.HTTPError:``.
+    handled: frozenset[tuple[str, str]] = frozenset()
 
     def imports(self, import_names: Iterable[str]) -> bool:
         """Whether the file imports a distribution with these import names (``requests``,
@@ -1108,8 +1130,48 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
         elif isinstance(node, ast.arg):
             holds(node.arg, classes(node.annotation))
 
+    # The top-level modules the value of each name the file assigns reads (``c =
+    # httpx.Client()``, ``with httpx.Client() as c``, ``def f(c: httpx.Client)``: httpx),
+    # through names assigned from other names too. Scopes are not told apart.
+    assigned: list[tuple[str, ast.expr]] = []
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            assigned += [(d, node.value) for t in node.targets if (d := _dotted(t))]
+        elif isinstance(node, ast.AnnAssign) and (d := _dotted(node.target)):
+            assigned += [(d, e) for e in (node.annotation, node.value) if e is not None]
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None and (d := _dotted(item.optional_vars)):
+                    assigned.append((d, item.context_expr))
+        elif isinstance(node, ast.arg) and node.annotation is not None:
+            assigned.append((node.arg, node.annotation))
+    origins: dict[str, set[str]] = {}
+
+    def modules_read(expr: ast.expr) -> set[str]:
+        """The top-level modules an expression reads: ``{"httpx"}`` for ``httpx.Client()``
+        and for ``c`` after ``c = httpx.Client()``."""
+        found: set[str] = set()
+        for n in ast.walk(expr):
+            if isinstance(n, ast.Name) and n.id in bound:
+                found.add(bound[n.id].split(".")[0])
+            if isinstance(n, (ast.Name, ast.Attribute)):
+                found |= origins.get(_dotted(n) or "", set())
+        return found
+
+    for _ in range(3):  # ``a = httpx.Client()``, ``b = a``, ``c = b``
+        grew = False
+        for name, expr in assigned:
+            new = modules_read(expr) - origins.get(name, set())
+            if new:
+                origins.setdefault(name, set()).update(new)
+                grew = True
+        if not grew:
+            break
+
     members: set[tuple[str, str]] = set()
     keyword_paths: set[tuple[str, str]] = set()
+    keyword_modules: set[tuple[str, str, str]] = set()
+    positional_modules: set[tuple[str, int, str]] = set()
     for node in nodes:
         bases = {p for p in map(resolve, node.bases) if p} if isinstance(node, ast.ClassDef) else ()
         for n in ast.walk(node) if bases else ():
@@ -1123,6 +1185,21 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
             ):
                 keyword_paths.update(
                     (f"{base}.{n.func.attr}", k.arg) for base in bases for k in n.keywords if k.arg
+                )
+                # ``super().__init__(http_client=...)`` calls the base class itself.
+                method = "" if n.func.attr == "__init__" else f".{n.func.attr}"
+                keyword_modules.update(
+                    (f"{base}{method}", k.arg, m)
+                    for base in bases
+                    for k in n.keywords
+                    if k.arg
+                    for m in modules_read(k.value)
+                )
+                positional_modules.update(
+                    (f"{base}{method}", i, m)
+                    for base in bases
+                    for i, a in _positional(n.args)
+                    for m in modules_read(a)
                 )
 
     def callee_paths(func: ast.expr) -> set[str]:
@@ -1177,7 +1254,22 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
                 calls.add(callee)
                 passed = [k.arg for k in node.keywords if k.arg]
                 keywords.update((callee, k) for k in passed)
-                keyword_paths.update((p, k) for p in callee_paths(func) for k in passed)
+                targets = callee_paths(func)
+                keyword_paths.update((p, k) for p in targets for k in passed)
+                keyword_modules.update(
+                    (p, k.arg, m)
+                    for k in node.keywords
+                    if k.arg and targets
+                    for m in modules_read(k.value)
+                    for p in targets
+                )
+                positional_modules.update(
+                    (p, i, m)
+                    for i, a in _positional(node.args)
+                    if targets
+                    for m in modules_read(a)
+                    for p in targets
+                )
                 names = _chain(func) if isinstance(func, ast.Attribute) else None
                 if names:
                     keyword_chains.update((names, k) for k in passed)
@@ -1192,7 +1284,46 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
         frozenset(chains),
         frozenset(keyword_paths),
         frozenset(keyword_chains),
+        frozenset(keyword_modules),
+        frozenset(positional_modules),
+        frozenset(_handled(nodes, resolve, bound, instances)),
     )
+
+
+def _positional(args: Sequence[ast.expr]) -> Iterator[tuple[int, ast.expr]]:
+    """A call's arguments passed by position, with their positions, up to a ``*args``."""
+    for i, arg in enumerate(args):
+        if isinstance(arg, ast.Starred):
+            return
+        yield i, arg
+
+
+def _handled(
+    nodes: Sequence[ast.AST],
+    resolve: Callable[[ast.expr], str | None],
+    bound: Mapping[str, str],
+    instances: Mapping[str, set[str]],
+) -> set[tuple[str, str]]:
+    """FileUse.handled: ``(exception, module)`` for each exception an ``except`` names and
+    each top-level module its ``try`` body reaches."""
+    out: set[tuple[str, str]] = set()
+    tries = (ast.Try, getattr(ast, "TryStar", ast.Try))
+    for node in nodes:
+        if not isinstance(node, tries):
+            continue
+        reached: set[str] = set()
+        for statement in node.body:
+            for n in ast.walk(statement):
+                if isinstance(n, ast.Name) and n.id in bound:
+                    reached.add(bound[n.id].split(".")[0])
+                if isinstance(n, (ast.Name, ast.Attribute)):
+                    reached |= {k.split(".")[0] for k in instances.get(_dotted(n) or "", ())}
+        for handler in node.handlers:
+            kind = handler.type
+            named = kind.elts if isinstance(kind, ast.Tuple) else [kind] if kind else []
+            for path in filter(None, map(resolve, named)):
+                out.update((path, module) for module in reached)
+    return out
 
 
 def _on_self(node: ast.expr) -> bool:

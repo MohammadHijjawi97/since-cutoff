@@ -28,6 +28,7 @@ from packaging.utils import canonicalize_name
 
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
     DEPRECATED,
     HINT_WARNING,
     KIND_CHANGED,
@@ -61,11 +62,24 @@ from since_cutoff.models import (
     ModelRegistry,
     parse_cutoff,
 )
-from since_cutoff.notes import SCOPE_IMPORTED, rename_text, runtime_text, similar_text
+from since_cutoff.notes import (
+    SCOPE_IMPORTED,
+    dependency_detail,
+    rename_text,
+    runtime_text,
+    similar_text,
+)
 from since_cutoff.project import FileUse, load_project
 from since_cutoff.providers import KNOWN_PROVIDERS
 from since_cutoff.pypi import PyPI, Release
-from since_cutoff.report import LOCATIONS_SHOWN, api_display, changes_text, places, use_text
+from since_cutoff.report import (
+    LOCATIONS_SHOWN,
+    api_display,
+    changes_text,
+    installed_text,
+    places,
+    use_text,
+)
 from since_cutoff.selection import FORM_LABELS, OLD_FORM, other_paths_text, uses_text
 
 if TYPE_CHECKING:
@@ -91,8 +105,10 @@ know your training cutoff instead, pass it as `cutoff` ("YYYY-MM").
 - api_changes: one package; pass `symbol` to narrow it to the functions or classes you use.
 - model_cutoff: a model's training cutoff.
 
-Where your memory of a library disagrees, prefer the removals, moves and new required \
-parameters it reports; it does not see behaviour changes or runtime shims (a library may still \
+Where your memory of a library disagrees, prefer the removals, moves, new required \
+parameters and switched dependencies (the release requires another library instead, such as \
+`httpx2` instead of `httpx`, and takes its objects) it reports; it does not see behaviour \
+changes or runtime shims (a library may still \
 accept a removed argument, with a warning). The tools read PyPI metadata and package sources \
 statically; they never run package code or call a model. Names it calls "similar" are not \
 confirmed as replacements."""
@@ -101,6 +117,7 @@ _PROVIDER_PREFIXES = frozenset({*KNOWN_PROVIDERS, *PROVIDER_ALIASES})
 _CLAUDE_FAMILIES = ("sonnet", "opus", "haiku", "fable")
 # Output sections, hard breaks first. The listing limit is shared between them.
 _SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Dependencies switched", (DEPENDENCY_SWITCHED,)),
     ("Removed or moved", (REMOVED, MOVED)),
     ("Parameters removed", (PARAM_REMOVED,)),
     ("Parameters now required", (PARAM_REQUIRED,)),
@@ -254,10 +271,12 @@ class Tools:
 
         Returns Markdown: a "# <package> <old> -> <new>" heading; bullets with both versions
         and their release dates and the number of breaking changes and new deprecations by
-        kind; then sections "Removed or moved", "Parameters removed", "Parameters now
-        required", "Changed kind", "Now keyword-only or positional-only" and "Deprecated", one
-        line per change with what to use instead when the diff knows it (the new import, the
-        new signature, a parameter probably renamed in place, what the old version's
+        kind; then sections "Dependencies switched" (the package requires another library
+        instead of one it required, such as `httpx2` instead of `httpx`, and its signatures
+        take that library's objects), "Removed or moved", "Parameters removed", "Parameters
+        now required", "Changed kind", "Now keyword-only or positional-only" and "Deprecated",
+        one line per change with what to use instead when the diff knows it (the new import,
+        the new signature, a parameter probably renamed in place, what the old version's
         deprecation text said), and names that merely look similar, labelled as not confirmed.
         A change reachable under several import paths is listed once. If the package had no
         release by the cutoff, a short note says its whole API was released after your
@@ -503,7 +522,15 @@ def change_line(change: APIChange) -> str:
 
     Names that merely look similar are labelled as not confirmed (and left out where the
     library says there is no replacement); a parameter renamed in place is a probable rename.
+    A switched dependency says where its types are now taken (notes.dependency_detail) and
+    where the pinned version's source still names the old one.
     """
+    if change.kind == DEPENDENCY_SWITCHED:  # the counts and places the note leaves out
+        parts = [change.describe(versioned=False), dependency_detail(change)]
+        runtime = runtime_text([change])
+        if runtime:
+            parts.append(runtime.rstrip("."))
+        return _clip("; ".join(parts), 1500)
     parts = [change.describe(versioned=False)]
     if change.kind == MOVED and change.moved_to:
         module, _, name = change.moved_to.rpartition(".")
@@ -654,7 +681,7 @@ def _used_section(scan: ScanResult) -> list[str]:
     ]
     room = PROJECT_BUDGET // 2
     for i, u in enumerate(used):
-        entry = _used_entry(u)
+        entry = _used_entry(scan, u)
         if _size(entry) > room:
             out += ["", f"- ... and {len(used) - i} more: pass `only` to see them"]
             break
@@ -665,7 +692,7 @@ def _used_section(scan: ScanResult) -> list[str]:
     return out
 
 
-def _used_entry(u: UsedAPI) -> list[str]:
+def _used_entry(scan: ScanResult, u: UsedAPI) -> list[str]:
     """One used API in project_changes."""
     p = u.package
     _, change = changes_text(u.changes, code=True)
@@ -680,6 +707,11 @@ def _used_entry(u: UsedAPI) -> list[str]:
         f"  - used in {'; '.join(wheres) or 'your code'}",
         f"  - note: {_clip(u.note.line, 1200)}",
     ]
+    if u.note.change.kind == DEPENDENCY_SWITCHED:
+        out.append(f"  - places: {_clip(dependency_detail(u.note.change), 1500)}")
+    installed = installed_text(scan, u)
+    if installed:
+        out.append(f"  - installed: {installed}")
     runtime = runtime_text(u.changes)
     if runtime:
         out.append(f"  - runtime: {runtime}")
@@ -830,7 +862,16 @@ def _names(change: APIChange, segments: list[str], *, strict: bool) -> bool:
     member of the class matches). A removed or moved object also matches when an earlier
     segment names it: without ``Client.completions``, every ``client.completions.<x>`` call
     breaks. Other earlier segments, such as a variable holding a client, are ignored.
+
+    A switched dependency matches a symbol that ends in one of its terms (the two
+    distributions' modules, the switched type names and parameters, the switched callables:
+    ``http_client``, ``Timeout``, ``OpenAI``) or starts with one of its modules
+    (``httpx.AsyncClient``).
     """
+    if change.kind == DEPENDENCY_SWITCHED:
+        d = change.dependency or {}
+        modules = {str(m).lower() for m in (*d.get("old_modules", ()), *d.get("new_modules", ()))}
+        return segments[-1] in _dependency_terms(change) or segments[0] in modules
     name = change.name.lower()
     owner = (change.owner or "").lower()
     parameter = (change.parameter or "").lower()
@@ -849,6 +890,16 @@ def _names(change: APIChange, segments: list[str], *, strict: bool) -> bool:
     if owner:
         return before == owner
     return before in change.path.lower().split(".")[:-1]
+
+
+def _dependency_terms(change: APIChange) -> set[str]:
+    """What names a switched dependency (lower case): see :func:`_names`."""
+    d = change.dependency or {}
+    terms = {change.name, change.switched_to or ""}
+    terms |= {str(m) for m in (*d.get("old_modules", ()), *d.get("new_modules", ()))}
+    terms |= {str(n) for n in (*d.get("names", ()), *d.get("parameters", ()))}
+    terms |= {p.rsplit(".", 1)[-1] for p in change.import_paths or ()}
+    return {t.lower() for t in terms if t}
 
 
 _WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|[A-Z]")

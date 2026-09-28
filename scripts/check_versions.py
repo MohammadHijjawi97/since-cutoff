@@ -27,6 +27,7 @@ _VERSION = r"(\d+\.\d+\.\d+\S*)"
 # The first release with `since-cutoff status --hook`, which the plugin's SessionStart hook runs.
 STATUS_SINCE = (0, 4, 0)
 HOOKS = "hooks/hooks.json"
+SKILL = "skills/since-cutoff/SKILL.md"
 
 
 def _text(name: str) -> str:
@@ -46,6 +47,19 @@ def _pin(name: str) -> str | None:
     """The version in an MCP launcher config: `uvx since-cutoff==X mcp`."""
     first = _json(name)["mcpServers"][PACKAGE]["args"][0]
     return first.split("==", 1)[1] if first.startswith(f"{PACKAGE}==") else None
+
+
+def _skill_version(name: str = SKILL) -> str | None:
+    """The skill's version: `version: "X"` under `metadata:` in its frontmatter. The Agent
+    Skills spec has no top-level `version` (claude.ai uploads and the Skills API reject one), and
+    its `metadata` maps strings to strings, hence the quotes."""
+    front = re.match(r"---\n(.*?\n)---\n", _text(name), re.DOTALL)
+    if front is None:
+        return None
+    found = re.search(
+        rf'^metadata:\n(?:  .*\n)*?  version: "{_VERSION}"$', front.group(1), re.MULTILINE
+    )
+    return found.group(1) if found else None
 
 
 def _hook_pin(name: str = HOOKS) -> str | None:
@@ -103,6 +117,7 @@ FIELDS: dict[str, Callable[[], Any]] = {
     "plugin.json version": lambda: _json("plugin.json")["version"],
     ".codex-plugin/plugin.json version": lambda: _json(".codex-plugin/plugin.json")["version"],
     "gemini-extension.json version": lambda: _json("gemini-extension.json")["version"],
+    f"{SKILL} metadata.version": _skill_version,
     ".mcp.json pin": lambda: _pin(".mcp.json"),
     "mcp.json pin": lambda: _pin("mcp.json"),
     "CITATION.cff version": lambda: _match("CITATION.cff", rf"^version: {_VERSION}$"),

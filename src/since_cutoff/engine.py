@@ -41,9 +41,7 @@ from packaging.utils import canonicalize_name
 
 from since_cutoff import __version__, hosts, prompts
 from since_cutoff.apidiff import (
-    DEPRECATED as CHANGE_DEPRECATED,
-)
-from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
     DIFF_SCHEMA,
     MOVED,
     PARAM_KEYWORD_ONLY,
@@ -53,6 +51,9 @@ from since_cutoff.apidiff import (
     APIChange,
     diff_sources,
     load_api,
+)
+from since_cutoff.apidiff import (
+    DEPRECATED as CHANGE_DEPRECATED,
 )
 from since_cutoff.baselines import (
     ARM_SIGNATURES,
@@ -136,6 +137,16 @@ _PARAMS_CLASS = re.compile(r"Params\w*$")
 # A name private to a library, in a type annotation: ``_ClassScanMapperConfig``,
 # ``orm._ClassScanMapperConfig`` (not a dunder).
 _PRIVATE_TYPE = re.compile(r"(?:^|\W)_(?!_)[A-Za-z]\w*")
+
+
+def probeable(change: APIChange) -> bool:
+    """Whether ``run`` may probe a change. Not a deprecation marked by a library's own
+    decorator: the type checker does not see it, so a probe could never show whether the model
+    avoids it. Not a switched dependency (DEPENDENCY_SWITCHED): the task templates need a
+    callable and a parameter to exercise, which it has not (a task that builds the client with
+    a custom HTTP client or timeout, type-checked with the new library installed, is for
+    later)."""
+    return not change.deprecated_by and change.kind != DEPENDENCY_SWITCHED
 
 
 def _not_worth_a_note(change: APIChange, lost: set[str]) -> bool:
@@ -324,6 +335,11 @@ class UsedAPI:
     uses: list[Use]  # most specific first (selection.uses)
     forms: dict[str, str]  # change id -> OLD_FORM or USES_API (selection.form)
     match: str | None  # PATH_MATCH, or NAME_MATCH when only a name matched
+    # A switched dependency (DEPENDENCY_SWITCHED): the project's own entry for the distribution
+    # the package no longer requires, ``{"name", "version", "source", "direct"}`` as
+    # Project.dependencies has it (a lockfile, the environment, a pin), or None when the
+    # project lists no such distribution. None for any other API.
+    installed: dict[str, Any] | None = None
 
     @property
     def changes(self) -> list[APIChange]:
@@ -422,7 +438,10 @@ class ScanResult:
             found = ordered(u for its in per_change.values() for u in its)
             how = {u.how for u in found}
             match = PATH_MATCH if PATH_MATCH in how else NAME_MATCH if how else None
-            by_package.setdefault(p.name, []).append(UsedAPI(p, note, found, forms, match))
+            installed = self.installed(note.change)
+            by_package.setdefault(p.name, []).append(
+                UsedAPI(p, note, found, forms, match, installed)
+            )
         order = [p.name for p in self.packages if p.name in by_package]
         order.sort(key=lambda name: all(u.form != OLD_FORM for u in by_package[name]))
         used = [
@@ -430,6 +449,28 @@ class ScanResult:
         ]
         self.__dict__["_used"] = (key, used)
         return list(used)
+
+    def installed(self, change: APIChange) -> dict[str, Any] | None:
+        """For a switched dependency, the project's entry for the distribution the package
+        no longer requires (UsedAPI.installed), or None: another package may still need it,
+        so it is often still installed (12 of the 36 pins of examples/ai-stack need httpx).
+        Without a lockfile, the dependencies list only the declared ones: the virtual
+        environment's own list (Project.installed) has what they installed."""
+        if change.kind != DEPENDENCY_SWITCHED:
+            return None
+        wanted = canonicalize_name(change.name)
+        dep = next((d for d in self.project.dependencies if d.key == wanted), None)
+        if dep is None:
+            version = self.project.installed.get(wanted)
+            if version is None:
+                return None
+            return {"name": wanted, "version": version, "source": "installed", "direct": False}
+        return {
+            "name": dep.key,
+            "version": dep.version,
+            "source": dep.pinned_in or dep.source,
+            "direct": dep.direct,
+        }
 
     def _used_key(self) -> tuple[Any, ...]:
         """What :meth:`used_apis` depends on, to know when to compute it again."""
@@ -1114,7 +1155,16 @@ class Engine:
 
         if len(pending) <= 1 or not self.processes or os.environ.get("SINCE_CUTOFF_NO_PROCESSES"):
             for s, old, new, names in pending:
-                result = diff_sources(s.name, old.version, old.root, new.version, new.root, names)
+                result = diff_sources(
+                    s.name,
+                    old.version,
+                    old.root,
+                    new.version,
+                    new.root,
+                    names,
+                    old_requires=old.requires,
+                    new_requires=new.requires,
+                )
                 self._finish(s, result, self._diff_key(s))
             return
         workers = max(1, min(len(pending), (os.cpu_count() or 2) - 1, 6))
@@ -1122,7 +1172,15 @@ class Engine:
         try:
             futs = {
                 pool.submit(
-                    diff_sources, s.name, old.version, old.root, new.version, new.root, names
+                    diff_sources,
+                    s.name,
+                    old.version,
+                    old.root,
+                    new.version,
+                    new.root,
+                    names,
+                    old_requires=old.requires,
+                    new_requires=new.requires,
                 ): s
                 for s, old, new, names in pending
             }
@@ -1216,11 +1274,7 @@ class Engine:
 
     def run(self, scan: ScanResult, *, fix: bool = True) -> RunResult:
         result = RunResult(scan, settings=self.run_settings(scan))
-        # Deprecations marked by a library's own decorator are invisible to the type checker,
-        # so a probe could never show whether the model avoids them.
-        changes_by_pkg = {
-            p.name: [c for c in p.changes if not c.deprecated_by] for p in scan.changed
-        }
+        changes_by_pkg = {p.name: [c for c in p.changes if probeable(c)] for p in scan.changed}
         if not changes_by_pkg:
             return result
         budget = max(0, self.settings.max_probes)

@@ -18,6 +18,7 @@ from dataclasses import replace
 from typing import NamedTuple
 
 from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
     DEPRECATED,
     KIND_PRIORITY,
     MOVED,
@@ -52,7 +53,14 @@ USE_KEYWORD = "keyword"
 USE_CALL = "call"
 USE_MEMBER = "member"
 USE_REFERENCE = "reference"
-_USE_ORDER = {USE_KEYWORD: 0, USE_CALL: 1, USE_MEMBER: 2, USE_REFERENCE: 3}
+# A file that imports a distribution the package switched away from (DEPENDENCY_SWITCHED):
+# ``names`` is that module, then the switched names the file reads on it (``httpx.Client``),
+# the switched parameters it passes a value of it to (``OpenAI(http_client)``) and the switched
+# types of it it catches around the package's calls (``except httpx.HTTPError``).
+USE_DEPENDENCY = "dependency"
+# How dependency_names writes a caught exception: ``except httpx.HTTPError``.
+CATCHES = "except "
+_USE_ORDER = {USE_KEYWORD: 0, USE_CALL: 1, USE_MEMBER: 2, USE_REFERENCE: 3, USE_DEPENDENCY: 0}
 # Changes whose use is never the old form yet: a static match cannot tell whether a call
 # passes a now-required, keyword-only or positional-only parameter the right way.
 _NEVER_OLD_FORM = (PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
@@ -391,11 +399,19 @@ def _best(change: APIChange, files: Sequence[FileUse]) -> tuple[tuple[str, ...],
     for how in (PATH_MATCH, NAME_MATCH):
         best: tuple[str, ...] = ()
         for _, names, matched in found:
-            if matched == how and len(names) > len(best):
+            if matched == how and _weight(change, names) > _weight(change, best):
                 best = names
         if best:
             return best, how
     return (), None
+
+
+def _weight(change: APIChange, names: tuple[str, ...]) -> tuple[bool, int]:
+    """How much a file's names of a change say: more names, and for a switched dependency
+    the old form first (a file that hands ``httpx`` objects over, before one that reads more
+    of ``httpx`` for itself)."""
+    handed = change.kind == DEPENDENCY_SWITCHED and form(change, names) == OLD_FORM
+    return handed, len(names)
 
 
 def _with_paths(change: APIChange) -> list[tuple[APIChange, frozenset[str]]]:
@@ -455,6 +471,8 @@ def ordered(found: Iterable[Use]) -> list[Use]:
 
 
 def _use_kind(change: APIChange, f: FileUse, names: tuple[str, ...]) -> str:
+    if change.kind == DEPENDENCY_SWITCHED:
+        return USE_DEPENDENCY
     if len(names) == 2:
         return USE_KEYWORD
     if names[0] in f.calls:
@@ -471,7 +489,19 @@ def form(change: APIChange, names: tuple[str, ...]) -> str:
     A parameter that is now required, keyword-only or positional-only is always "uses this
     API": whether a call passes it the new way is not something a name match can tell. So is a
     function whose deprecation covers one of its call forms (an ``@overload``) only.
+
+    A switched dependency (:func:`dependency_names`) is in the old form where the file hands
+    a value of the old distribution, by keyword or by position, to a switched parameter of a
+    switched constructor, function, or classmethod or staticmethod on its class
+    (``OpenAI(http_client=httpx.Client())``, ``hf_raise_for_status(httpx.get(url))``,
+    ``FastMCP.from_openapi(spec, client=httpx.AsyncClient())``), or catches one of its
+    switched types around the package's calls; reading its names (``httpx.Client``) or
+    importing it is "uses this API": the file may use it for itself. A switched keyword
+    without the old distribution (``OpenAI(timeout=30)``) is no use of it at all.
     """
+    if change.kind == DEPENDENCY_SWITCHED:
+        handed = any("(" in n or n.startswith(CATCHES) for n in names[1:])
+        return OLD_FORM if handed else USES_API
     if not names or change.kind in _NEVER_OLD_FORM or change.call_form:
         return USES_API
     if change.parameter:
@@ -496,6 +526,8 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
     by its attribute name (``client.messages.create``), to a call at the end of such a chain
     (FileUse.keyword_chains). ``temperature=`` passed to another library's ``create`` in the
     same file is not the old form of ``Messages.create``."""
+    if change.kind == DEPENDENCY_SWITCHED:
+        return dependency_names(change, f)
     owner, name = change.owner, change.name
     parameter = change.parameter
     wanted = parameter if parameter and not parameter.startswith("__") else None
@@ -538,6 +570,75 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
     return (callable_name,)
 
 
+def dependency_names(change: APIChange, f: FileUse) -> tuple[str, ...]:
+    """What a file that imports the package does with the distribution the package switched
+    away from (DEPENDENCY_SWITCHED): ``()`` when it does not import it; else its module, then
+    the switched names it reads on it (``httpx.Client``, ``httpx.Timeout``: APIChange
+    .dependency's ``names``), then each switched parameter of a switched constructor, function,
+    or classmethod or staticmethod on its class (``calls``) it passes a value that reads the
+    old distribution to, by keyword or by position (``OpenAI(http_client)`` for
+    ``OpenAI(http_client=httpx.Client())``, or for ``c`` after ``c = httpx.Client()``:
+    FileUse.keyword_modules; ``hf_raise_for_status(response)`` for
+    ``hf_raise_for_status(httpx.get(url))``: FileUse.positional_modules), then each switched
+    type of it it catches around a call of the package (``except httpx.HTTPError``:
+    FileUse.handled). Only the file's own names are read: what a variable holds is known only
+    from what the file assigns it, and ``OpenAI(timeout=30.0)`` next to an unrelated
+    ``httpx.get`` hands over nothing."""
+    d = change.dependency or {}
+    old = [str(m) for m in d.get("old_modules") or ()]
+    imported = [m for m in old if m in f.paths]
+    if not imported:
+        return ()
+    names = {str(n) for n in d.get("names") or ()}
+    caught = sorted(
+        {
+            exception
+            for exception, module in f.handled
+            if module in _package_modules(change)
+            and exception.rsplit(".", 1)[-1] in names
+            and any(exception.startswith(m + ".") for m in imported)
+        }
+    )
+    reads = sorted(
+        p
+        for p in f.paths
+        if p.rsplit(".", 1)[-1] in names
+        and any(p.startswith(m + ".") for m in imported)
+        and p not in caught
+    )
+    calls: set[tuple[str, str]] = set()
+    by_position: dict[tuple[str, int], str] = {}
+    for c in d.get("calls") or ():
+        if len(c) >= 2:
+            calls.add((str(c[0]), str(c[1])))
+            # ``[path, parameter, position]``; a diff made earlier in schema 19 has no position.
+            if len(c) > 2 and isinstance(c[2], int) and not isinstance(c[2], bool):
+                by_position[(str(c[0]), c[2])] = str(c[1])
+    tops = {m.split(".")[0] for m in imported}
+    handed = {(path, keyword) for path, keyword, module in f.keyword_modules if module in tops}
+    handed |= {
+        (path, by_position[(path, i)])
+        for path, i, module in f.positional_modules
+        if module in tops and (path, i) in by_position
+    }
+    passes = sorted({f"{_call_name(path)}({keyword})" for path, keyword in handed & calls})
+    return (imported[0], *reads, *passes, *(CATCHES + e for e in caught))
+
+
+def _call_name(path: str) -> str:
+    """How a switched call is named: ``OpenAI`` for ``openai.OpenAI``, ``FastMCP.from_openapi``
+    for a classmethod on its class (a lower-case name after a capitalised one)."""
+    parts = path.split(".")
+    if len(parts) > 2 and parts[-2][:1].isupper() and not parts[-1][:1].isupper():
+        return ".".join(parts[-2:])
+    return parts[-1]
+
+
+def _package_modules(change: APIChange) -> set[str]:
+    """The top-level modules of a change's package: ``huggingface_hub``."""
+    return {p.split(".")[0] for p in (change.path, *(change.import_paths or ())) if p}
+
+
 def _pair_chains(change: APIChange, f: FileUse) -> list[str]:
     """The chains of the file that reach a method or attribute by the attribute named after
     its class (``client.messages.create`` for ``Messages.create``), with ``beta`` in them
@@ -565,11 +666,14 @@ def usage(change: APIChange, files: Sequence[FileUse] = ()) -> int:
     """How directly the project's code touches a change.
 
     2: it names exactly what changed (the changed name, or a callable and its changed
-    parameter); 1: it names the callable but not the changed parameter; 0: neither.
+    parameter); 1: it names the callable but not the changed parameter; 0: neither. For a
+    switched dependency: 2 in the old form, 1 when a file only imports or reads the old one.
     """
     names = used_names(change, files)
     if not names:
         return 0
+    if change.kind == DEPENDENCY_SWITCHED:
+        return 2 if form(change, names) == OLD_FORM else 1
     return 2 if len(names) == 2 or not change.parameter else 1
 
 
@@ -585,6 +689,9 @@ def uses_text(change: APIChange, files: Sequence[FileUse]) -> str | None:
     names, how = _best(change, files)
     if not names:
         return None
+    if change.kind == DEPENDENCY_SWITCHED:  # what it reads and passes, else the import
+        shown = [f"`{n}`" for n in names[1:] or names]
+        return ", ".join(shown[:-1]) + f" and {shown[-1]}" if len(shown) > 1 else shown[0]
     text = " and ".join(f"`{n}`" for n in names)
     return f"{text}, {MATCHED_BY_NAME}" if how == NAME_MATCH else text
 
@@ -630,7 +737,12 @@ def tier(change: APIChange) -> int:
     3. a change to a member: a parameter removed or now required, keyword-only or
        positional-only, a method or attribute removed;
     4. the rest: deprecations (they still work), kind changes.
+
+    A switched dependency is tier 0, ahead of the moves (:func:`within_tier`): it concerns
+    every object of the old distribution that code hands the package, its client included.
     """
+    if change.kind == DEPENDENCY_SWITCHED:
+        return TIER_IMPORT_PATH
     top_level = not change.owner and any(p.count(".") == 1 for p in paths(change))
     if change.kind == MOVED:
         if _is_module(change) or top_level:
@@ -677,7 +789,10 @@ def within_tier(change: APIChange) -> int:
     """The order inside a :func:`tier`, lower first: classes, functions and modules (0), then
     a name only no longer re-exported (1, :func:`dropped_reexport`), then values and type
     aliases (2, :func:`is_value`): ``from anthropic import HUMAN_PROMPT`` breaks too, but the
-    module that moved out of ``anthropic.types.beta`` matters more to new code."""
+    module that moved out of ``anthropic.types.beta`` matters more to new code. A switched
+    dependency comes before all of them (-1)."""
+    if change.kind == DEPENDENCY_SWITCHED:
+        return -1
     if is_value(change):
         return 2
     return 1 if dropped_reexport(change) else 0

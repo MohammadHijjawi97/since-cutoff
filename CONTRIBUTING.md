@@ -119,7 +119,8 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
      `date-released`) and the `since-cutoff-version` default in `action.yml`;
    - the plugin and extension manifests: `.claude-plugin/plugin.json`, the plugin entry in
      `.claude-plugin/marketplace.json`, `plugin.json`, `.codex-plugin/plugin.json` and
-     `gemini-extension.json`;
+     `gemini-extension.json`, and the skill's `metadata.version` in
+     `skills/since-cutoff/SKILL.md`;
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
    - the README pins: the pre-commit `rev: vX.Y.Z` in `README.md` and `README.zh-CN.md`, and
      the `since-cutoff-version` default in the action's input table;

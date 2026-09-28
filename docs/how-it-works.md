@@ -64,6 +64,7 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    | keyword-only | `f(a, b)` must now be `f(a, b=b)` |
    | positional-only | `f(a=a)` must now be `f(a)` |
    | changed kind | `pkg.Grammar` was a class and is now an attribute |
+   | dependency switched | openai 3.19.2 requires `httpx2` instead of `httpx`, and `OpenAI(http_client=...)` takes an `httpx2.Client` ([below](#a-dependency-the-pinned-release-switched)) |
    | deprecated | `@deprecated` (PEP 702) added since the cutoff, a library's own decorator whose name contains "deprecat", or a removed name the module still serves with a warning through `__getattr__`, a table of deprecated aliases or a metaclass property (`scan` lists all of them, with the library's message; `run` probes only the PEP 702 ones). A deprecation on some overloads only is a deprecated call form (`call_form` in results.json) |
 
    Default values, attribute values and return annotations are ignored. Objects are reported
@@ -168,6 +169,7 @@ them. A replacement is named only with evidence, and the tag says which:
 | none | "`Client.send()` no longer accepts `temperature`; do not pass it. since-cutoff found no replacement in toylib's deprecation text." When the pinned method takes `extra_body` or `extra_query` (an SDK method that sends a request: anthropic, openai and other Stainless-generated clients), the removed parameter left the signature but perhaps not the API, so the note says so instead of "do not pass them": "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text." Where the library's own text says so: "huggingface-hub's deprecation text says there is no replacement for `resume_download`." Advice in that text that is not stated as a replacement is quoted: "On `x`, pkg 1.0 said: "…"" | `[diff]` |
 | the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement ("Use `stop` instead", "replaced by", "renamed to", "in favour of"), and the name exists in the pinned version | "Use `stop` instead of `stop_sequences`." | `[diff + library]` |
 | a moved object that looks like the same object: a class or module keeps at least half of its public names, a function its parameters, a value the same value | "`pkg.helpers.Session` moved to `pkg.sessions.Session`: import it with `from pkg.sessions import Session`." | `[diff + move checked]` |
+| the older release's Requires-Dist lists a library the pinned one does not, and the public API that named its types names another required library's types, or a copy it ships, instead ([below](#a-dependency-the-pinned-release-switched)) | "openai 3.19.2 requires `httpx2` instead of `httpx`: `OpenAI(http_client=...)` takes `httpx2.Client` (`httpx2.AsyncClient` for `AsyncOpenAI`), `OpenAI(timeout=...)` takes `httpx2.Timeout` and `OpenAI(base_url=...)` takes `httpx2.URL`. Use `httpx2` there, not `httpx`." | `[diff + metadata]` |
 | a new parameter in the same position with the same annotation | "`begin` was probably renamed to `start` (same position and type)." | `[diff; probable rename]` |
 | names that merely look similar | Nothing, by default. The terminal, report.md and the MCP tools say "similar parameters in 2.0.0, not confirmed as replacements: `x`", and nothing where the library says there is no replacement. `sync --suggestions` adds "Similar names in 2.0.0, not confirmed as replacements: `x`." | `[diff; not confirmed]`, with `--suggestions` |
 
@@ -185,6 +187,99 @@ report.md, the MCP tools and the JSON add a **Runtime** line: huggingface-hub 2.
 (`huggingface_hub/utils/_validators.py:178-203`), so calls passing them may run with a warning,
 while type checkers reject them. The block leaves it out: the advice is the same either way.
 [What "verified" means](#what-verified-means) says what each tag checks and what it does not.
+
+### A dependency the pinned release switched
+
+A diff of a package's own names does not see this one: openai 3, anthropic 1.8, huggingface-hub
+2.0 and mcp 2.2 require `httpx2` and no longer `httpx`, and their signatures take `httpx2`
+objects. Code written for the older release passes an `httpx.Client` or an `httpx.Timeout`, or
+catches `httpx.HTTPError` from huggingface-hub. So the diff also compares the two releases'
+Requires-Dist (their wheels' METADATA, stored with the sources), and when the pinned one dropped
+a requirement, it reads where each public API names that library's types. A
+`dependency_switched` change (diff schema 19) needs all of:
+
+- a library X the older release requires and the pinned one does not: a base requirement, or
+  one of an extra both releases define (fastmcp-slim 4.0 lists `httpx2` where 3.4 listed `httpx`
+  for its `client`, `mcp` and `server` extras; the `fastmcp` distribution installs the `client`
+  and `server` ones); not a typing helper (`typing-extensions`, `typing-inspection`,
+  `mypy-extensions`, `eval-type-backport`, `typed-ast`), one of the package's own modules, or a
+  module its wheel ships itself (pytest 7.2 dropped `py` and has a `py.py`);
+- places in the public API (a parameter's, return's or attribute's annotation, a base class or
+  a base's type argument, a re-export; not in `cli`, `commands`, `testing` or `experimental`
+  modules) that named X types and, at the same place, name the types of Y, with the same type
+  name (`httpx.Client` -> `httpx2.Client`) at half of them or more. Y is a library the pinned
+  release requires (for an extra's X, with that extra), or a copy of X it ships: a private module
+  named after it that does not import X itself (typer 0.27 no longer requires `click` and ships
+  `typer._click`; langsmith 0.14's `_openapi_client._httpx` imports `httpx2` or else `httpx`, so
+  it is a shim, not a copy);
+- no X left anywhere in the pinned release's public API, defaults and command-line modules
+  included: langsmith 0.14 dropped `httpx` from its requirements and still names it, and hishel
+  1 moved it to an extra.
+
+A library is looked for under its normalised name only (`httpx2`, `huggingface_hub`), so the
+result does not depend on what else is in the cache; one whose module is named otherwise
+(Pillow's `PIL`) is missed, never matched wrongly. `Annotated[...]` counts only its type and
+`Literal[...]` nothing. A base class counts through the package's own classes (mcp 2.2's
+`OAuthClientProvider` derives from its `RedirectAwareAuth`, which derives from `httpx2.Auth`),
+but a subclass of a class whose own base switched is not counted again. A parameter is counted
+by the type it names now: openai 3's `http_client` takes an `httpx2.Client` in 8 signatures and
+an `httpx2.AsyncClient` in 6. A constructor is recorded under its class's path
+(`openai.OpenAI`), the way code calls it, a classmethod or staticmethod under its class's
+(`fastmcp.FastMCP.from_openapi`), and each switched parameter with its position in the call
+(after `self` or `cls`), or none for a keyword-only one.
+
+The note, tagged `[diff + metadata]`, is one or two sentences of at most 300 characters: what
+the pinned release requires instead ("mcp 2.2.0 requires `httpx2` instead of `httpx`";
+"fastmcp-slim 4.0.10's `client`, `mcp` and `server` extras require `httpx2` instead of
+`httpx`"; "typer 0.27.2 no longer requires `click` and ships `typer._click` instead"; and where
+Y was already required, "gradio 4.28.3 no longer requires `requests`; its API names `httpx`
+types instead"), up to three places (the signatures code most likely calls first, a sync one
+with its async twin's type, a base class, a re-export), and what to use there: Y, or for a
+copy, the package's own names for its classes (`typer.BadParameter`, `typer.Context`). What the
+note leaves out is in a **Places** line of `scan --all` and report.md, and in the MCP tools:
+the Requires-Dist entries ("its Requires-Dist lists `httpx2<3,>=2.12.0` and no `httpx`",
+or which extra still lists X), how many places switched, and more of them, each with how many
+other signatures name the same type there.
+
+A file that imports the package uses it in the old form when it hands a value that reads X, by
+keyword or by position, to a switched parameter of a switched constructor, function, or
+classmethod or staticmethod called on its class (`OpenAI(http_client=httpx.Client())`, or
+`OpenAI(http_client=c)` after `c = httpx.Client()` or with `c: httpx.Client`;
+`hf_raise_for_status(httpx.get(url))`; `FastMCP.from_openapi(spec, client=httpx.AsyncClient())`),
+or catches a switched X type around a call into the package (`except httpx.HTTPError` around
+`hf_hub_download(...)`). Only what the file shows counts: reading X's names for itself
+(`session = httpx.Client()`) or importing both is "uses this API", `OpenAI(timeout=30.0)` next
+to an unrelated `httpx.get` hands nothing over, an argument after `*args` has no known
+position, and an instance method's argument is not counted (the file may have the instance from
+anywhere). `OpenAI(timeout=30)` without X is no use at all. `sync --scope imported` puts the
+switch first among the package's notes. What the pinned release does with X objects at run
+time differs (according to their sources, openai 3.19.2 converts some when `httpx` is
+imported, and anthropic 1.8.0 raises `TypeError`), so the note does not say. The terminal,
+report.md, the MCP tools and the JSON (`used_apis[].installed`) add an **Installed** line,
+whether the project still has X: its lockfile or pins, or else its virtual environment,
+transitive distributions included (another package may need X: 12 of the 36 pins in
+[the AI stack example](ai-stack.md) require `httpx`). A **Runtime** line points to where the
+pinned source still imports X or has its name as a string; a name a module only exports (in
+`__all__`, compared in a module-level `__getattr__`, returned by `__dir__`: huggingface-hub
+2.0's `utils` answers `utils.httpx` with `httpx2`) is not one, nor is a package name in a list
+of requirements with versions or in a documentation keyword (`examples=`, `description=`:
+fastmcp 4's `Field(examples=[["fastmcp>=2.0,<3", "httpx", "pandas>=2.0"]])`). `run` does not
+probe the switch: its task templates need a callable and a parameter.
+
+Measured on 283 release pairs from PyPI with the first version of this rule (diff schema 18:
+base requirements only, Y a requirement of the pinned release; 271 of the pairs dropped 530 base
+requirements between them): 16 switches, each with the same type names on both sides at half of
+its places or more: `httpx` -> `httpx2` in openai (2 pairs), anthropic (4), huggingface-hub (1)
+and mcp (2), and `requests` -> `httpx2` or `httpx` in huggingface-hub (4), litellm (1) and
+gradio (2). Three pairs that a looser rule, without the same names and the typing helpers, also
+counted are not switches: crewai 1.15's `TokenCalcHandler` derives from pydantic's `BaseModel`
+where it derived from langchain's `BaseCallbackHandler`, and flask-limiter 3.12 and
+pytest-asyncio 0.25 dropped `typing-extensions`. In that measurement the pass, which runs only
+when a requirement went, added a median of 0.09 s to those diffs (1 s at the 90th percentile,
+10.7 s for a transformers pair whose two releases take 82 s to load). The extras and shipped
+copies of schema 19 were checked on fastmcp-slim 3.4.2 -> 4.0.10 and typer 0.15.1 -> 0.27.2,
+and langsmith 0.7.1 -> 0.14.1 stays no switch (the network tests of
+`tests/test_dependency_switch.py`); the 283 pairs were not measured again.
 
 ### The block
 
@@ -238,8 +333,9 @@ file:
 5. **Scope and suggestions.** `--scope imported` adds, for each changed package the code imports,
    the changes most likely to matter (up to 5 APIs per package, `--per-package N` for another
    number; fields of params classes that mirror a lost parameter, and hooks with a parameter
-   whose type is private to the library, are left out), in this order: import paths that no
-   longer work (a module or package that moved, a top-level name removed), then changes with a
+   whose type is private to the library, are left out), in this order: a library the pinned
+   release requires instead of one it required, then import paths that no longer work (a
+   module or package that moved, a top-level name removed), then changes with a
    known replacement (`[diff + library]`, a rename or move the diff checked), then removed
    classes and functions (and, after them, names only no longer re-exported: the object is
    still there, in a module below), then parameters and members, then deprecations; within
@@ -445,6 +541,7 @@ was checked, and nothing else is claimed:
 | `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release on or before the model's training cutoff, and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
+| `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
 | `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name. A guess, labelled as one. | That it is the same parameter. |
 | `[type-checked]` | Written by a model during `since-cutoff run` and kept because its example passed the type check below. | Behaviour; that the bullet's explanation is true beyond the names it shows. |
 | `[not confirmed]` | Only with `sync --suggestions`: names in the pinned version that look similar to what was removed (the bullet's tag then reads `[diff; not confirmed]`). | That any of them replaces it. |

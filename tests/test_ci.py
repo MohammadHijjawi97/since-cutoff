@@ -453,9 +453,10 @@ def test_every_version_field_names_this_release(capsys) -> None:
     check = _check_versions()
     found = check.versions()
     # The package, server.json (twice), the Claude Code, Agent Plugins, Codex and Gemini
-    # manifests, both MCP launcher pins, CITATION.cff, the action's default, the changelog and
-    # the README pins; the plugin's SessionStart hook is checked on its own (see below).
-    assert len(found) == 16
+    # manifests, the skill's metadata.version, both MCP launcher pins, CITATION.cff, the action's
+    # default, the changelog and the README pins; the plugin's SessionStart hook is checked on
+    # its own (see below).
+    assert len(found) == 17
     assert dict.fromkeys(found, __version__) == found
     assert check.problems() == []  # including CITATION's date = the changelog's release date
     assert check.main(["check_versions.py", f"v{__version__}"]) == 0
@@ -465,7 +466,82 @@ def test_every_version_field_names_this_release(capsys) -> None:
     assert check.main(["check_versions.py", "v99.0.0"]) == 1
     out = capsys.readouterr().out
     assert f"gemini-extension.json version: {__version__} (expected 99.0.0)" in out
+    assert f"SKILL.md metadata.version: {__version__} (expected 99.0.0)" in out
     assert out.count("(expected 99.0.0") == len(found) + 1
+
+
+def test_the_skill_version_is_its_frontmatter_metadata(tmp_path, monkeypatch) -> None:
+    """The release check reads `version` under `metadata:` in the skill's frontmatter, quoted
+    (the spec's metadata maps strings to strings), and nowhere else."""
+    check = _check_versions()
+    label = "skills/since-cutoff/SKILL.md metadata.version"
+    assert check.versions()[label] == __version__
+    monkeypatch.setattr(check, "ROOT", tmp_path)
+    skill = tmp_path / "skills" / "since-cutoff" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+
+    def read(text: str) -> str | None:
+        skill.write_text(text, encoding="utf-8")
+        return check.versions()[label]
+
+    meta = 'metadata:\n  author: Someone\n  version: "{}"\n'
+    body = "\n# since-cutoff\n"
+    assert read(f"---\nname: since-cutoff\n{meta.format('0.5.0')}---\n{body}") == "0.5.0"
+    assert read(f"---\n{meta.format('1.0.0rc1')}name: since-cutoff\n---\n") == "1.0.0rc1"
+    # A top-level version (not in the spec), one in the body, an unquoted one: none is the skill's.
+    assert read('---\nname: since-cutoff\nversion: "0.5.0"\n---\n') is None
+    assert read(f"---\nname: since-cutoff\n---\n\n{meta.format('0.5.0')}") is None
+    assert read("---\nname: since-cutoff\nmetadata:\n  version: 0.5.0\n---\n") is None
+    assert read("# since-cutoff\n") is None
+
+
+def _skill_frontmatter(text: str) -> tuple[dict[str, str], dict[str, str], str]:
+    """The top-level fields, the `metadata` entries and the body of a SKILL.md whose frontmatter
+    is flat `key: value` lines, as the Agent Skills spec's fields are."""
+    front = re.match(r"---\n(.*?\n)---\n(.*)", text, re.DOTALL)
+    assert front is not None, "SKILL.md starts with YAML frontmatter"
+    fields: dict[str, str] = {}
+    metadata: dict[str, str] = {}
+    for line in front.group(1).splitlines():
+        entry = re.fullmatch(r"(  )?([\w-]+):(?: (.*))?", line)
+        assert entry is not None, line
+        indent, key, value = entry.groups()
+        if indent:
+            assert list(fields)[-1] == "metadata", line
+            metadata[key] = (value or "").strip('"')
+        else:
+            fields[key] = value or ""
+    return fields, metadata, front.group(2)
+
+
+def test_the_skill_follows_the_agent_skills_spec() -> None:
+    """claude.ai skill uploads, the Skills API and the spec's reference validator (skills-ref)
+    reject any top-level field but these six ("Unexpected key(s) in SKILL.md frontmatter:
+    argument-hint"). Skill catalogues read the frontmatter as data, where backticks and `$(`
+    look like shell substitution, and look for the body's standard sections."""
+    path = ROOT / "skills" / "since-cutoff" / "SKILL.md"
+    if not path.exists():
+        pytest.skip("the skill is not part of this checkout")
+    fields, metadata, body = _skill_frontmatter(path.read_text(encoding="utf-8"))
+    spec = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
+    assert set(fields) <= spec, set(fields) - spec
+    assert fields["name"] == path.parent.name
+    assert 0 < len(fields["description"]) <= 1024
+    assert 0 < len(fields["compatibility"]) <= 500
+    assert not [k for k, v in fields.items() if re.search(r"`|\$\(|\$\{", v)]
+    assert set(metadata) == {"author", "version"} and metadata["version"] == __version__
+    outside_code = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+    headings = re.findall(r"^## (.+)$", outside_code, re.MULTILINE)
+    standard = [
+        "Overview",
+        "Prerequisites",
+        "Instructions",
+        "Output",
+        "Error Handling",
+        "Examples",
+        "Resources",
+    ]
+    assert [h for h in headings if h in standard] == standard, headings
 
 
 def test_the_plugin_hook_ships_only_with_a_release_that_has_status(tmp_path, monkeypatch) -> None:

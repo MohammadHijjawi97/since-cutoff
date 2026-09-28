@@ -13,6 +13,10 @@ not know, each tagged with what was checked, and nothing else claimed.
                                 or parameters (:func:`apidiff._Differ.find_moved`)
   ``[diff; probable rename]``   a parameter in the same position, with the same annotation,
                                 has a new name: a guess, labelled as one
+  ``[diff + metadata]``         the older release's Requires-Dist lists a distribution the
+                                pinned one does not, and the public API that named its types
+                                names another required distribution's types instead
+                                (:func:`dependency_bullet`)
   ``[not confirmed]``           names that merely look similar; only with ``suggestions``
   ============================  ==========================================================
 
@@ -42,6 +46,7 @@ from typing import Any
 
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
     DEPRECATED,
     DIFF_SCHEMA,
     HINT_PARAM_DOC,
@@ -78,6 +83,7 @@ TAG_MOVE_CHECKED = "move_checked"
 TAG_PROBABLE_RENAME = "probable_rename"
 TAG_TYPE_CHECKED = "type_checked"
 TAG_NOT_CONFIRMED = "not_confirmed"
+TAG_METADATA = "metadata"
 TAG_WORDS = {
     TAG_DIFF: "diff",
     TAG_LIBRARY: "library",
@@ -85,6 +91,7 @@ TAG_WORDS = {
     TAG_TYPE_CHECKED: "type-checked",
     TAG_PROBABLE_RENAME: "probable rename",
     TAG_NOT_CONFIRMED: "not confirmed",
+    TAG_METADATA: "metadata",
 }
 _GUESSES = (TAG_PROBABLE_RENAME, TAG_NOT_CONFIRMED)  # after a "; " in the tag: not evidence
 # The header's legend: the first three always (a reader meets them in every block); the others
@@ -99,6 +106,10 @@ _LEGEND = {
     TAG_MOVE_CHECKED: (
         "[move checked] the object at the new path keeps the old one's public names or parameters"
     ),
+    TAG_METADATA: (
+        "[metadata] the two releases' declared requirements (Requires-Dist in their wheels' "
+        "METADATA)"
+    ),
     TAG_PROBABLE_RENAME: "[probable rename] a guess from the parameter's position and type",
     TAG_NOT_CONFIRMED: "[not confirmed] names that look similar, not confirmed as replacements",
 }
@@ -108,6 +119,7 @@ _ALWAYS = (TAG_DIFF, TAG_LIBRARY, TAG_TYPE_CHECKED)
 EVIDENCE_LIBRARY = "library_text"
 EVIDENCE_MOVE = "move_checked"
 EVIDENCE_RENAME = "probable_rename"
+EVIDENCE_METADATA = "requires_dist"  # a switched dependency (DEPENDENCY_SWITCHED)
 
 # Who wrote a note (Note.source); a ``run --compare`` baseline's notes carry its arm's name.
 NOTE_MODEL = "model"
@@ -239,10 +251,13 @@ class Note:
     def checks(self) -> dict[str, Any]:
         """What was checked, and what was not (``measured`` is filled in by a run's report)."""
         c = self.change
+        compared = f"{c.from_version} vs {c.to_version}, diff schema {DIFF_SCHEMA}"
         return {
             "change": (
-                f"static API diff (griffe), {c.from_version} vs {c.to_version}, "
-                f"diff schema {DIFF_SCHEMA}"
+                "Requires-Dist of both releases' wheels (METADATA) and a static comparison of "
+                f"their public APIs (griffe), {compared}"
+                if c.kind == DEPENDENCY_SWITCHED
+                else f"static API diff (griffe), {compared}"
             ),
             "replacement": "; ".join(_replacement_check(r, c) for r in self.replacements) or None,
             "example_type_checks": (
@@ -310,7 +325,10 @@ def api_name(change: APIChange, others: Iterable[APIChange] = ()) -> str:
     path, re-exports included (``huggingface_hub.hf_hub_download``), of it and of ``others``
     (the other changes of the same API). A member of an SDK's beta mirror (APIChange.in_beta)
     keeps its module, so that it cannot be read as the API of the same name outside ``beta``:
-    ``anthropic.resources.beta.messages.messages.Messages.create``."""
+    ``anthropic.resources.beta.messages.messages.Messages.create``. A switched dependency is
+    ``httpx -> httpx2``."""
+    if change.kind == DEPENDENCY_SWITCHED:
+        return change.display
     if change.owner:
         member = change.owner if change.name == "__init__" else f"{change.owner}.{change.name}"
         return f"{change.module}.{member}" if change.in_beta else member
@@ -408,7 +426,13 @@ def diff_note(
     for kind in dict.fromkeys(c.kind for c in ordered):
         group = [c for c in ordered if c.kind == kind]
         params = _unique(c.parameter for c in group if c.parameter)
-        if kind == MOVED:
+        if kind == DEPENDENCY_SWITCHED:
+            for c in group:
+                sentences.append(dependency_bullet(c))
+                replacements.append(_dependency_replacement(c))
+            tags.append(TAG_METADATA)
+            said_what = True
+        elif kind == MOVED:
             for c in group:
                 sentences.append(_moved_sentence(c))
                 if c.move_evidence:
@@ -628,7 +652,14 @@ def runtime_text(changes: Iterable[APIChange]) -> str | None:
 
     The names in alphabetical order, and where the source reads them: one file's lines as a
     range (``huggingface_hub/utils/_validators.py:178-203``), several files each with its
-    lines. Neither depends on the order the changes come in."""
+    lines. Neither depends on the order the changes come in.
+
+    For a switched dependency, where the pinned release's source still names the one it no
+    longer requires (:func:`dependency_runtime`)."""
+    changes = list(changes)
+    switched = [text for c in changes if (text := dependency_runtime(c))]
+    if switched:
+        return "; ".join(sorted(switched))
     handled = [c for c in changes if c.still_handled_at and c.parameter]
     if not handled:
         return None
@@ -870,6 +901,277 @@ def _move_replacement(change: APIChange) -> Replacement:
     )
 
 
+# The longest a switched dependency's note may be, its tag included: a note is one or two
+# sentences. The counts and the other places are in dependency_detail (scan --all, report.md,
+# the MCP tools) and in the JSON.
+DEPENDENCY_NOTE_LIMIT = 300
+# At most this many places in the note; in dependency_detail this many examples, then
+# re-exports, then pairs of base classes.
+DEPENDENCY_NOTE_FACTS = 3
+DEPENDENCY_EXAMPLES = 6
+_DEPENDENCY_REEXPORTS = 3
+_DEPENDENCY_BASE_PAIRS = 3
+
+
+def dependency_bullet(change: APIChange) -> str:
+    """The note for a DEPENDENCY_SWITCHED change, without its tag: what the pinned release
+    requires instead (APIChange.describe), a few places of its public API that name the new
+    distribution's types where they named the old one's (the signatures code most likely calls
+    first, a base class, a re-export), and what to use there. At most
+    :data:`DEPENDENCY_NOTE_LIMIT` characters with its tag: a place that would not fit is left
+    out, and the counts are in :func:`dependency_detail`. Only what both releases' metadata
+    and public APIs show: whether the pinned release still accepts the old distribution's
+    objects at run time differs between libraries and is not claimed (the "Runtime:" line of
+    the reports points to where its source still names it)."""
+    d = change.dependency or {}
+    head = change.describe()
+    close = _dependency_close(change)
+    budget = DEPENDENCY_NOTE_LIMIT - len(" " + tag_text((TAG_DIFF, TAG_METADATA)))
+    facts: list[str] = []
+    for fact in _note_facts(d):
+        fits = len(_joined(head, [*facts, fact], close)) <= budget
+        if fits and len(facts) < DEPENDENCY_NOTE_FACTS:
+            facts.append(fact)
+    text = _joined(head, facts, close)
+    if len(text) <= budget:
+        return text
+    return f"{head}." if len(head) < budget else head[: budget - 4] + "..."
+
+
+def _joined(head: str, facts: Sequence[str], close: str) -> str:
+    return f"{head}: {_listed_plain(facts)}. {close}" if facts else f"{head}. {close}"
+
+
+def _dependency_close(change: APIChange) -> str:
+    """``Use `httpx2` there, not `httpx`.``; for a copy the package ships, its own names
+    (``Use typer's own names there (`typer.BadParameter`, `typer.Context`), not `click`'s.``)."""
+    d = change.dependency or {}
+    old, new = change.name, change.switched_to or "?"
+    if not d.get("vendored"):
+        return f"Use `{new}` there, not `{old}`."
+    names = [f"`{_code(str(n))}`" for n in d.get("public_names") or ()][:3]
+    if names:
+        return f"Use {change.package}'s own names there ({', '.join(names)}), not `{old}`'s."
+    return f"Use `{_code(new)}`'s types there, not `{old}`'s."
+
+
+def _note_facts(d: dict[str, Any]) -> list[str]:
+    """The note's places, in the order they are tried: the first two examples (a parameter
+    with its async twin's type when that differs: ``(`httpx2.AsyncClient` for
+    `AsyncOpenAI`)``), a base class, the next example, a re-export."""
+    examples = _merged_examples(d.get("examples") or [])
+    bases = _base_clauses(d.get("bases") or [], limit=2)
+    reexports = [_reexport_clause([r]) for r in list(d.get("reexports") or [])[:1]]
+    return [*examples[:2], *bases[:1], *examples[2:3], *reexports]
+
+
+def _merged_examples(examples: Sequence[dict[str, Any]]) -> list[str]:
+    """One short text per example (:func:`_example_text` without counts). An example whose
+    twin (the same parameter or return of the async or sync counterpart: ``AsyncOpenAI`` for
+    ``OpenAI``, ``set_async_client_factory`` for ``set_client_factory``) came first is left
+    out, and its type added to the twin's when it differs."""
+    out: list[tuple[dict[str, Any], list[str]]] = []  # (first example, the twins' other types)
+    seen: dict[tuple[str, str, str], int] = {}
+    for e in examples:
+        key = (
+            str(e.get("context")),
+            _twin_name(str(e.get("display"))),
+            _twin_name(str(e.get("parameter") or "")),
+        )
+        if key in seen:
+            first, others = out[seen[key]]
+            new = f"`{_code(str(e.get('new')))}`"
+            if new != f"`{_code(str(first.get('new')))}`" and not any(new in o for o in others):
+                others.append(f"{new} for `{_code(str(e.get('display')))}`")
+            continue
+        seen[key] = len(out)
+        out.append((e, []))
+    texts = []
+    for first, others in out:
+        text = _example_text(first, None)
+        texts.append(f"{text} ({'; '.join(others)})" if others else text)
+    return texts
+
+
+def _twin_name(name: str) -> str:
+    return re.sub(r"async_?|aio_?", "", name.lower()).replace("_", "")
+
+
+def dependency_detail(change: APIChange) -> str:
+    """What the note leaves out, for scan --all, report.md and the MCP tools: ``its
+    Requires-Dist lists `httpx2<3,>=2.12.0` and no `httpx`; 655 places in its public API that
+    named `httpx` types name the `httpx2` types of the same name: `OpenAI(http_client=...)`
+    (and 7 other signatures) takes `httpx2.Client`, ...; `openai.DefaultHttpxClient` ... are
+    now ...``: the requirements (:func:`dependency_requires`), how many places switched, up
+    to :data:`DEPENDENCY_EXAMPLES` of them (a parameter with how many other signatures name
+    the same type there, a return, an attribute), then re-exports, then base classes (only a
+    class whose base itself is the other distribution's "derives from" it; a type argument of
+    a base is a place, not a base), as many as :data:`_DEPENDENCY_BASE_PAIRS` pairs of types
+    and then how many more."""
+    d = change.dependency or {}
+    old, new = change.name, change.switched_to or "?"
+    sites, same = int(d.get("sites") or 0), int(d.get("sites_same_name") or 0)
+    types = f"the `{new}` types of the same name" if sites and same == sites else f"`{new}` types"
+    places = "place" if sites == 1 else "places"
+    verb = "names" if sites == 1 else "name"
+    text = f"{sites} {places} in its public API that named `{old}` types {verb} {types}"
+    counts = _type_counts(d)
+    examples = list(d.get("examples") or [])[:DEPENDENCY_EXAMPLES]
+    clauses = [_listed_plain([_example_text(e, counts) for e in examples])]
+    reexports = list(d.get("reexports") or [])[:_DEPENDENCY_REEXPORTS]
+    if reexports:
+        clauses.append(_reexport_clause(reexports))
+    bases = list(d.get("bases") or ())
+    pairs = _base_clauses(bases, limit=3)
+    clauses += pairs[:_DEPENDENCY_BASE_PAIRS]
+    kinds = [(str(b.get("old")), str(b.get("new"))) for b in bases]
+    shown = set(list(dict.fromkeys(kinds))[:_DEPENDENCY_BASE_PAIRS])
+    rest = int(d.get("bases_count") or len(bases)) - sum(k in shown for k in kinds)
+    if rest > 0:
+        many = rest > 1
+        clauses.append(
+            f"{rest} more class{'es' if many else ''} derive{'' if many else 's'} from `{new}` "
+            f"types instead of `{old}` types"
+        )
+    clauses = [c for c in clauses if c]
+    detail = f"{text}: {'; '.join(clauses)}" if clauses else text
+    return f"{dependency_requires(change)}; {detail}"
+
+
+def dependency_requires(change: APIChange) -> str:
+    """``its Requires-Dist lists `httpx2<3,>=2.12.0` and no `httpx```: what the pinned
+    release's Requires-Dist says, for the extras the switch concerns (``... and no `httpx` for
+    them``), with a new requirement the older release already had (``which 3.45.2 also
+    required``) or the extras that still list the old one, or the copy the package ships."""
+    d = change.dependency or {}
+    old, new = change.name, change.switched_to or "?"
+    extras = list(d.get("extras") or ())
+    for_them = (" for them" if len(extras) > 1 else " for it") if extras else ""
+    if d.get("vendored"):
+        return f"its Requires-Dist lists no `{old}`{for_them}, and it ships `{_code(new)}`"
+    requirement = f"`{_code(str(d.get('new_requirement') or new))}`"
+    also = "" if d.get("new_added", True) else f", which {change.from_version} also required,"
+    still = [str(e) for e in d.get("old_in_extras") or ()]
+    if still:
+        which = f"{_listed(still, 'and')} extra{'s' if len(still) > 1 else ''}"
+        return f"its Requires-Dist lists {requirement}{also.rstrip(',')}, and `{old}` only for its {which}"
+    return f"its Requires-Dist lists {requirement}{also} and no `{old}`{for_them}"
+
+
+def _type_counts(d: dict[str, Any]) -> dict[tuple[str, str, bool], int]:
+    """How many signatures name each type at each switched parameter: ``("http_client",
+    "httpx2.Client", True)`` -> 8 (``parameter_types``, DIFF_SCHEMA 19)."""
+    out: dict[tuple[str, str, bool], int] = {}
+    for parameter, kinds in (d.get("parameter_types") or {}).items():
+        for k in kinds or ():
+            key = (str(parameter), str(k.get("new")), bool(k.get("direct")))
+            out[key] = int(k.get("count") or 0)
+    return out
+
+
+def _reexport_clause(reexports: Sequence[dict[str, Any]]) -> str:
+    paths = [f"`{_code(r.get('path'))}`" for r in reexports]
+    targets = [f"`{_code(r.get('new'))}`" for r in reexports]
+    verb = "is" if len(reexports) == 1 else "are"
+    return f"{_listed_plain(paths)} {verb} now {_listed_plain(targets)}"
+
+
+def _base_clauses(bases: Iterable[dict[str, Any]], limit: int) -> list[str]:
+    """```A` and `B` derive from `httpx2.Auth` instead of `httpx.Auth```: one per pair of
+    types, at most ``limit`` classes each, then "others"."""
+    by_pair: dict[tuple[str, str], list[str]] = {}
+    for b in bases:
+        by_pair.setdefault((str(b.get("old")), str(b.get("new"))), []).append(
+            f"`{_code(b.get('display'))}`"
+        )
+    out = []
+    for (was, now), names in by_pair.items():
+        shown = names[:limit] + (["others"] if len(names) > limit else [])
+        verb = "derives" if len(shown) == 1 else "derive"
+        out.append(f"{_listed_plain(shown)} {verb} from `{_code(now)}` instead of `{_code(was)}`")
+    return out
+
+
+def _example_text(example: dict[str, Any], counts: dict[tuple[str, str, bool], int] | None) -> str:
+    """```OpenAI(http_client=...)` (and 7 other signatures) takes `httpx2.Client```: one place
+    and what it names now, with (``counts``) how many other signatures name that same type at
+    that parameter. "Takes" / "returns" / "is" only for a type that is the annotation or a
+    member of its union; otherwise the annotation "names" it (``Callable[[],
+    httpx2.Client]``)."""
+    display = _code(example.get("display"))
+    new = f"`{_code(example.get('new'))}`"
+    direct = bool(example.get("direct"))
+    context = example.get("context")
+    if context == "param":
+        parameter = _code(example.get("parameter"))
+        key = (str(example.get("parameter")), str(example.get("new")), direct)
+        others = (counts or {}).get(key, 1) - 1
+        more = f" (and {others} other signature{'s' if others > 1 else ''})" if others > 0 else ""
+        what = f"takes {new}" if direct else f"has {new} in its annotation"
+        return f"`{display}({parameter}=...)`{more} {what}"
+    if context == "return":
+        return (
+            f"`{display}()` returns {new}" if direct else f"`{display}()`'s annotation names {new}"
+        )
+    return f"`{display}` is {new}" if direct else f"`{display}`'s annotation names {new}"
+
+
+def _listed_plain(items: Sequence[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c`` (items as they are)."""
+    items = [i for i in items if i]
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _dependency_replacement(change: APIChange) -> Replacement:
+    d = change.dependency or {}
+    new = change.switched_to or "?"
+    old = f"`{_code(str(d.get('old_requirement') or change.name))}`"
+    if d.get("vendored"):
+        requires = f"no longer lists {old}, and the package ships `{_code(new)}`"
+    else:
+        requires = (
+            f"lists `{_code(str(d.get('new_requirement') or new))}` and "
+            f"{change.from_version}'s listed {old}"
+        )
+    sites = int(d.get("sites") or 0)
+    return Replacement(
+        new,
+        EVIDENCE_METADATA,
+        f"{change.package} {change.to_version} Requires-Dist {requires}; the API diff found "
+        f"{sites} place{'' if sites == 1 else 's'} that named `{change.name}` types naming "
+        f"`{new}` types",
+        change.name,
+    )
+
+
+def dependency_runtime(change: APIChange) -> str | None:
+    """Where the pinned release's source still names the distribution it no longer requires
+    (APIChange.dependency's ``still_named_at``), for the "Runtime:" line; None when it does not.
+    What that code does with the old distribution's objects (openai 3 converts them, anthropic
+    1.8 raises TypeError, according to their sources) differs, and nothing was run to tell."""
+    d = change.dependency or {}
+    places = [str(p) for p in d.get("still_named_at") or ()]
+    if change.kind != DEPENDENCY_SWITCHED or not places:
+        return None
+    total = int(d.get("still_named_count") or len(places))
+    more = f" and {total - len(places)} more" if total > len(places) else ""
+    return (
+        f"{change.to_version}'s source still names `{change.name}` ({_lines(places)}{more}); "
+        f"what it does with `{change.name}` objects was not checked"
+    )
+
+
+def _lines(places: Iterable[str]) -> str:
+    """``a.py:217, 223, 238, b.py:10``: each file once, with its lines."""
+    lines: dict[str, list[str]] = {}
+    for place in places:
+        path, _, line = place.rpartition(":")
+        lines.setdefault(path or place, []).append(line)
+    return ", ".join(f"{path}:{', '.join(found)}" for path, found in lines.items())
+
+
 def _replacement_check(r: Replacement, change: APIChange) -> str:
     if r.evidence == EVIDENCE_LIBRARY:
         return (
@@ -1068,9 +1370,9 @@ def render_block(
     ``per_package`` (``sync --scope imported --per-package N``), only when it is not the
     default (:data:`IMPORTED_APIS`) and the scope is SCOPE_IMPORTED.
 
-    Packages are in alphabetical order, and each package's bullets by the API they are about,
-    so that the block does not depend on the order the notes come in (which of them the code
-    uses first). The meta line's ``checked`` says which API each ``[type-checked]`` bullet is
+    Packages are in alphabetical order, and each package's bullets by the API they are about
+    (a switched dependency first), so that the block does not depend on the order the notes
+    come in (which of them the code uses first). The meta line's ``checked`` says which API each ``[type-checked]`` bullet is
     about (:func:`api_id`, in the order of the bullets), so that ``sync`` keeps one only while
     the code still uses its API.
     """
@@ -1086,7 +1388,8 @@ def render_block(
         at_cutoff = f" ({olds[0]} at the cutoff)" if len(olds) == 1 else ""
         body += ["", f"**{pkg} {version}**{at_cutoff}"]
         seen: set[str] = set()
-        for n in sorted(items, key=lambda n: (n.api, n.line)):
+        # A switched dependency first: it concerns every object of it the code hands over.
+        for n in sorted(items, key=lambda n: (n.change.kind != DEPENDENCY_SWITCHED, n.api, n.line)):
             line = n.line
             if not _one_line(n.bullet) or line in seen:
                 continue
