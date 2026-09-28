@@ -299,6 +299,38 @@ def test_aider_aliases_are_the_models_they_stand_for(
     assert detect(root, home) == (spec, ".aider.conf.yml")
 
 
+@pytest.mark.parametrize(
+    ("model", "spec"),
+    [
+        ("dashscope/qwen3-coder-plus", "alibaba:qwen3-coder-plus"),
+        ("moonshot/kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
+        ("glm-4.6", "zai:glm-4.6"),
+        ("llama-3.3-70b-instruct", "llama:llama-3.3-70b-instruct"),
+    ],
+)
+def test_aider_recognises_additional_model_makers(
+    root: Path, home: Path, model: str, spec: str
+) -> None:
+    write(root / ".aider.conf.yml", f"model: {model}\\n")
+    assert detect(root, home) == (spec, ".aider.conf.yml")
+
+
+@pytest.mark.parametrize(
+    ("model", "spec"),
+    [
+        ("qwen3-coder-plus", "alibaba:qwen3-coder-plus"),
+        ("kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
+        ("glm-4.6", "zai:glm-4.6"),
+        ("llama-3.3-70b-instruct", "llama:llama-3.3-70b-instruct"),
+    ],
+)
+def test_opencode_bare_ids_resolve_to_their_makers(
+    root: Path, home: Path, model: str, spec: str
+) -> None:
+    write(root / "opencode.json", json.dumps({"model": model}))
+    assert detect(root, home) == (spec, "opencode.json")
+
+
 @pytest.mark.parametrize("model", ["my-local-model", "openai", "deepseek/"])
 def test_a_model_name_since_cutoff_cannot_place_is_reported_not_guessed(
     root: Path, home: Path, model: str
