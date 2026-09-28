@@ -607,7 +607,7 @@ modifiée.
 | `step-summary` | `true` | ajoute le résumé Markdown au résumé du job |
 | `cache` | `true` | conserve entre les exécutions les métadonnées PyPI, les sources des paquets et les diffs d'API (y compris quand `fail-on-changes` fait échouer le job) |
 | `args` | | arguments supplémentaires pour `since-cutoff scan`, par exemple `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.3.2` | la version de since-cutoff à exécuter, ou `latest` |
+| `since-cutoff-version` | `0.4.0` | la version de since-cutoff à exécuter, ou `latest` |
 
 `args: --fail-on old-form --annotate github` ne fait échouer le job que si votre code utilise une
 API modifiée sous l'ancienne forme, et annote chaque fichier qui en utilise une : un
@@ -625,7 +625,7 @@ plusieurs chemins d'import n'est compté qu'une fois.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.3.2
+    rev: v0.4.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # ajoutez --fail-on=old-form pour bloquer le commit

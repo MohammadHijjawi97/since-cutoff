@@ -385,7 +385,7 @@ jobs:
 | `step-summary` | `true` | 把 Markdown 摘要加到任务摘要（job summary）中 |
 | `cache` | `true` | 在多次运行之间保留 PyPI 元数据、包源码和 API 对比结果（`fail-on-changes` 让任务失败时也会保留） |
 | `args` | | 额外的 `since-cutoff scan` 参数，例如 `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.3.2` | 要运行的 since-cutoff 版本，或 `latest` |
+| `since-cutoff-version` | `0.4.0` | 要运行的 since-cutoff 版本，或 `latest` |
 
 `args: --fail-on old-form --annotate github` 只在你的代码以旧写法用到有变更的 API 时让任务失败，并为每个用到这类 API 的文件添加注解：旧写法为警告（warning），其他情况为提示（notice）。
 
@@ -397,7 +397,7 @@ jobs:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.3.2
+    rev: v0.4.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # 加上 --fail-on=old-form 可以阻止提交

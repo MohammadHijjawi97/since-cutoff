@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-09-28
 
 - New `since-cutoff sync` writes the notes from the API diff for the changed APIs your code
   uses into a since-cutoff block in AGENTS.md (or CLAUDE.md), and keeps them in step: run
