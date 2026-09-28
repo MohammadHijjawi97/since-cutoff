@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
+  agent to run to remove the notes (found in a catalogue's review of the skill).
+
 ## 0.4.1 - 2026-09-28
 
 - A parameter removed from an SDK method that still takes `extra_body` or `extra_query`
