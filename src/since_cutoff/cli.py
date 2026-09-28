@@ -48,6 +48,7 @@ from since_cutoff.errors import SinceCutoffError
 from since_cutoff.hosts import DEFAULT_SOURCE, detect_model, not_found_hint
 from since_cutoff.models import ModelRegistry, parse_cutoff
 from since_cutoff.notes import (
+    IMPORTED_APIS,
     SCOPE_USED,
     agents_import_tip,
     apply_block,
@@ -307,6 +308,14 @@ def _positive(value: str) -> int:
     return n
 
 
+def _at_least_one(value: str) -> int:
+    """A count that 0 would leave undefined (``--per-package 0`` is no budget)."""
+    n = _positive(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return n
+
+
 def _common(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "path", nargs="?", default=".", help="project directory (default: current directory)"
@@ -547,8 +556,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--scope",
         choices=["used", "imported"],
         help="used: notes for the changed APIs your code uses (default); imported: also for "
-        "the changes most likely to matter in each changed package your code imports (up to "
-        "5 APIs per package). The block keeps the scope it was written with",
+        "the changes most likely to matter in each changed package your code imports (import "
+        "paths that no longer work first, then changes with a known replacement, removals, "
+        "members; up to --per-package APIs per package). The block keeps the scope it was "
+        "written with",
+    )
+    sync.add_argument(
+        "--per-package",
+        type=_at_least_one,
+        metavar="N",
+        help=f"with --scope imported: APIs noted per package (default: {IMPORTED_APIS}, or what "
+        "the block was written with; a package whose modules all moved counts as one)",
     )
     sync.add_argument(
         "--suggestions",
@@ -1010,8 +1028,9 @@ def _write_markdown(target: str, text: str) -> None:
 
 
 # ------------------------------------------------------------ sync and status
-# A target file, the model and cutoff its block is written for, its scope and --suggestions.
-_Plan = tuple[TargetFile, ModelTarget, str, bool]
+# A target file, the model and cutoff its block is written for, its scope, --suggestions and
+# --per-package.
+_Plan = tuple[TargetFile, ModelTarget, str, bool, int]
 
 
 def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
@@ -1034,13 +1053,33 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
             basis = given
         scope = args.scope or t.scope or SCOPE_USED
         suggestions = t.meta.get("suggestions") is True
+        # As --suggestions: the block keeps the choice unless the flag says otherwise.
+        written_with = t.meta.get("per_package")
+        if args.per_package is not None:
+            per_package = args.per_package
+        elif isinstance(written_with, int) and written_with > 0:
+            per_package = written_with
+        else:
+            per_package = IMPORTED_APIS
         plans.append(
-            (t, basis, scope, suggestions if args.suggestions is None else args.suggestions)
+            (
+                t,
+                basis,
+                scope,
+                suggestions if args.suggestions is None else args.suggestions,
+                per_package,
+            )
         )
     scans = _sync_scans(args, project, plans, store, reporter, out)
     proposals = [
-        propose(scans[(basis.model_id, basis.cutoff)], t, scope=scope, suggestions=suggestions)
-        for t, basis, scope, suggestions in plans
+        propose(
+            scans[(basis.model_id, basis.cutoff)],
+            t,
+            scope=scope,
+            suggestions=suggestions,
+            per_package=per_package,
+        )
+        for t, basis, scope, suggestions, per_package in plans
     ]
     changed = [p for p in proposals if p.changed]
     for p in changed:
@@ -1111,12 +1150,12 @@ def _sync_scans(
     )
     engine = Engine(settings, store=store, llm_cache=store, reporter=reporter)
     scans: dict[tuple[str, date], ScanResult] = {}
-    for _, basis, _, _ in plans:
+    for _, basis, *_ in plans:
         key = (basis.model_id, basis.cutoff)
         if key in scans:
             continue
         out.print(_model_line(basis))
-        for t, _, _, _ in plans:
+        for t, *_ in plans:
             if t.basis == key:
                 moved = lockfile_changes(project, target_status(project, t))
                 if moved:
@@ -1127,7 +1166,7 @@ def _sync_scans(
         if scan.packages and all(p.status == SKIPPED for p in scan.packages):
             first = next((p.reason for p in scan.skipped if p.reason), "")
             raise SinceCutoffError(f"no dependency could be checked: {first} (is PyPI reachable?)")
-    for t, basis, _, _ in plans:
+    for t, basis, *_ in plans:
         for p in blocked_by(scans[(basis.model_id, basis.cutoff)], [t]):
             raise SinceCutoffError(
                 f"cannot tell whether the notes for {p.name} in {t.name} still hold: it could "

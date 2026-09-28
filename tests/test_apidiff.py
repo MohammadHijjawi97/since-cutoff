@@ -461,7 +461,8 @@ def test_moves_record_what_was_compared(tmp_path: Path, toylib):
     assert {(c.path, c.moved_to): c.move_evidence for c in changes if c.kind == MOVED} == {
         ("pkg.a.LIMIT", "pkg.b.LIMIT"): {"compared": "value", "kept": 1, "of": 1},
         ("pkg.a.f", "pkg.b.f"): {"compared": "function", "kept": 2, "of": 2},
-        ("pkg.c.old", "pkg.old"): {"compared": "module", "kept": 1, "of": 2},
+        # A module's move counts what its old package has left (0: nothing public).
+        ("pkg.c.old", "pkg.old"): {"compared": "module", "kept": 1, "of": 2, "left_behind": 0},
     }
     assert all(c.move_evidence is None for c in changes if c.kind != MOVED)
 

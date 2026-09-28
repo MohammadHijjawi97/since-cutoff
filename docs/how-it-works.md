@@ -236,10 +236,18 @@ file:
    still uses that API. After a version change the note from the diff takes its place, and sync
    says that `since-cutoff run --only <pkg>` tests the model again.
 5. **Scope and suggestions.** `--scope imported` adds, for each changed package the code imports,
-   the changes most likely to matter (up to 5 APIs per package; fields of params classes that
-   mirror a lost parameter, and hooks with a parameter whose type is private to the library, are
-   left out); `--suggestions` adds similar names, tagged `[not confirmed]`. The block records
-   both, and later syncs keep them.
+   the changes most likely to matter (up to 5 APIs per package, `--per-package N` for another
+   number; fields of params classes that mirror a lost parameter, and hooks with a parameter
+   whose type is private to the library, are left out), in this order: import paths that no
+   longer work (a module or package that moved, a top-level name removed), then changes with a
+   known replacement (`[diff + library]`, a rename or move the diff checked), then removed
+   classes and functions (and, after them, names only no longer re-exported: the object is
+   still there, in a module below), then parameters and members, then deprecations; within
+   each, classes, functions and modules before constants and type aliases. A subpackage whose
+   modules all moved to one new parent, leaving nothing public behind, is one change; a name
+   bound to a method (`duplicate_space = api.duplicate_space`) and the method are one API.
+   `--suggestions` adds similar names, tagged `[not confirmed]`. The block records all three,
+   and later syncs keep them.
 6. **Hand edits.** When the text after the meta line no longer matches its `body` hash, sync
    shows the diff, writes nothing and exits with code 4, unless `--force`. A block that 0.3 wrote
    is upgraded, keeping its model. When the notes are unchanged, a block another since-cutoff

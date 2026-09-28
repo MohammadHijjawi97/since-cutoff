@@ -64,6 +64,7 @@ from since_cutoff.notes import (
     EVIDENCE_RENAME,
     NOTE_DIFF,
     NOTE_MODEL,
+    SCOPE_IMPORTED,
     TAG_TYPE_CHECKED,
     Note,
     agents_import_tip,
@@ -767,7 +768,7 @@ def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> N
                 style="bold",
             )
         )
-        ranked, files = scan.ranked(p), scan.uses(p)
+        ranked, files = scan.ranked(p, scope=SCOPE_IMPORTED), scan.uses(p)
         for c in ranked[:limit]:
             uses = uses_text(c, files)
             line = change_text(c, short=True)
@@ -989,6 +990,10 @@ def changes_text(changes: Sequence[APIChange], *, code: bool = False) -> tuple[b
             c = group[0]
             if kind == REMOVED:
                 text = "was removed"
+            elif kind == MOVED and c.is_package_move:
+                text = f"moved to {q(c.moved_to or '?')}, the whole package"
+            elif kind == MOVED and c.renamed_to:
+                text = f"moved to {q(c.moved_to or '?')} ({q(c.name)} is now {q(c.renamed_to)})"
             elif kind == MOVED:
                 text = f"moved to {q(c.moved_to or '?')}"
             elif kind == KIND_CHANGED and c.old_kind and c.new_kind:
@@ -1368,7 +1373,10 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
                 "",
             ]
             files = scan.uses(p)
-            out += [_md_change(c, files, example=True, used_in=True) for c in scan.ranked(p)]
+            out += [
+                _md_change(c, files, example=True, used_in=True)
+                for c in scan.ranked(p, scope=SCOPE_IMPORTED)
+            ]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -1716,7 +1724,7 @@ def render_scan_markdown(
 
     limit = max(0, limit)
     for p in changed:
-        ranked, files = scan.ranked(p), scan.uses(p)
+        ranked, files = scan.ranked(p, scope=SCOPE_IMPORTED), scan.uses(p)
         hits = sum(uses_text(c, files) is not None for c in ranked)
         breaking, deprecated = p.counts
         detail = f"{breaking} breaking, {deprecated} deprecated" + (

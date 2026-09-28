@@ -43,6 +43,7 @@ from since_cutoff.engine import (
 from since_cutoff.notes import (
     BLOCK_END,
     BLOCK_VERSION,
+    IMPORTED_APIS,
     NOTE_MODEL,
     SCOPE_FAILURES,
     SCOPE_IMPORTED,
@@ -196,6 +197,8 @@ class Proposal:
     new_text: str | None  # the file after sync; None: it still does not exist
     action: str | None  # "created", "appended to", "updated", "removed from"; None: nothing
     notes: int
+    # SCOPE_IMPORTED: APIs noted per package (``--per-package``, or the block's own choice).
+    per_package: int = IMPORTED_APIS
     changes: list[Change] = field(default_factory=list)
     # Packages whose [type-checked] notes were dropped because their version changed, with
     # the version they were for (`since-cutoff run --only <pkg>` tests the model again).
@@ -214,12 +217,18 @@ class Proposal:
 
 
 def propose(
-    scan: ScanResult, target: TargetFile, *, scope: str = SCOPE_USED, suggestions: bool = False
+    scan: ScanResult,
+    target: TargetFile,
+    *,
+    scope: str = SCOPE_USED,
+    suggestions: bool = False,
+    per_package: int | None = None,
 ) -> Proposal:
     """The block sync writes into ``target`` for ``scan`` (its model and cutoff), the file's
     text after that, and why it changes.
 
-    The notes are :meth:`ScanResult.scope_notes`. The ``[type-checked]`` notes of the block in
+    The notes are :meth:`ScanResult.scope_notes` (``per_package``: how many APIs a package
+    gets with SCOPE_IMPORTED; :data:`IMPORTED_APIS` by default). The ``[type-checked]`` notes of the block in
     the file stay, in place of the notes from the diff for their APIs, while their package
     keeps the same version, the code still uses their API and the model and cutoff are the
     same (:func:`_kept_notes`); a section goes when its package is no longer a dependency, is
@@ -230,7 +239,8 @@ def propose(
     model, cutoff = scan.target.model_id, scan.target.cutoff
     same = target.basis == (model, cutoff)
     old = target.block
-    notes = scan.scope_notes(scope, suggestions=suggestions)
+    per_package = per_package or IMPORTED_APIS
+    notes = scan.scope_notes(scope, suggestions=suggestions, per_package=per_package)
     kept: list[Note] = []
     retest: dict[str, str] = {}
     replaced: set[str] = set()
@@ -250,6 +260,7 @@ def propose(
             "deps": scan.deps_hash(),
             "scope": scope,
             "suggestions": suggestions,
+            "per_package": per_package,
         }
         block = render_block(notes, **options)
         tool = target.meta.get("tool")
@@ -265,6 +276,7 @@ def propose(
     proposal = Proposal(
         target, model, cutoff, scope, versions_from, block, new_text, action, len(notes)
     )
+    proposal.per_package = per_package
     proposal.retest = retest
     proposal.apis = {n.line: n.api for n in notes}
     if not proposal.changed:
@@ -439,6 +451,14 @@ def _changes(scan: ScanResult, target: TargetFile, p: Proposal, *, same: bool) -
                 f"the notes would be {what} similar names (--suggestions)",
             )
         )
+    if p.scope == SCOPE_IMPORTED and old.meta.get("per_package") != new.meta.get("per_package"):
+        out.append(
+            Change(
+                None,
+                f"now up to {p.per_package} APIs per package (--per-package)",
+                f"the notes would be for up to {p.per_package} APIs per package (--per-package)",
+            )
+        )
     if not out:
         out.append(
             Change(
@@ -509,10 +529,15 @@ def up_to_date_text(p: Proposal, scan: ScanResult) -> str:
             none = "your code uses none of the APIs that changed"
         text = f"{name}: no notes to write; {none} after {after_text(p.model, p.cutoff)}."
         if p.scope == SCOPE_USED and any(s.imported for s in scan.changed):
-            text += (
-                " For the changes most likely to matter in the packages your code imports: "
-                "`since-cutoff sync --scope imported`."
-            )
+            available = scan.scope_notes(SCOPE_IMPORTED, per_package=p.per_package)
+            packages = {n.change.package for n in available}
+            if available:
+                text += (
+                    f" `since-cutoff sync --scope imported` writes the "
+                    f"{_plural(len(available), 'change')} most likely to matter in the "
+                    f"{_plural(len(packages), 'package')} your code imports (up to "
+                    f"{p.per_package} per package; --per-package N for more)."
+                )
         return text + " Nothing written."
     return (
         f"{name} is up to date: {_plural(p.notes, 'note')} for {basis_text(p.model, p.cutoff)}, "

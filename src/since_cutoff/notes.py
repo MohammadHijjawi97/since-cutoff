@@ -116,6 +116,9 @@ NOTE_DIFF = "diff"
 SCOPE_USED = "used"  # the changed APIs the project's code uses (scan, sync)
 SCOPE_FAILURES = "failures"  # the changes a model got wrong when since-cutoff tested it (run)
 SCOPE_IMPORTED = "imported"  # changes in the packages the code imports (sync --scope imported)
+# ``sync --scope imported``: APIs noted per changed package the code imports, by default
+# (``--per-package``; the meta line's "per_package" records another choice).
+IMPORTED_APIS = 5
 
 # The library says outright that nothing replaces it: similar names are then not shown at all.
 _NO_REPLACEMENT = re.compile(r"\b(?:without|no)\s+(?:a\s+)?replacement\b", re.IGNORECASE)
@@ -686,6 +689,17 @@ def _library_evidence(
     return f'{on}{change.package} {version} {said}: "{quote}"', None
 
 
+def library_replacement(change: APIChange) -> Replacement | None:
+    """The replacement that the library's own deprecation text states for ``change`` and that
+    exists in the pinned version (what a note tags ``[diff + library]``), or None: for text
+    that only mentions a name as advice, that says nothing replaces it, or for a change of a
+    kind that has no replacement to name (a move, a parameter now required)."""
+    if change.kind not in (REMOVED, PARAM_REMOVED, DEPRECATED) or says_no_replacement(change):
+        return None
+    found = _library_evidence(change, None)
+    return found[1] if found is not None else None
+
+
 def _shown_name(path: str) -> str:
     """How a note names a replacement: a member of a class as ``Class.name``
     (``BaseChatModel.invoke``, as the note names its API), anything else by its full path."""
@@ -793,26 +807,53 @@ def _mentions(text: str, name: str) -> bool:
 
 
 def _moved_sentence(change: APIChange) -> str:
+    """``\\`pkg.a.Thing\\` moved to \\`pkg.b.Thing\\`: import it with \\`from pkg.b import
+    Thing\\`.``; for a whole package (selection.package_moves), "The package `pkg.a` moved to
+    `pkg.b`; import from there."; for an object that came back under another name
+    (APIChange.renamed_to), "`Old` is now `New`: ..." first."""
     target = change.moved_to or ""
+    if change.is_package_move:
+        return f"The package `{change.path}` moved to `{target}`; import from there."
     module, _, name = target.rpartition(".")
-    how = f": import it with `from {module} import {name}`" if module else ""
-    return f"`{change.path}` moved to `{target}`{how}."
+    how = f"import it with `from {module} import {name}`" if module else ""
+    renamed = change.renamed_to
+    if renamed:
+        tail = f"; {how}" if how else ""
+        return f"`{change.name}` is now `{renamed}`: `{change.path}` moved to `{target}`{tail}."
+    tail = f": {how}" if how else ""
+    return f"`{change.path}` moved to `{target}`{tail}."
 
 
 def _move_replacement(change: APIChange) -> Replacement:
     evidence = change.move_evidence or {}
     compared, kept, of = evidence.get("compared"), evidence.get("kept"), evidence.get("of")
+    diff = f"{change.package} {change.to_version} API diff"
+    if change.is_package_move:
+        modules = int(evidence.get("modules") or 0)
+        others = int(of or 0) - modules
+        counted = f"{modules} modules" + (f" and {others} other objects" if others > 0 else "")
+        return Replacement(
+            change.moved_to or "",
+            EVIDENCE_MOVE,
+            f"{diff}: the {counted} of `{change.path}` are at `{change.moved_to}`, each "
+            "keeping the old one's public names or parameters",
+            change.path,
+        )
     what = {
         "class": "public names",
         "module": "public names",
         "function": "public parameters",
     }.get(str(compared), "")
     counted = f"keeps {kept} of {of} {what}" if what and of else f"is the same {compared}"
+    renamed = (
+        f", and no `{change.renamed_to}` existed in {change.from_version}"
+        if change.renamed_to
+        else ""
+    )
     return Replacement(
         change.moved_to or "",
         EVIDENCE_MOVE,
-        f"{change.package} {change.to_version} API diff: the object at `{change.moved_to}` "
-        f"{counted} of the old one",
+        f"{diff}: the object at `{change.moved_to}` {counted} of the old one{renamed}",
         change.path,
     )
 
@@ -984,6 +1025,7 @@ def render_block(
     scope: str = SCOPE_USED,
     tool: str = __version__,
     suggestions: bool = False,
+    per_package: int | None = None,
 ) -> str:
     """The notes block (format 2) for AGENTS.md / CLAUDE.md.
 
@@ -991,7 +1033,9 @@ def render_block(
     versions the notes are about); ``scope`` what the notes cover (SCOPE_*). The first line is
     0.3's marker, so 0.3's ``unapply`` still finds and removes a block written by 0.4.
     ``suggestions`` (``sync --suggestions``: the notes name similar names, ``[not confirmed]``)
-    is recorded in the meta line, only when set, so that the next ``sync`` keeps it.
+    is recorded in the meta line, only when set, so that the next ``sync`` keeps it; so is
+    ``per_package`` (``sync --scope imported --per-package N``), only when it is not the
+    default (:data:`IMPORTED_APIS`) and the scope is SCOPE_IMPORTED.
 
     Packages are in alphabetical order, and each package's bullets by the API they are about,
     so that the block does not depend on the order the notes come in (which of them the code
@@ -1034,6 +1078,8 @@ def render_block(
     }
     if suggestions:
         meta["suggestions"] = True
+    if scope == SCOPE_IMPORTED and per_package and per_package != IMPORTED_APIS:
+        meta["per_package"] = per_package
     if checked:
         meta["checked"] = checked
     return f"{BLOCK_START}\n{_meta_line(meta)}\n{text}{BLOCK_END}\n"

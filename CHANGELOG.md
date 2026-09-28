@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased
+
+- `sync --scope imported` puts first what an assistant writing new code against a package is
+  most likely to run into: import paths that no longer work (a module or package that moved, a
+  name the package exported at its top level that was removed), then changes with a known
+  replacement (one the library's own text names, `[diff + library]`, or a rename or move the
+  diff checked, `[diff + move checked]`), then removals of public classes and functions, then
+  parameters removed or now required and members removed, then deprecations. The changes
+  `scan --all`, the Markdown summary and the MCP tool `project_changes` list per package follow
+  the same order. Measured on mcp 1.28.1 -> 2.2.0, the five notes were parameter removals on
+  `ClientSession`, `add_response_router`, `McpError` and `mcp.client.experimental`; they are now
+  `McpError` -> `MCPError`, the `mcp.server.fastmcp` package -> `mcp.server.mcpserver`,
+  `FastMCP` -> `MCPServer`, `streamablehttp_client` (the library names `streamable_http_client`)
+  and `ClientSession.list_prompts(cursor=)` (the library names `params`). The `used` scope keeps
+  its ranking.
+- A subpackage whose modules all moved to one new parent (three of them, or every module that
+  left it), leaving nothing public behind, is one change in the notes and in the scan: "The
+  package `mcp.server.fastmcp` moved to `mcp.server.mcpserver`; import from there. [diff + move
+  checked]", in place of one note per module. The individual moves stay in results.json. Code
+  that imports anything from the old package uses the change. The diff records, on each
+  module's move, how many public names the old package still has in the new version
+  (`move_evidence.left_behind`; 0 for mcp 2's `mcp/server/fastmcp.py`, a shim with no API): a
+  module that stayed makes no change of its own, so the moves alone could not tell, and a
+  package with a module left behind is not moved whole (`from pkg.a import w` still works;
+  the modules that left are listed each on its own, and that code uses no change).
+- The diff finds a class or function that came back under another name (DIFF_SCHEMA 16): a new
+  object in the same module, or in the module the old one moved to, that keeps the old one's
+  public members (at least 80% and at least 5, or all of fewer than 5; a name that differs in
+  case alone with every member kept) and that alone does. The note says both names: "`FastMCP`
+  is now `MCPServer`: `mcp.server.FastMCP` moved to `mcp.server.MCPServer`; import it with `from
+  mcp.server import MCPServer`. [diff + move checked]". Not for a tiny class, for a type of
+  fields alone unless the names are related, when two candidates qualify, when the candidate
+  existed before, or when the library's own text names the replacement (that stays
+  `[diff + library]`). A class keeps a member only when it defines it itself or inherits it
+  from a base the old class did not have: a new sibling subclass of the same base, which
+  inherits what the old one overrode, is not the rename (a module of handlers or resources
+  dropping one subclass and adding another). Names unrelated to the old one need five such
+  members (`Task` -> `Worker` on `run`, `close` and `start` is none). On anthropic 0.115.0 ->
+  1.8.0, huggingface-hub 1.21.0 -> 2.0.0, openai 2.44.0 -> 3.19.2, pandas 2.3.2 -> 3.0.6 and
+  langchain-core 0.3.72 -> 1.6.5 it finds none; on mcp 1.28.1 -> 2.2.0 `FastMCP` ->
+  `MCPServer` (29 of 30) and `McpError` -> `MCPError`. Cached diffs are computed again.
+- A module-level name bound to a method of an instance the module makes (huggingface_hub 1's
+  `api = HfApi()` and `duplicate_space = api.duplicate_space` in `hf_api.py`) says which method
+  (`alias_of`, DIFF_SCHEMA 16) and takes the method's deprecation text. When both went, the
+  notes and the scan list them as one API, under the name: "`huggingface_hub.duplicate_space`
+  was removed; do not use it. Use `HfApi.duplicate_repo` instead. [diff + library]", where
+  `--scope imported` wrote "found no replacement" for the name and cut the method's note, which
+  named it, at the budget; code using either form uses it. On huggingface-hub 1.21.0 -> 2.0.0
+  three of the five default notes now name the library's replacement.
+- Within a tier of the `--scope imported` order, classes, functions and modules come before a
+  name that is only no longer re-exported (the object is still there, in a module below the one
+  it was imported from: langgraph 1's `langgraph.pregel.merge_configs` is
+  `langgraph.pregel.main.merge_configs`; such a move ranks with removals, after them, not as a
+  known replacement) and before constants and type aliases (anthropic 1.8's `AI_PROMPT`,
+  `ProxiesTypes`; `from anthropic import HUMAN_PROMPT` breaks too, but the modules that moved
+  out of `anthropic.types.beta` come first).
+- `sync --per-package 0` is rejected ("must be 1 or more"): it silently meant the default.
+- New `sync --per-package N`: how many APIs `--scope imported` notes per package (default 5);
+  a package moved whole counts as one. The block records a choice other than the default, and
+  later syncs keep it, as with `--suggestions`.
+- When `sync` has no notes to write, it says how many changes `--scope imported` would write,
+  and for how many packages.
+
 ## 0.4.0 - 2026-09-28
 
 - New `since-cutoff sync` writes the notes from the API diff for the changed APIs your code

@@ -61,7 +61,7 @@ from since_cutoff.models import (
     ModelRegistry,
     parse_cutoff,
 )
-from since_cutoff.notes import rename_text, runtime_text, similar_text
+from since_cutoff.notes import SCOPE_IMPORTED, rename_text, runtime_text, similar_text
 from since_cutoff.project import FileUse, load_project
 from since_cutoff.providers import KNOWN_PROVIDERS
 from since_cutoff.pypi import PyPI, Release
@@ -708,7 +708,7 @@ def _brief(packages: list[PackageScan]) -> list[str]:
 def _package_section(scan: ScanResult, p: PackageScan, limit: int) -> list[str]:
     """One changed dependency in project_changes: its versions, counts and top changes."""
     uses = " Your code imports it." if p.imported else ""
-    ranked = scan.ranked(p)
+    ranked = scan.ranked(p, scope=SCOPE_IMPORTED)
     breaking, deprecated = p.counts
     out = [
         "",

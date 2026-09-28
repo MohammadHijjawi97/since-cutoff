@@ -66,6 +66,7 @@ from since_cutoff.checker import Checker, CheckResult, Diagnostic, extract_code
 from since_cutoff.errors import CheckerError, NoCodeError, PackageIndexError, ProviderError
 from since_cutoff.models import PROVIDER_ALIASES, ModelInfo, ModelRegistry
 from since_cutoff.notes import (
+    IMPORTED_APIS,
     NOTE_MODEL,
     SCOPE_FAILURES,
     SCOPE_IMPORTED,
@@ -90,6 +91,7 @@ from since_cutoff.selection import (
     USES_API,
     Use,
     collapse,
+    imported_rank,
     ordered,
     project_rank,
     select,
@@ -129,7 +131,6 @@ SKIPPED = "skipped"
 _PLACEHOLDER_BYTES = 64 * 1024
 # ``sync --scope imported``: the APIs noted per changed package the code imports (at least all
 # those it uses), in the order of ScanResult.ranked.
-IMPORTED_APIS = 5
 # A class whose fields mirror a callable's parameters (the SDKs' ``MessageCreateParamsBase``).
 _PARAMS_CLASS = re.compile(r"Params\w*$")
 # A name private to a library, in a type annotation: ``_ClassScanMapperConfig``,
@@ -369,10 +370,16 @@ class ScanResult:
         """
         return self.project.code_use(package.import_names)
 
-    def ranked(self, package: PackageScan) -> list[APIChange]:
-        """The package's distinct changes, those the project's code uses first."""
+    def ranked(self, package: PackageScan, *, scope: str = SCOPE_USED) -> list[APIChange]:
+        """The package's distinct changes, those the project's code uses first
+        (selection.project_rank). For SCOPE_IMPORTED, the rest in the order an assistant
+        writing new code against the package is most likely to run into them
+        (selection.imported_rank: import paths that no longer work, then changes with a known
+        replacement, then removals, then members, then deprecations): the order of ``sync
+        --scope imported`` and of the changes ``scan --all`` lists per package."""
         files = self.uses(package)
-        return sorted(package.distinct, key=lambda c: project_rank(c, files))
+        key = imported_rank if scope == SCOPE_IMPORTED else project_rank
+        return sorted(package.distinct, key=lambda c: key(c, files))
 
     def used_changes(self, package: PackageScan) -> list[APIChange]:
         """The package's distinct changes that the project's code uses
@@ -458,20 +465,29 @@ class ScanResult:
         scanned = {p.name for p in self.packages}
         return deps_hash(dependency_pairs(d for d in self.project.dependencies if d.key in scanned))
 
-    def scope_notes(self, scope: str = SCOPE_USED, *, suggestions: bool = False) -> list[Note]:
+    def scope_notes(
+        self,
+        scope: str = SCOPE_USED,
+        *,
+        suggestions: bool = False,
+        per_package: int | None = None,
+    ) -> list[Note]:
         """The notes from the API diff that a block of ``scope`` holds: for the changed APIs
         the code uses (SCOPE_USED, :meth:`diff_notes`), or, for each changed package the code
-        imports, for those and the next most likely to matter, up to :data:`IMPORTED_APIS`
-        APIs in all (SCOPE_IMPORTED, ``sync --scope imported``; :meth:`ranked`'s order). Of
-        the APIs the code does not use, a params class's field that mirrors a callable's lost
-        parameter and an internal hook get no note (:func:`_not_worth_a_note`)."""
+        imports, for those and the next most likely to matter, up to ``per_package``
+        (:data:`IMPORTED_APIS` by default) APIs in all (SCOPE_IMPORTED, ``sync --scope
+        imported``; :meth:`ranked`'s order for that scope, in which a subpackage's move counts
+        once, however many modules moved: selection.package_moves). Of the APIs the code does
+        not use, a params class's field that mirrors a callable's lost parameter and an
+        internal hook get no note (:func:`_not_worth_a_note`)."""
         if scope != SCOPE_IMPORTED:
             return self.diff_notes(suggestions=suggestions)
+        budget = per_package or IMPORTED_APIS
         notes: list[Note] = []
         for p in self.changed:
             if not p.imported:
                 continue
-            ranked = self.ranked(p)  # the changes the code uses first
+            ranked = self.ranked(p, scope=SCOPE_IMPORTED)  # the changes the code uses first
             used = {c.api_key for c in self.used_changes(p)}
             by_key: dict[str, list[APIChange]] = {}
             for c in ranked:
@@ -481,7 +497,7 @@ class ScanResult:
             lost = {c.parameter for c in ranked if c.parameter and c.kind == PARAM_REMOVED}
             chosen: list[str] = []
             for key, changes in by_key.items():
-                if len(chosen) >= max(IMPORTED_APIS, len(used)):
+                if len(chosen) >= max(budget, len(used)):
                     break
                 if key in used or not all(_not_worth_a_note(c, lost) for c in changes):
                     chosen.append(key)

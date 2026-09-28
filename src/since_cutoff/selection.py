@@ -23,11 +23,13 @@ from since_cutoff.apidiff import (
     MOVED,
     PARAM_KEYWORD_ONLY,
     PARAM_POSITIONAL_ONLY,
+    PARAM_REMOVED,
     PARAM_REQUIRED,
     REMOVED,
     APIChange,
     is_beta_segment,
 )
+from since_cutoff.notes import library_replacement
 from since_cutoff.project import FileUse
 
 # How used_names found a change in the project's code (see match): through one of its paths,
@@ -139,26 +141,54 @@ def collapse(changes: Iterable[APIChange]) -> list[APIChange]:
     """One entry per change, most useful first.
 
     The same change is often reachable under several public paths (``pkg.f`` and
-    ``pkg.module.f``); it is listed once, under its shortest path, with the others counted as
-    similar. Module metadata such as ``__version__`` is dropped.
+    ``pkg.module.f``); it is listed once, under its shortest path (a move before a removal of
+    the same name: it says more), with the others counted as similar. Module metadata such as
+    ``__version__`` is dropped. The moves of a subpackage's modules to one new parent are one
+    change, the package's move (:func:`package_moves`).
     """
     ordered = sorted(
         changes, key=lambda c: (-score(c), c.path.count("."), c.path, c.parameter or "")
     )
+    grouped: dict[int, APIChange] = {}
+    for package_move, members in package_moves(ordered):
+        grouped.update((id(m), package_move) for m in members)
     firsts: dict[str, APIChange] = {}
     merged: dict[str, list[APIChange]] = {}
     for c in ordered:
         if c.name in _METADATA_NAMES:
+            continue
+        whole = grouped.get(id(c))
+        if whole is not None:
+            # The package's move stands for it, where its first member would have stood. The
+            # code is matched against the package's own path too (``from pkg.fast import x``
+            # reaches ``pkg.fast``), not only against each member's.
+            firsts.setdefault(whole.concept_key, whole)
+            merged.setdefault(whole.concept_key, [whole]).extend(_merged(c))
             continue
         key = c.concept_key
         rep = firsts.get(key)
         if rep is None:
             firsts[key] = replace(c, also=list(c.also))
             merged[key] = []
+        elif c.kind == MOVED and rep.kind != MOVED:
+            # A move says more than a removal of the same name (mcp 2's ``FastMCP`` under
+            # ``mcp.server`` became ``MCPServer``; under the ``mcp.server.fastmcp`` shim it is
+            # only gone): it is the entry, in the removal's place.
+            moved = replace(c, also=list(c.also), occurrences=c.occurrences + rep.occurrences)
+            moved.also = [*moved.also, rep.path, *rep.also][:5]
+            firsts[key] = moved
         else:
             rep.occurrences += c.occurrences
             rep.also = [*rep.also, c.path, *c.also][:5]  # to show: "also removed under ..."
+            if c.alias_of and not rep.alias_of:
+                # The same name bound to a method, reached under another path: the entry
+                # says which method, and what the library says of it, as that path does.
+                rep.alias_of = c.alias_of
+                if not rep.hint and c.hint:
+                    rep.hint, rep.hint_source, rep.hint_file = c.hint, c.hint_source, c.hint_file
+                    rep.library_names = list(c.library_names or [])
         merged[key] += _merged(c)
+    _merge_aliases(firsts, merged)
     for key, rep in firsts.items():
         # The project's code is matched against each merged change (used_names), and the
         # collapsed change lists every path of them all, whatever ``also`` shows.
@@ -169,9 +199,130 @@ def collapse(changes: Iterable[APIChange]) -> list[APIChange]:
     return list(firsts.values())
 
 
+def _merge_aliases(firsts: dict[str, APIChange], merged: dict[str, list[APIChange]]) -> None:
+    """One entry for a module-level name bound to a method and for the method itself, when
+    both went (APIChange.alias_of; huggingface_hub 2 removed ``HfApi.duplicate_space`` and the
+    module-level ``duplicate_space = api.duplicate_space`` with it): the name's entry, which
+    the diff gave the method's deprecation text, stands for both, with the method's paths
+    among its other paths, and the method's own removal is no second API to note."""
+    by_path: dict[str, str] = {}  # a merged change's path -> the key of its entry
+    for key, changes in merged.items():
+        for c in changes or [firsts[key]]:
+            by_path.setdefault(c.path, key)
+            for p in c.import_paths or ():
+                by_path.setdefault(p, key)
+    for key in list(firsts):
+        rep = firsts.get(key)
+        if rep is None or not rep.alias_of or rep.kind != REMOVED:
+            continue
+        other = by_path.get(rep.alias_of)
+        if other is None or other == key or other not in firsts:
+            continue
+        method = firsts[other]
+        if method.kind != REMOVED or not method.owner or method.name != rep.name:
+            continue
+        rep.occurrences += method.occurrences
+        rep.also = [*rep.also, method.path, *method.also][:5]
+        merged[key] = [*(merged[key] or [rep]), *(merged[other] or [method])]
+        del firsts[other], merged[other]
+
+
 def _merged(change: APIChange) -> list[APIChange]:
     """The changes :func:`collapse` merged into ``change``, or ``[change]``."""
     return list(change.__dict__.get(_MERGED) or [change])
+
+
+# A subpackage counts as moved whole when this many of its modules moved to the same new parent
+# (mcp 2 moved the six modules of ``mcp.server.fastmcp`` to ``mcp.server.mcpserver``), or when
+# every module that left it went there and at least two did; in both cases only when the diff
+# saw nothing public left in it (``move_evidence["left_behind"]`` is 0 on each module's move).
+PACKAGE_MOVE_MODULES = 3
+
+
+def package_moves(changes: Iterable[APIChange]) -> list[tuple[APIChange, list[APIChange]]]:
+    """The whole-package moves among ``changes``: for each subpackage whose modules moved,
+    under their names, to one new parent, one change that says so (kind MOVED, path the
+    subpackage, ``moved_to`` the new parent, ``move_evidence`` ``{"compared": "package",
+    "kept": n, "of": n, "modules": m}``, tagged ``[diff + move checked]`` in the notes), with
+    the moves it stands for: the modules', and those of the classes, functions and values
+    that moved from the subpackage to the new parent alongside them. The individual moves stay
+    in the diff (results.json); :func:`collapse` shows the package's move instead.
+
+    A subpackage counts when :data:`PACKAGE_MOVE_MODULES` of its modules moved there, or when
+    at least two did and no module of it was removed or moved elsewhere; and only when the
+    diff saw that the subpackage has no public name left in the new version (each module's
+    ``move_evidence["left_behind"]`` is 0: the package is gone, or a module with no API, as
+    mcp 2's ``mcp/server/fastmcp.py``). The moves alone cannot tell: a module that stayed
+    makes no change, and ``from pkg.a import w`` still works then, so the modules that left
+    are listed each on its own. The modules' own moves were each checked by the diff (a
+    module keeps at least half of its public names: ``apidiff._Differ.find_moved``), so the
+    package's is as sure as the surest of them. A diff made before DIFF_SCHEMA 16 did not
+    record what was left behind: no group from it.
+    """
+    by_parents: dict[tuple[str, str], list[APIChange]] = {}
+    left: dict[str, set[str]] = {}  # subpackage -> where each module of it that left went
+    itself: dict[str, list[APIChange]] = {}  # subpackage -> the changes to the subpackage
+    for c in changes:
+        if c.owner or c.kind not in (MOVED, REMOVED) or c.name in _METADATA_NAMES:
+            continue
+        if _is_module(c) and "." in c.path:
+            itself.setdefault(c.path, []).append(c)
+        old_parent = c.path.rsplit(".", 1)[0]
+        if "." not in c.path or "." not in old_parent:
+            continue  # a top-level package does not move
+        if c.kind == REMOVED:
+            if _is_module(c):
+                left.setdefault(old_parent, set()).add("")
+            continue
+        new_parent, _, new_name = (c.moved_to or "").rpartition(".")
+        if not new_parent or new_name != c.name or new_parent == old_parent:
+            continue
+        if _is_module(c):
+            left.setdefault(old_parent, set()).add(new_parent)
+        by_parents.setdefault((old_parent, new_parent), []).append(c)
+    out: list[tuple[APIChange, list[APIChange]]] = []
+    for (old_parent, new_parent), members in sorted(by_parents.items()):
+        modules = [m for m in members if _is_module(m)]
+        whole = len(modules) >= PACKAGE_MOVE_MODULES or (
+            len(modules) >= 2 and left.get(old_parent) == {new_parent}
+        )
+        emptied = all((m.move_evidence or {}).get("left_behind") == 0 for m in modules)
+        if not (whole and emptied):
+            continue
+        first = members[0]
+        group = APIChange(
+            package=first.package,
+            from_version=first.from_version,
+            to_version=first.to_version,
+            kind=MOVED,
+            path=old_parent,
+            name=old_parent.rsplit(".", 1)[-1],
+            moved_to=new_parent,
+            old_signature=f"module {old_parent}",
+            new_signature=f"module {new_parent}",
+            import_paths=sorted(
+                {p for m in members for p in paths(m)} | {old_parent},
+                key=lambda p: (p.count("."), p),
+            ),
+            move_evidence={
+                "compared": "package",
+                "kept": len(members),
+                "of": len(members),
+                "modules": len(modules),
+            },
+        )
+        # The subpackage's own removal (or move), when the diff reports one, is part of it.
+        out.append((group, [*members, *itself.get(old_parent, [])]))
+    return out
+
+
+def _is_module(change: APIChange) -> bool:
+    """A change to a module (or package) itself, not to an object in one."""
+    if change.owner:
+        return False
+    if (change.move_evidence or {}).get("compared") in ("module", "package"):
+        return True
+    return (change.old_signature or "").startswith("module ")
 
 
 def other_paths_text(change: APIChange, *, example: bool = True) -> str:
@@ -446,6 +597,102 @@ def project_rank(change: APIChange, files: Sequence[FileUse]) -> tuple[int, bool
     """
     return (
         -usage(change, files),
+        change.kind == DEPRECATED,
+        -score(change, files),
+        change.path,
+    )
+
+
+# What an assistant writing new code against a package is most likely to run into, most first
+# (:func:`tier`): the ranking of ``sync --scope imported`` and of the changes ``scan --all`` lists
+# per package.
+TIER_IMPORT_PATH = 0  # a module or package moved; a name the package exported at its top level
+TIER_REPLACEMENT = 1  # a replacement the library names, a rename or a checked move
+TIER_REMOVED = 2  # a public class, function, value or module removed
+TIER_MEMBER = 3  # a method's or function's parameters, a class's members
+TIER_REST = 4  # deprecations, kind changes and the rest
+_PARAMETER_KINDS = (PARAM_REMOVED, PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
+
+
+def tier(change: APIChange) -> int:
+    """How likely an assistant writing new code against the package is to run into a change,
+    as a tier (``TIER_*``, lower first), whatever the project's code uses:
+
+    0. an import path that no longer works, wholesale: a module or package that moved, or a
+       name the package exported at its top level (``pkg.Thing``) that was removed or moved;
+    1. a change whose replacement is known: the library's own text names one (``[diff +
+       library]``), or the diff found the object under another name or path (``[diff + move
+       checked]``);
+    2. a public class, function, value or module removed at module level; and a name that is
+       only no longer re-exported (the object is still there, in a module below the one it was
+       imported from: langgraph 1's ``langgraph.pregel.merge_configs`` is
+       ``langgraph.pregel.main.merge_configs``), after those (:func:`within_tier`);
+    3. a change to a member: a parameter removed or now required, keyword-only or
+       positional-only, a method or attribute removed;
+    4. the rest: deprecations (they still work), kind changes.
+    """
+    top_level = not change.owner and any(p.count(".") == 1 for p in paths(change))
+    if change.kind == MOVED:
+        if _is_module(change) or top_level:
+            return TIER_IMPORT_PATH
+        return TIER_REMOVED if dropped_reexport(change) else TIER_REPLACEMENT
+    if change.kind == REMOVED and top_level:
+        return TIER_IMPORT_PATH
+    if library_replacement(change) is not None:
+        return TIER_REPLACEMENT
+    if change.kind == REMOVED:
+        return TIER_MEMBER if change.owner else TIER_REMOVED
+    if change.kind in _PARAMETER_KINDS:
+        return TIER_MEMBER
+    return TIER_REST
+
+
+def dropped_reexport(change: APIChange) -> bool:
+    """A move whose target is in a module below the one the object was reached in: the object
+    is where it was defined, only the package no longer re-exports it (langgraph 1 dropped
+    ``langgraph.pregel``'s re-exports of its ``main`` module's helpers). Not a package's move,
+    and not an object that moved out of a module (``anthropic.types.beta.DeletedFile`` to
+    ``anthropic.types.DeletedFile``)."""
+    if change.kind != MOVED or not change.moved_to or _is_module(change):
+        return False  # a module moved deeper is moved: ``import pkg.a.x`` no longer works
+    return change.moved_to.startswith(change.module + ".") and change.moved_to.count(
+        "."
+    ) > change.path.count(".")
+
+
+def is_value(change: APIChange) -> bool:
+    """A change to a module-level value or type alias, not to a class, function or module: a
+    constant (``anthropic.HUMAN_PROMPT``), a re-exported type (``anthropic.ProxiesTypes``).
+    The diff's signature of one is its bare name, or ``name: annotation``; a name bound to a
+    method (APIChange.alias_of) is a callable, whatever its signature."""
+    if change.owner or change.alias_of or _is_module(change) or change.parameter:
+        return False
+    if (change.move_evidence or {}).get("compared") == "value":
+        return True
+    signature = change.old_signature or change.new_signature or ""
+    return signature == change.name or signature.startswith(f"{change.name}:")
+
+
+def within_tier(change: APIChange) -> int:
+    """The order inside a :func:`tier`, lower first: classes, functions and modules (0), then
+    a name only no longer re-exported (1, :func:`dropped_reexport`), then values and type
+    aliases (2, :func:`is_value`): ``from anthropic import HUMAN_PROMPT`` breaks too, but the
+    module that moved out of ``anthropic.types.beta`` matters more to new code."""
+    if is_value(change):
+        return 2
+    return 1 if dropped_reexport(change) else 0
+
+
+def imported_rank(
+    change: APIChange, files: Sequence[FileUse]
+) -> tuple[int, int, int, bool, float, str]:
+    """Sort key for one package's changes as ``sync --scope imported`` and ``scan --all`` list
+    them: what the code uses first (as :func:`project_rank`), then by :func:`tier` and
+    :func:`within_tier`, then hard breaks before deprecations, then the score."""
+    return (
+        -usage(change, files),
+        tier(change),
+        within_tier(change),
         change.kind == DEPRECATED,
         -score(change, files),
         change.path,

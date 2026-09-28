@@ -696,11 +696,12 @@ def test_scope_imported_notes_the_packages_the_code_imports(sc, tmp_path) -> Non
     (root / "sub" / "other.py").unlink()
     code, out = sc("sync", root, *SONNET, "--yes")
     assert code == EXIT_OK and not (root / "AGENTS.md").exists()
+    # The message counts what --scope imported would write (0.4.1).
     assert (
         "AGENTS.md: no notes to write; your code uses none of the APIs that changed after "
-        "claude-sonnet-4-5's training cutoff (2025-07-31). For the changes most likely to matter "
-        "in the packages your code imports: `since-cutoff sync --scope imported`. Nothing "
-        "written." in out
+        "claude-sonnet-4-5's training cutoff (2025-07-31). `since-cutoff sync --scope imported` "
+        "writes the 5 changes most likely to matter in the 1 package your code imports (up to 5 "
+        "per package; --per-package N for more). Nothing written." in out
     )
     code, out = sc("sync", root, *SONNET, "--scope", "imported", "--yes")
     assert code == EXIT_OK, out
@@ -1017,3 +1018,28 @@ def test_the_plugin_says_at_session_start_when_the_notes_are_out_of_date() -> No
         "timeout": 60,
     }
     assert cli.build_parser().parse_args(["status", "--hook"]).hook is True
+
+
+def test_per_package_sets_the_imported_budget_and_the_block_keeps_it(sc, tmp_path) -> None:
+    """0.4.1: ``--scope imported`` writes up to 5 APIs per package; ``--per-package N`` changes
+    that, the block records the choice (as it does --suggestions) and later syncs keep it."""
+    root = make_app(tmp_path)
+    (root / "main.py").write_text("import toylib\n", encoding="utf-8")
+    (root / "sub" / "other.py").unlink()
+    code, out = sc("sync", root, *SONNET, "--scope", "imported", "--per-package", "2", "--yes")
+    assert code == EXIT_OK, out
+    block = parse_block(agents(root))
+    assert block is not None and block.meta["per_package"] == 2
+    assert len(block.packages["toylib"].bullets) == 2
+    assert "toylib 2.0: 2 notes added" in out or "Created AGENTS.md with 2 notes." in out
+    # The next sync keeps the choice; --check with the default budget says what would change.
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK and "AGENTS.md is up to date: 2 notes" in out
+    code, out = sc("sync", root, "--check", "--per-package", "5")
+    assert code == EXIT_OUT_OF_DATE
+    assert "the notes would be for up to 5 APIs per package (--per-package)" in out
+    code, out = sc("sync", root, "--per-package", "5", "--yes")
+    assert code == EXIT_OK and "now up to 5 APIs per package (--per-package)" in out
+    block = parse_block(agents(root))
+    assert block is not None and "per_package" not in block.meta  # the default is not recorded
+    assert len(block.packages["toylib"].bullets) == 5

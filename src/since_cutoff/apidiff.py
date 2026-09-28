@@ -31,7 +31,7 @@ import warnings
 from collections import deque
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,18 @@ log = logging.getLogger(__name__)
 # says of it: "deprecated without replacement"), and a removed name's import paths no longer
 # include the other names of the same object (``DeprecatedIn37 = CryptographyDeprecationWarning``
 # and ``DeprecatedIn45 = ...`` are two names, each removed on its own).
-DIFF_SCHEMA = 14
+# 15: a removed module-level class or function that came back under another name in the same
+# module (or the module it moved to), keeping its public members, is a move whose
+# ``move_evidence`` says ``"renamed": true`` (mcp 2's ``FastMCP`` -> ``MCPServer``,
+# ``McpError`` -> ``MCPError``): _Differ.find_renamed.
+# 16: a rename counts only the members the candidate defines itself, or inherits from a base
+# the old class did not have (a new sibling subclass of the same base is not the rename), and
+# needs 5 of them unless the names are related; a module's move records how many public names
+# its old parent package still has (``move_evidence["left_behind"]``, 0 for a package that is
+# gone or a shim without API: selection.package_moves groups only those); a module-level name
+# bound to a method of an instance the module makes (huggingface_hub's ``duplicate_space =
+# api.duplicate_space``) says which method (``alias_of``) and takes its deprecation text.
+DIFF_SCHEMA = 16
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
@@ -175,7 +186,20 @@ class APIChange:
     # ``{"compared": "class" | "module" | "function" | "value" | "message", "kept": k, "of": n}``,
     # k of the n public names (a class's or module's) or public parameters (a function's) still
     # there; the value is the same literal (1 of 1); ``of`` is 0 when there was nothing to count.
+    # With ``"renamed": true`` (DIFF_SCHEMA 15), the object at ``moved_to`` has another name
+    # (find_renamed). For a module (DIFF_SCHEMA 16), ``"left_behind"`` is how many public names
+    # its old parent package still has in the new version: 0 when the package is gone, or a
+    # module with no API (mcp 2's ``mcp/server/fastmcp.py``). ``"compared": "package"`` is not
+    # the diff's: selection.collapse makes it for a subpackage whose modules all moved to the
+    # same new parent, leaving nothing behind (``"of"`` counts them).
     move_evidence: dict[str, Any] | None = None
+    # REMOVED or MOVED, for a module-level name bound to a method of an instance the module
+    # makes (huggingface_hub 1's ``api = HfApi()`` and ``duplicate_space = api.duplicate_space``
+    # in ``hf_api.py``): the public path of that method (``huggingface_hub.hf_api.HfApi
+    # .duplicate_space``). The change takes the method's deprecation text (``hint``,
+    # ``library_names``) when it has none of its own, and selection.collapse lists it with the
+    # method's own removal as one API. None otherwise, and in a diff made before DIFF_SCHEMA 16.
+    alias_of: str | None = None
     # PARAM_REMOVED: where the new version's source still reads the parameter by name
     # (``kwargs.pop("x"``, ``.get("x"``, ``"x" in kwargs``) in a decorator of the callable, as
     # ``pkg/module.py:line``. Calls passing it may then still run, with a warning, although
@@ -264,6 +288,20 @@ class APIChange:
     def short_path(self) -> str:
         return f"{self.owner}.{self.name}" if self.owner else self.path
 
+    @property
+    def renamed_to(self) -> str | None:
+        """MOVED: the new name of an object that came back under another name (``MCPServer``
+        for ``FastMCP``), from find_renamed's evidence; None for a move that keeps the name."""
+        if self.kind != MOVED or not self.moved_to or not (self.move_evidence or {}).get("renamed"):
+            return None
+        return self.moved_to.rsplit(".", 1)[-1]
+
+    @property
+    def is_package_move(self) -> bool:
+        """MOVED: a whole subpackage moved to a new parent (selection.collapse groups the moves
+        of its modules into one change), not one object."""
+        return self.kind == MOVED and (self.move_evidence or {}).get("compared") == "package"
+
     def describe(self, *, short: bool = False, versioned: bool = True) -> str:
         """One human sentence describing the change (``versioned=False`` drops "(pkg 1.2)")."""
         pkg = f" ({self.package} {self.to_version})" if versioned else ""
@@ -276,7 +314,13 @@ class APIChange:
                 f"longer accepted{pkg}"
             )
         if self.kind == MOVED:
-            return f"`{path}` moved to `{self.moved_to}`{pkg}"
+            if self.is_package_move:
+                count = (self.move_evidence or {}).get("of")
+                what = f" ({count} modules and classes)" if count else ""
+                return f"the package `{path}` moved to `{self.moved_to}`{what}{pkg}"
+            renamed = self.renamed_to
+            new_name = f" (`{self.name}` is now `{renamed}`)" if renamed else ""
+            return f"`{path}` moved to `{self.moved_to}`{new_name}{pkg}"
         if self.kind == REMOVED:
             other = (
                 f"; a different `{self.name}` now exists at `{self.namesake}`"
@@ -562,6 +606,7 @@ class _Differ:
         self.new = new
         self._public_map: dict[str, str] | None = None
         self._new_index: dict[str, list[str]] | None = None
+        self._old_names: set[str] | None = None  # see old_module_level_names
         # Every public path of each module-level object, per version (see _path_index).
         self._path_indexes: dict[int, dict[str, list[str]]] = {}
         # The names in the ``__all__`` of the modules below a module (see _listed_below).
@@ -835,6 +880,21 @@ class _Differ:
     def _removal(self, obj: Any) -> APIChange:
         moved_to, namesake, evidence = self.find_moved(obj)
         hint, source = deprecation_hint_and_source(obj)
+        if moved_to is None and not (hint and stated_names(hint)):
+            # Not found under its own name, and the library's own text names no replacement:
+            # the same object under another name is the next best evidence.
+            moved_to, evidence = self.find_renamed(obj)
+            if moved_to:
+                namesake = None
+        if moved_to and evidence is not None and _kind_of(obj) == "module":
+            evidence["left_behind"] = self.left_behind(obj)
+        method = self.aliased_method(obj)
+        hinted = obj
+        if method is not None and not hint:
+            # ``duplicate_space = api.duplicate_space``: what the library says of the method,
+            # it says of this name for it.
+            hint, source = deprecation_hint_and_source(method)
+            hinted = method
         change = self._change(
             MOVED if moved_to else REMOVED,
             obj,
@@ -844,15 +904,97 @@ class _Differ:
             namesake=namesake,
             hint=hint,
             hint_source=source,
-            hint_file=_file_of(obj) if hint else None,
+            hint_file=_file_of(hinted) if hint else None,
             suggestions=[] if moved_to or not self.fuzzy else self.similar_names(obj),
             old_signature=signature_of(obj),
             old_doc=doc_summary(obj),
             new_doc=doc_summary(self.new_object(moved_to)) if moved_to else None,
             new_signature=signature_of(self.new_object(moved_to)) if moved_to else None,
         )
-        change.library_names = [] if moved_to else self.library_names(change, None)
+        if method is not None:
+            change.alias_of = self.public_path(str(method.path)) or str(method.path)
+        if moved_to:
+            change.library_names = []
+        elif method is not None and hinted is method:
+            # The names the method's text gives, looked up as for the method (in its class).
+            like = replace(change, path=change.alias_of or "", owner=method.parent.name)
+            change.library_names = self.library_names(like, None)
+        else:
+            change.library_names = self.library_names(change, None)
         return change
+
+    def left_behind(self, module: Any) -> int:
+        """How many public names the parent package of ``module`` (an old module that moved)
+        still has in the new version (APIChange.move_evidence ``"left_behind"``): the modules,
+        classes, functions and values it defines or re-exports, plain imports and private
+        names aside. 0 when the package is gone, or is a module with no API (mcp 2's
+        ``mcp/server/fastmcp.py``, a shim that only points at ``mcp.server.mcpserver``), so
+        that a package whose modules moved counts as moved whole only then."""
+        parent = getattr(module, "parent", None)
+        if parent is None or not getattr(parent, "is_module", False):
+            return 0
+        new_parent = self.new_object(parent.path)
+        if new_parent is None or not getattr(new_parent, "is_module", False):
+            return 0
+        package = self.new.path.split(".")[0]
+        try:
+            members = list(new_parent.members.items())
+        except Exception:
+            return 0
+        count = 0
+        for name, member in members:
+            if _private(name) or "/" in name:
+                continue
+            if getattr(member, "is_alias", False):
+                if not _exported(member):
+                    continue
+                try:
+                    if not str(member.final_target.path).startswith(package + "."):
+                        continue
+                except Exception:
+                    continue
+            count += 1
+        return count
+
+    def aliased_method(self, obj: Any) -> Any:
+        """The method a module-level attribute of the old version is bound to, when it is one
+        (APIChange.alias_of): ``duplicate_space = api.duplicate_space`` where ``api`` is an
+        instance the same module makes (``api = HfApi()``) of a class that has that method.
+        None for anything else; nothing is run to know."""
+        if not getattr(getattr(obj, "parent", None), "is_module", False):
+            return None
+        try:
+            if getattr(obj, "is_alias", False):
+                obj = obj.final_target  # the re-export in ``__init__``: the same binding
+        except Exception:
+            return None
+        parent: Any = getattr(obj, "parent", None)  # the module that makes the instance
+        if _kind_of(obj) != "attribute" or not getattr(parent, "is_module", False):
+            return None
+        try:
+            value = str(obj.value) if obj.value is not None else ""
+            base, _, attr = value.rpartition(".")
+            if attr != obj.name or not base.isidentifier():
+                return None
+            instance = parent.members.get(base)
+            if instance is None or _kind_of(instance) != "attribute" or instance.value is None:
+                return None
+            call = re.match(r"([A-Za-z_][\w.]*)\(", str(instance.value))
+            if call is None:
+                return None
+            cls = _get(parent, call.group(1))
+            if not getattr(cls, "is_class", False):
+                return None
+            method = cls.all_members.get(attr)
+            if getattr(method, "is_alias", False):
+                method = method.final_target
+        except Exception:
+            return None
+        if not getattr(method, "is_function", False):
+            return None
+        if not str(method.path).startswith(self.old.path.split(".")[0] + "."):
+            return None
+        return method
 
     def _fold_inherited(self, changes: list[APIChange]) -> list[APIChange]:
         """One change per removed base-class member, not one per class that inherited it.
@@ -1543,6 +1685,165 @@ class _Differ:
             if counts is not None:
                 return p, None, _evidence("function" if old_kind == "function" else "value", counts)
         return None, None, None
+
+    def old_module_level_names(self) -> set[str]:
+        """The names of the old version's public module-level objects (modules, classes,
+        functions, values), whatever their module."""
+        if self._old_names is None:
+            self._old_names = {
+                o.name
+                for o, _ in iter_public_objects(self.old)
+                if getattr(getattr(o, "parent", None), "is_module", False)
+            }
+        return self._old_names
+
+    def find_renamed(self, obj: Any) -> tuple[str | None, dict[str, Any] | None]:
+        """A removed module-level class or function that came back under another name:
+        ``(moved_to, evidence)``, or ``(None, None)``.
+
+        Looked for in the module the object was in, in the new version, or in the module that
+        one moved to (mcp 2's ``mcp.server.fastmcp.server`` is ``mcp.server.mcpserver.server``),
+        among the objects of the same kind that did not exist anywhere in the old version's
+        public API. The candidate must keep the old one's public members: a class's own public
+        names, a function's public parameters, at least 80% of them and at least 5 (or all, of
+        fewer). Never for a tiny object (fewer than 3 members) or when two candidates qualify,
+        and a function's or a value type's (a class of fields alone) new name must also contain
+        the old one, or be contained in it: too many of those share their members. The one
+        exception is a name that differs in case or underscores only (``McpError`` ->
+        ``MCPError``), taken with every member kept, however few. The evidence is find_moved's,
+        with ``"renamed": True``.
+        """
+        parent = getattr(obj, "parent", None)
+        kind = _kind_of(obj)
+        if parent is None or not getattr(parent, "is_module", False):
+            return None, None
+        if kind not in ("class", "function") or obj.name.startswith("_"):
+            return None, None
+        module = self.new_object(parent.path)
+        if module is None or not getattr(module, "is_module", False):
+            moved_module, _, _ = self.find_moved(parent)
+            module = self.new_object(moved_module) if moved_module else None
+        if module is None:
+            return None, None
+        try:
+            members = list(module.members.items())
+        except Exception:
+            return None, None
+        package = self.new.path.split(".")[0]
+        old_names = self.old_module_level_names()
+        found: list[tuple[str, Any, tuple[int, int]]] = []
+        for name, member in members:
+            if name == obj.name or _private(name) or name in old_names:
+                continue
+            target = member
+            if getattr(member, "is_alias", False):
+                if not _exported(member):
+                    continue
+                try:
+                    target = member.final_target
+                except Exception:
+                    continue
+                if not str(target.path).startswith(package + "."):
+                    continue
+            if _kind_of(target) != kind:
+                continue
+            if _get(self.old, _rel(str(target.path), self.old.path)) is not None:
+                continue  # it existed before: not what the removed one became
+            counts = _rename_kept(obj, target)
+            if counts is not None:
+                found.append((name, target, counts))
+        if len(found) != 1:
+            return None, None  # nothing, or several look alike: no way to tell
+        name, target, counts = found[0]
+        public = [
+            p
+            for p in self.new_index().get(name, [])
+            if getattr(self.new_object(p), "path", None) == target.path
+        ]
+        public.sort(key=lambda p: (p.count("."), len(p), p))
+        moved_to = public[0] if public else self.public_path(str(target.path)) or str(target.path)
+        evidence = _evidence(kind, counts)
+        evidence["renamed"] = True
+        return moved_to, evidence
+
+
+def _rename_kept(old: Any, new: Any) -> tuple[int, int] | None:
+    """How many of the public members of ``old`` (a class's own public names, a function's
+    public parameters) ``new`` keeps, of how many, when that is enough for ``new`` to be
+    ``old`` under another name (find_renamed); None otherwise.
+
+    A class keeps a name when it defines it itself, or inherits it from a base the old class
+    did not have (:func:`_names_of_its_own`): the methods a new sibling subclass inherits from
+    the base both share say nothing about it. Names unrelated to the old one need five such
+    members (``Task`` -> ``Worker`` on ``run``, ``close`` and ``start`` is no rename); related
+    names (``FastThing`` -> ``Thing``) three, or all of fewer than five.
+    """
+    kind = _kind_of(old)
+    try:
+        if kind == "class":
+            names = _public_names(old, inherited=False)
+            kept = len(names & _names_of_its_own(old, new))
+            value_type = all(
+                _kind_of(m) == "attribute" for n, m in old.members.items() if n in names
+            )
+        elif kind == "function":
+            names = {p.name for p in old.parameters if _public_parameter(p.name)}
+            kept = len(names & {p.name for p in new.parameters if _public_parameter(p.name)})
+            value_type = True  # parameters are shared as widely as fields: the name must help
+        else:
+            return None
+    except Exception:
+        return None
+    total = len(names)
+    same_name = _same_name_spelt(old.name, new.name)
+    if same_name:
+        return (kept, total) if total and kept == total else None
+    related = _names_related(old.name, new.name)
+    if total < (3 if related else 5) or kept < min(5, total) or 5 * kept < 4 * total:
+        return None
+    if value_type and not related:
+        return None
+    return kept, total
+
+
+def _names_of_its_own(old: Any, new: Any) -> set[str]:
+    """The public names of the class ``new`` that count towards its being ``old`` under
+    another name: those it defines itself, and those it inherits from a class that was not
+    among ``old``'s bases (a base new to it, holding what ``old`` used to define). What it
+    inherits from a base ``old`` also had is the base's, not evidence."""
+    own = _public_names(new, inherited=False)
+    try:
+        ancestors = {str(c.path) for c in old.mro()}
+        inherited = list(new.inherited_members.items())
+    except Exception:
+        return own
+    for name, member in inherited:
+        if name.startswith("_") or name in own:
+            continue
+        try:
+            origin = str(member.final_target.parent.path)
+        except Exception:
+            continue
+        if origin not in ancestors:
+            own.add(name)
+    return own
+
+
+def _same_name_spelt(a: str, b: str) -> bool:
+    """``McpError`` and ``MCPError``, ``get_json`` and ``getJSON``: the same name but for case
+    and underscores."""
+    return a.lower().replace("_", "") == b.lower().replace("_", "")
+
+
+def _names_related(a: str, b: str) -> bool:
+    """Whether one name contains the other at its start or end (``RequestContext`` and
+    ``ServerRequestContext``), case and underscores aside; the shorter must have at least four
+    letters, or ``Base`` and ``Error`` would relate everything."""
+    x, y = a.lower().replace("_", ""), b.lower().replace("_", "")
+    if x == y:
+        return True
+    short, long = sorted((x, y), key=len)
+    return len(short) >= 4 and (long.startswith(short) or long.endswith(short))
 
 
 def _origin(obj: Any) -> str:

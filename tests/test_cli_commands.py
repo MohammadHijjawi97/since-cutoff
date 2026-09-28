@@ -206,6 +206,8 @@ def test_mcp_serves_with_the_download_limit_given(monkeypatch) -> None:
         (["run", "--jobs", "-1"], "argument --jobs: must be 0 or more"),
         (["run", "--max-probes", "many"], "argument --max-probes: not a number: many"),
         (["scan", "--limit", "2.5"], "argument --limit: not a number: 2.5"),
+        # 0 would silently mean the default (5): not a budget.
+        (["sync", "--per-package", "0"], "argument --per-package: must be 1 or more"),
     ],
 )
 def test_counts_must_be_whole_numbers(capsys, argv, message) -> None:
