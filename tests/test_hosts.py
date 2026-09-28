@@ -311,7 +311,7 @@ def test_aider_aliases_are_the_models_they_stand_for(
 def test_aider_recognises_additional_model_makers(
     root: Path, home: Path, model: str, spec: str
 ) -> None:
-    write(root / ".aider.conf.yml", f"model: {model}\\n")
+    write(root / ".aider.conf.yml", f"model: {model}\n")
     assert detect(root, home) == (spec, ".aider.conf.yml")
 
 
