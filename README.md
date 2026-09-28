@@ -304,8 +304,9 @@ with, and the model line says where it came from ("model from .claude/settings.j
 2. Inside Claude Code (which sets `CLAUDECODE=1` for the commands it runs), only Claude Code's
    settings count: `ANTHROPIC_MODEL`, then the project's `.claude/settings.local.json` and
    `.claude/settings.json`, then `~/.claude/settings.json`.
-3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL` or `AIDER_MODEL`, then the
-   project settings, nearest folder first, from the scanned folder up to the repository root
+3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL`, `GEMINI_MODEL` or
+   `AIDER_MODEL`, then the project settings, nearest folder first, from the scanned folder up to
+   the repository root
    (never the home folder), then the user settings. In one folder the agents count in this
    order:
 
@@ -313,6 +314,7 @@ with, and the model line says where it came from ("model from .claude/settings.j
 |---|---|---|
 | Claude Code | `.claude/settings.local.json`, `.claude/settings.json` | `~/.claude/settings.json` |
 | Codex | `.codex/config.toml`, with its selected profile | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
+| Gemini CLI | `.gemini/settings.json` | `~/.gemini/settings.json` |
 | OpenCode | `opencode.json`, `opencode.jsonc` | `~/.config/opencode/` |
 | Aider | `.aider.conf.yml`, with Aider's aliases (`4o`, `flash`, `r1`, ...) | `~/.aider.conf.yml` |
 
