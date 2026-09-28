@@ -2,6 +2,10 @@
 
 ## 0.5.0 - 2026-09-28
 
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
+
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
   agent to run to remove the notes (found in a catalogue's review of the skill).
 - The skill's frontmatter keeps to the six fields of the Agent Skills spec, which claude.ai
