@@ -11,8 +11,7 @@ Without ``--model``, since-cutoff tests the model the user's coding agent is set
    the model running here.
 3. Elsewhere, by scope: first the agents' environment variables (Claude Code's
    ``ANTHROPIC_MODEL``, Gemini CLI's ``GEMINI_MODEL``, then Aider's ``AIDER_MODEL``); then the
-   project's settings, the nearest
-   folder first; then the user's. The project's settings are looked for from the project folder
+   project's settings, the nearest folder first; then the user's. The project's settings are looked for from the project folder
    up to the repository root (the first folder with ``.git``), never in the home directory or
    above it; in each folder, and then among the user's settings, in this order:
 
