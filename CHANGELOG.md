@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
+  the existing read-only tools; listing them needs no network or API key.
 ## 0.5.0 - 2026-09-28
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
