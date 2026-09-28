@@ -2,6 +2,10 @@
 
 ## 0.5.0 - 2026-09-28
 
+- The MCP server exposes two short prompts, `check_project` and `before_upgrade`, that guide an
+  agent to the existing read-only tools without adding network access or model calls to prompt
+  discovery itself.
+
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
   agent to run to remove the notes (found in a catalogue's review of the skill).
 - The skill's frontmatter keeps to the six fields of the Agent Skills spec, which claude.ai
