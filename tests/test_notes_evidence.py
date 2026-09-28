@@ -21,6 +21,7 @@ from since_cutoff.apidiff import (
     DEPRECATED,
     HINT_WARNING,
     PARAM_KEYWORD_ONLY,
+    PARAM_REMOVED,
     REMOVED,
     APIChange,
 )
@@ -37,7 +38,7 @@ from since_cutoff.pypi import SourceTree
 from since_cutoff.report import render_markdown, render_scan_markdown, to_json
 from tests.conftest import FakePyPI, write_tree
 from tests.test_ci import scan_app
-from tests.test_notes_provenance import change
+from tests.test_notes_provenance import change, toy_diff
 
 CUTOFF = date(2025, 7, 31)
 
@@ -277,6 +278,91 @@ def test_no_replacement_follows_what_it_is_about() -> None:
         "by keyword."
     )
     assert "source names" not in note.bullet
+
+
+ANTHROPIC_180_CREATE = (
+    "create(self, *, max_tokens: int, messages: Iterable[MessageParam], model: ModelParam, "
+    "stream: Literal[False] | Omit = omit, extra_headers: Headers | None = None, "
+    "extra_query: Query | None = None, extra_body: Body | None = None, "
+    "timeout: float | httpx.Timeout | None | NotGiven = not_given) -> Message"
+)
+
+
+def test_a_removed_request_field_points_to_extra_body_not_to_dropping_it() -> None:
+    """anthropic 1.8.0 took ``temperature``, ``top_k`` and ``top_p`` out of ``create()``'s
+    signature. "do not pass them" made every agent in the benchmark pilot drop the temperature
+    the task asked for; the pinned method still sends fields through ``extra_body``."""
+    changes = [
+        change(param=p, new_signature=ANTHROPIC_180_CREATE)
+        for p in ("temperature", "top_k", "top_p")
+    ]
+    note = diff_note(changes)
+    assert note.line == (
+        "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword "
+        "arguments. If the API still needs them, pass them through its `extra_body` or "
+        "`extra_query` argument. since-cutoff found no replacement in anthropic's deprecation "
+        "text. [diff]"
+    )
+    assert "do not pass" not in note.line
+    one = diff_note([change(param="temperature", new_signature=ANTHROPIC_180_CREATE)])
+    assert one.line.startswith(
+        "`Messages.create()` no longer accepts `temperature` as a keyword argument. If the API "
+        "still needs it, pass it through its `extra_body` or `extra_query` argument."
+    )
+
+
+def test_the_diff_records_request_extras_from_every_parameter(tmp_path: Path) -> None:
+    """The recorded signature is cut at 400 characters, and anthropic 1.8's ``create()`` is
+    longer: ``extra_body`` was past the cut, so the note fell back to "do not pass them"."""
+    many = ", ".join(f"option_{i}: int | None = None" for i in range(40))
+    old = {
+        "sdk/__init__.py": "from sdk.client import Client\n",
+        "sdk/client.py": (
+            "class Client:\n"
+            "    def create(self, *, model: str, temperature: float | None = None) -> str:\n"
+            "        return model\n"
+            "    def send(self, *, text: str, retries: int = 0) -> str:\n"
+            "        return text\n"
+        ),
+    }
+    new = {
+        "sdk/__init__.py": "from sdk.client import Client\n",
+        "sdk/client.py": (
+            "class Client:\n"
+            f"    def create(self, *, model: str, {many}, extra_query: dict | None = None,\n"
+            "               extra_body: dict | None = None) -> str:\n"
+            "        return model\n"
+            "    def send(self, *, text: str) -> str:\n"
+            "        return text\n"
+        ),
+    }
+    found = {c.parameter: c for c in toy_diff(tmp_path, "sdk", old, new) if c.kind == PARAM_REMOVED}
+    create, send = found["temperature"], found["retries"]
+    assert "extra_body" not in (create.new_signature or "")  # past the cut
+    assert create.request_extras == ["extra_body", "extra_query"] and send.request_extras == []
+    assert "pass it through its `extra_body` or `extra_query` argument" in diff_note([create]).line
+    assert "do not pass it" in diff_note([send]).line
+
+
+def test_extra_request_arguments_are_read_from_the_pinned_signature_only() -> None:
+    query_only = "list(self, *, limit: int | Omit = omit, extra_query: Query | None = None)"
+    note = diff_note(
+        [change(name="list", owner="Files", param="after_id", new_signature=query_only)]
+    )
+    assert "pass it through its `extra_query` argument." in note.line
+    for signature in (
+        None,
+        "create(self, *, model, my_extra_body=None, extra_bodyguard=None)",  # look-alikes
+        "create(self, *, model, **extra_body)",  # a **kwargs takes the parameter; not reported
+    ):
+        plain = diff_note([change(param="temperature", new_signature=signature)])
+        assert plain.line.startswith(
+            "`Messages.create()` no longer accepts `temperature`; do not pass it."
+        )
+    stubs = diff_note(
+        [change(pkg="anthropic-stubs", param="temperature", new_signature=ANTHROPIC_180_CREATE)]
+    )
+    assert "extra_body" not in stubs.line and "type checkers reject it" in stubs.line
 
 
 def test_no_replacement_names_what_it_is_about_when_others_have_one() -> None:

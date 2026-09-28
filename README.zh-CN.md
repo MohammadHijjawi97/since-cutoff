@@ -20,14 +20,16 @@ huggingface-hub 0.34.3 -> 2.0.0 (0.34.3 was the latest release at the cutoff; py
 anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyproject.toml pins 1.8.0)
   Messages.create: temperature, top_k and top_p were removed                          uses this API
     app/main.py   calls create
-    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass
-          them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
+          arguments. If the API still needs them, pass them through its `extra_body` or
+          `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation
+          text. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
   pyproject.toml.
 ```
 
-`app/main.py` 中的调用没有传这些参数中的任何一个，所以被标为“uses this API”（用到了这个 API），而不是“old form”（旧写法）：它现在能正常运行，但一个按 0.60.0 写代码的助手在修改这个调用时，可能会加上 `temperature=0.2`。这条说明就是 `since-cutoff sync` 写进 AGENTS.md、用来防止这种情况的内容；它的标签 `[diff]` 表明了它的依据：对两个版本公开 API 的静态对比。
+`app/main.py` 中的调用没有传这些参数中的任何一个，所以被标为“uses this API”（用到了这个 API），而不是“old form”（旧写法）：它现在能正常运行，但一个按 0.60.0 写代码的助手在修改这个调用时，可能会加上 `temperature=0.2`。这条说明就是 `since-cutoff sync` 写进 AGENTS.md、用来防止这种情况的内容；它的标签 `[diff]` 表明了它的依据：对两个版本公开 API 的静态对比。参数从函数签名中移除，并不等于 API 不再接受这个字段；所以当锁定版本的方法带有 `extra_body` 或 `extra_query` 参数时，说明会指出这一点，而不是让助手删掉这个字段。
 
 **在你的项目上试试。** 不需要 API key，不调用模型。在项目根目录运行：
 
@@ -42,6 +44,7 @@ uvx since-cutoff scan
 [![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
 [English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | **简体中文** | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
 
@@ -102,7 +105,7 @@ uvx since-cutoff run
 
 ```markdown
 **anthropic 1.8.0** (0.60.0 at the cutoff)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
 **huggingface-hub 2.0.0** (0.34.3 at the cutoff)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
@@ -207,7 +210,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 目前测到的结果，各自注明范围：
 
 - **一个项目、一个模型、since-cutoff 0.1.0**：下面的卡片，Claude Opus 4.6 在示例项目上的结果。卡片后面的表格加上了 Claude Haiku 4.5 在同一项目上的结果。
-- **基准测试**：0.4.0 的基准测试报告运行完成后会链接在这里，无论结果如何。
+- **基准测试**：24 个带隐藏测试的编程任务，每个任务分别由 Claude Code 单独完成、配合 Context7 文档服务、配合 since-cutoff 0.4.1 的说明、两者同时使用，以及强制使用 Context7。报告运行完成后会链接在这里，无论结果如何。
 - **独立开发者的报告**：会列在这里，每份都注明项目、模型和日期。欢迎把你的报告发到 [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)。
 
 <p align="center"><picture>

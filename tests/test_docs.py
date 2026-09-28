@@ -120,6 +120,7 @@ def _anthropic_note() -> str:
             "create",
             owner="Messages",
             parameter=p,
+            request_extras=["extra_body", "extra_query"],  # what 1.8.0's create() takes
         )
         for p in ("top_p", "temperature", "top_k")
     ]

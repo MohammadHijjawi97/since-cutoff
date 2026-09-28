@@ -28,8 +28,10 @@ huggingface-hub 0.34.3 -> 2.0.0 (0.34.3 was the latest release at the cutoff; py
 anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyproject.toml pins 1.8.0)
   Messages.create: temperature, top_k and top_p were removed                          uses this API
     app/main.py   calls create
-    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass
-          them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
+          arguments. If the API still needs them, pass them through its `extra_body` or
+          `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation
+          text. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
   pyproject.toml.
@@ -40,7 +42,9 @@ L'appel de `app/main.py` ne passe aucun de ces paramètres : il est donc marqu�
 assistant qui écrit pour la 0.60.0 pourrait ajouter `temperature=0.2` en modifiant l'appel. La
 note est ce que `since-cutoff sync` écrit dans AGENTS.md pour l'en empêcher ; son étiquette,
 `[diff]`, indique sur quoi elle repose : une comparaison statique des API publiques des deux
-versions.
+versions. Qu'un paramètre quitte la signature ne veut pas dire que l'API a abandonné le
+champ : quand la méthode épinglée a un argument `extra_body` ou `extra_query`, la note le dit au
+lieu de demander à l'assistant de supprimer le champ.
 
 **Essayez-le sur votre projet.** Aucune clé d'API, aucun appel au modèle. À la racine du projet :
 
@@ -62,6 +66,7 @@ il appelle votre modèle et reste facultatif.
 [![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
 [English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | **Français**
 
@@ -170,7 +175,7 @@ ainsi :
 
 ```markdown
 **anthropic 1.8.0** (0.60.0 at the cutoff)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
 **huggingface-hub 2.0.0** (0.34.3 at the cutoff)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
@@ -352,7 +357,9 @@ Ce qui a été mesuré jusqu'ici, chaque fois avec sa portée :
 
 - **Un projet, un modèle, since-cutoff 0.1.0** : la carte ci-dessous, Claude Opus 4.6 sur le
   projet d'exemple. Le tableau qui la suit ajoute Claude Haiku 4.5 sur le même projet.
-- **Benchmark** : le rapport du benchmark de la 0.4.0 sera lié ici une fois qu'il aura été
+- **Benchmark** : 24 tâches de programmation avec des tests cachés, chacune exécutée par Claude
+  Code seul, avec le serveur de documentation Context7, avec les notes de since-cutoff 0.4.1, avec
+  les deux, et avec l'usage de Context7 imposé. Le rapport sera lié ici une fois qu'il aura été
   exécuté, quel qu'en soit le résultat.
 - **Rapports de développeurs indépendants** : ils seront listés ici, chacun avec son projet, son
   modèle et sa date. Publiez le vôtre dans

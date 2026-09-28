@@ -54,6 +54,7 @@ from since_cutoff.apidiff import (
     PARAM_REMOVED,
     PARAM_REQUIRED,
     REMOVED,
+    REQUEST_EXTRAS,
     STATED_REPLACEMENT,
     APIChange,
     object_replacements,
@@ -435,6 +436,17 @@ def diff_note(
                         f"checkers reject {pronoun}."
                     )
                     said_what = True
+                elif extras := _extra_request_arguments(group):
+                    # An SDK method that sends a request (Stainless-generated clients: anthropic,
+                    # openai, ...) takes fields it has no parameter for in extra_body/extra_query:
+                    # the parameter left the signature, not necessarily the API. "do not pass
+                    # them" made agents drop a field the task needed (the benchmark pilot).
+                    sentences.append(
+                        f"{subject()} no longer accepts {_listed(plain, 'or')} as "
+                        f"{'keyword arguments' if len(plain) > 1 else 'a keyword argument'}. "
+                        f"If the API still needs "
+                        f"{pronoun}, pass {pronoun} through its {_listed(extras, 'or')} argument."
+                    )
                 else:
                     sentences.append(
                         f"{subject()} no longer accepts {_listed(plain, 'or')}; do not pass "
@@ -871,6 +883,25 @@ def _replacement_check(r: Replacement, change: APIChange) -> str:
 
 def _unique(items: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(items))
+
+
+def _extra_request_arguments(changes: Sequence[APIChange]) -> list[str]:
+    """``extra_body`` / ``extra_query`` when the pinned callable of these changes takes them.
+
+    From ``request_extras`` (DIFF_SCHEMA 17), else from the recorded new signature, which
+    is cut at 400 characters. Whether the API itself still takes a removed field is not
+    something a static diff can know, so the note says "if the API still needs".
+    """
+    found: set[str] = set()
+    for c in changes:
+        if c.request_extras is not None:
+            found.update(c.request_extras)
+        else:
+            signature = c.new_signature or ""
+            found.update(
+                name for name in REQUEST_EXTRAS if re.search(rf"[(,]\s*{name}\s*[:=,)]", signature)
+            )
+    return [name for name in REQUEST_EXTRAS if name in found]
 
 
 def _listed(names: Sequence[str], conjunction: str) -> str:

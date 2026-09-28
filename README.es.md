@@ -30,8 +30,10 @@ huggingface-hub 0.34.3 -> 2.0.0 (0.34.3 was the latest release at the cutoff; py
 anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyproject.toml pins 1.8.0)
   Messages.create: temperature, top_k and top_p were removed                          uses this API
     app/main.py   calls create
-    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass
-          them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
+          arguments. If the API still needs them, pass them through its `extra_body` or
+          `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation
+          text. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
   pyproject.toml.
@@ -41,7 +43,10 @@ La llamada de `app/main.py` no pasa ninguno de esos parámetros, así que aparec
 API» (usa esta API) y no como «old form» (forma antigua): hoy funciona, pero un asistente que
 escriba para la 0.60.0 podría añadir `temperature=0.2` al editar la llamada. La nota es lo que
 `since-cutoff sync` escribe en AGENTS.md para evitarlo; su etiqueta, `[diff]`, indica en qué se
-basa: una comparación estática de las API públicas de las dos versiones.
+basa: una comparación estática de las API públicas de las dos versiones. Que un parámetro salga
+de la firma no significa que la API haya dejado de aceptar el campo, así que, cuando el método
+fijado tiene un argumento `extra_body` o `extra_query`, la nota lo dice en lugar de pedir al
+asistente que quite el campo.
 
 **Pruébalo en tu proyecto.** Sin clave de API y sin llamadas al modelo. En la raíz del proyecto:
 
@@ -62,6 +67,7 @@ llama a tu modelo y es opcional.
 [![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
 [English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | **Español** | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
 
@@ -166,7 +172,7 @@ termina así:
 
 ```markdown
 **anthropic 1.8.0** (0.60.0 at the cutoff)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
 **huggingface-hub 2.0.0** (0.34.3 at the cutoff)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
@@ -348,8 +354,10 @@ Lo que se ha medido hasta ahora, cada cosa con su alcance:
 
 - **Un proyecto, un modelo, since-cutoff 0.1.0**: la tarjeta de abajo, Claude Opus 4.6 en el
   proyecto de ejemplo. La tabla que le sigue añade Claude Haiku 4.5 en el mismo proyecto.
-- **Benchmark**: el informe del benchmark de la versión 0.4.0 se enlazará aquí cuando se haya
-  ejecutado, sea cual sea el resultado.
+- **Benchmark**: 24 tareas de programación con tests ocultos, cada una ejecutada por Claude Code
+  solo, con el servidor de documentación Context7, con las notas de since-cutoff 0.4.1, con ambos
+  y con el uso de Context7 obligatorio. El informe se enlazará aquí cuando se haya ejecutado, sea
+  cual sea el resultado.
 - **Informes de desarrolladores independientes**: se listarán aquí, cada uno con su proyecto, su
   modelo y su fecha. Publica el tuyo en
   [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6)

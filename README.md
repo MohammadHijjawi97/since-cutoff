@@ -28,8 +28,10 @@ huggingface-hub 0.34.3 -> 2.0.0 (0.34.3 was the latest release at the cutoff; py
 anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyproject.toml pins 1.8.0)
   Messages.create: temperature, top_k and top_p were removed                          uses this API
     app/main.py   calls create
-    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass
-          them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+    Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
+          arguments. If the API still needs them, pass them through its `extra_body` or
+          `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation
+          text. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
   pyproject.toml.
@@ -39,7 +41,9 @@ The call in `app/main.py` passes none of these parameters, so it is marked "uses
 "old form": it works today, but an assistant writing for 0.60.0 could add `temperature=0.2` when
 it edits the call. The note is what `since-cutoff sync` writes into AGENTS.md so that it does
 not; its tag, `[diff]`, says what the note rests on: a static comparison of the two releases'
-public APIs.
+public APIs. The parameters left the signature, which is not the same as the API dropping the
+field, so where the pinned method has an `extra_body` or `extra_query` argument the note says
+so instead of telling the assistant to drop the field.
 
 **Try it on your project.** No API key, no model call. In the project root:
 
@@ -60,6 +64,7 @@ measures; it calls your model and is optional.
 [![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
 
 **English** | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
 
@@ -158,7 +163,7 @@ it writes nothing. Text outside the block keeps its bytes, CRLF line breaks incl
 
 ```markdown
 **anthropic 1.8.0** (0.60.0 at the cutoff)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
 **huggingface-hub 2.0.0** (0.34.3 at the cutoff)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
@@ -328,8 +333,9 @@ What has been measured so far, each with its scope:
 
 - **One project, one model, since-cutoff 0.1.0**: the card below, Claude Opus 4.6 on the sample
   project. The table after it adds Claude Haiku 4.5 on the same project.
-- **Benchmark**: the benchmark report for 0.4.0 will be linked here once it has run, whatever
-  the outcome.
+- **Benchmark**: 24 coding tasks with hidden tests, each run by Claude Code alone, with the
+  Context7 docs server, with since-cutoff 0.4.1's notes, with both, and with Context7 use
+  required. The report will be linked here once it has run, whatever the outcome.
 - **Reports from independent developers** will be listed here, each with its project, model and
   date. Post yours in [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6).
 

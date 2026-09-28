@@ -58,11 +58,17 @@ log = logging.getLogger(__name__)
 # gone or a shim without API: selection.package_moves groups only those); a module-level name
 # bound to a method of an instance the module makes (huggingface_hub's ``duplicate_space =
 # api.duplicate_space``) says which method (``alias_of``) and takes its deprecation text.
-DIFF_SCHEMA = 16
+# 17: request_extras (a removed parameter's callable still takes ``extra_body`` /
+# ``extra_query``, read from all its parameters: the recorded signature is cut at 400
+# characters, and anthropic 1.8's ``Messages.create`` is longer than that).
+DIFF_SCHEMA = 17
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
 FUZZY_LIMIT = 2000
+
+# The parameters through which an SDK method sends request fields it has no parameter for.
+REQUEST_EXTRAS = ("extra_body", "extra_query")
 
 REMOVED = "removed"
 MOVED = "moved"
@@ -227,6 +233,11 @@ class APIChange:
     # one). Without it, ``suggestions`` are names that merely look similar (not confirmed as
     # replacements). False in a diff made before DIFF_SCHEMA 13.
     renamed: bool = False
+    # PARAM_REMOVED: which of ``extra_body`` and ``extra_query`` the new callable takes (an
+    # SDK method that sends a request, as every Stainless-generated client's do: fields it
+    # has no parameter for go there). [] when neither; None in a diff made before
+    # DIFF_SCHEMA 17. Whether the API itself still takes the removed field is not known.
+    request_extras: list[str] | None = None
 
     @property
     def id(self) -> str:
@@ -854,8 +865,11 @@ class _Differ:
         else:
             hint, source = deprecation_hint_and_source(old_fn, param.lstrip("*"))
         handled, handled_text = None, None
+        extras: list[str] | None = None
         if ckind == PARAM_REMOVED and not param.startswith("*"):
             handled, handled_text = self.still_handled(new_fn, param)
+            names = _parameter_names(new_fn)
+            extras = [n for n in REQUEST_EXTRAS if n in names]
         change = self._change(
             ckind,
             new_fn,
@@ -869,6 +883,7 @@ class _Differ:
             still_handled_text=handled_text,
             suggestions=suggestions,
             renamed=rename,
+            request_extras=extras,
             old_signature=signature_of(old_fn),
             new_signature=signature_of(new_fn),
             old_doc=doc_summary(old_fn),

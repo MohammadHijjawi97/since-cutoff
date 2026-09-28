@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A parameter removed from an SDK method that still takes `extra_body` or `extra_query`
+  (anthropic, openai and other Stainless-generated clients) no longer gets "do not pass them":
+  "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
+  arguments. If the API still needs them, pass them through its `extra_body` or `extra_query`
+  argument." The parameter left the signature, which a static diff can see; whether the API
+  still takes the field, it cannot. In the benchmark pilot, every agent given the old note
+  followed it and dropped the `temperature=0` its task asked for. The diff records which of the
+  two a removed parameter's method takes (DIFF_SCHEMA 17, `request_extras`), because the
+  recorded signature is cut at 400 characters and anthropic 1.8's `create()` is longer.
 - `sync --scope imported` puts first what an assistant writing new code against a package is
   most likely to run into: import paths that no longer work (a module or package that moved, a
   name the package exported at its top level that was removed), then changes with a known
