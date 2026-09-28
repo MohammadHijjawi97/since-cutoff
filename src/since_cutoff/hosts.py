@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from since_cutoff.models import bare_model_id
+from since_cutoff.models import PROVIDER_ALIASES, bare_model_id
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -106,6 +106,10 @@ _MAKERS = (
     (re.compile(r"deepseek-"), "deepseek"),
     (re.compile(r"grok-"), "xai"),
     (re.compile(r"(?:mistral|codestral|devstral|magistral|ministral)-"), "mistral"),
+    (re.compile(r"(?:qwen|qwq|qvq)"), "alibaba"),
+    (re.compile(r"kimi-"), "moonshotai"),
+    (re.compile(r"glm-"), "zai"),
+    (re.compile(r"llama-"), "llama"),
 )
 # Aider's documented model aliases (``aider --model 4o``) as the models they stand for. Aider's
 # sonnet, opus and haiku are left to hosted_spec, which reads them as the newest of the family.
@@ -208,7 +212,16 @@ def hosted_spec(provider: str | None, model: str) -> str:
     name = (provider or "").strip().lower()
     if name in _CALLABLE:
         return f"{_CALLABLE[name]}:{model}"
-    return _maker_spec(model) or (f"{name}:{model}" if name else model)
+
+    maker_spec = _maker_spec(model)
+    if maker_spec is not None:
+        maker = maker_spec.split(":", 1)[0]
+        if maker in {"alibaba", "moonshotai", "zai", "llama"} and name:
+            if PROVIDER_ALIASES.get(name) == maker:
+                return maker_spec
+            return f"{name}:{model}"
+        return maker_spec
+    return f"{name}:{model}" if name else model
 
 
 def claude_settings_model(path: Path) -> str | None:
