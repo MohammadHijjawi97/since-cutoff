@@ -106,7 +106,7 @@ _MAKERS = (
     (re.compile(r"deepseek-"), "deepseek"),
     (re.compile(r"grok-"), "xai"),
     (re.compile(r"(?:mistral|codestral|devstral|magistral|ministral)-"), "mistral"),
-    (re.compile(r"(?:qwen|qwq|qvq)"), "alibaba"),
+    (re.compile(r"(?:qwen[\\d.]*|qwq|qvq)-"), "alibaba"),
     (re.compile(r"kimi-"), "moonshotai"),
     (re.compile(r"glm-"), "zai"),
     (re.compile(r"llama-"), "llama"),
@@ -215,11 +215,6 @@ def hosted_spec(provider: str | None, model: str) -> str:
 
     maker_spec = _maker_spec(model)
     if maker_spec is not None:
-        maker = maker_spec.split(":", 1)[0]
-        if maker in {"alibaba", "moonshotai", "zai", "llama"} and name:
-            if PROVIDER_ALIASES.get(name) == maker:
-                return maker_spec
-            return f"{name}:{model}"
         return maker_spec
     return f"{name}:{model}" if name else model
 
