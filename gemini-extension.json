@@ -1,6 +1,6 @@
 {
   "name": "since-cutoff",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Which Python library APIs changed after your model's training cutoff: renamed, removed and deprecated functions in the exact versions your project pins, from a static diff (no model calls, no API key). Needs uv.",
   "mcpServers": {
     "since-cutoff": {

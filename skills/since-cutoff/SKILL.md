@@ -6,7 +6,7 @@ compatibility: Needs since-cutoff on PATH, or uv or pipx to run it, and network 
 allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff sync:*), Bash(since-cutoff status:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(since-cutoff unapply:*), Bash(uvx since-cutoff:*), Bash(pipx run since-cutoff:*), Read
 metadata:
   author: Mohammad Hijjawi
-  version: "0.4.1"
+  version: "0.5.0"
 ---
 
 # since-cutoff

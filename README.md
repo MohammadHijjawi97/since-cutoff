@@ -581,7 +581,7 @@ Without `paths`, the job also runs when a code change starts using a changed API
 | `step-summary` | `true` | add the Markdown summary to the job summary |
 | `cache` | `true` | keep PyPI metadata, package sources and API diffs between runs (also when `fail-on-changes` fails the job) |
 | `args` | | more `since-cutoff scan` arguments, e.g. `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.4.1` | the since-cutoff release to run, or `latest` |
+| `since-cutoff-version` | `0.5.0` | the since-cutoff release to run, or `latest` |
 
 `args: --fail-on old-form --annotate github` fails the job only when your code uses a changed
 API in the old form, and annotates each file that uses one: a warning for the old form, a notice
@@ -598,7 +598,7 @@ Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `de
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.4.1
+    rev: v0.5.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # add --fail-on=old-form to block the commit

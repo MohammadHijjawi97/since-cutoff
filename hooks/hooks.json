@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx since-cutoff==0.4.1 status --hook",
+            "command": "uvx since-cutoff==0.5.0 status --hook",
             "timeout": 60
           }
         ]
