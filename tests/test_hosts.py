@@ -331,7 +331,7 @@ def test_opencode_bare_ids_resolve_to_their_makers(
     assert detect(root, home) == (spec, "opencode.json")
 
 
-@pytest.mark.parametrize("model", ["my-local-model", "openai", "deepseek/"])
+@pytest.mark.parametrize("model", ["my-local-model", "openai", "qwen", "deepseek/"])
 def test_a_model_name_since_cutoff_cannot_place_is_reported_not_guessed(
     root: Path, home: Path, model: str
 ) -> None:
@@ -363,7 +363,7 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("oss", "gpt-oss:20b", "ollama:gpt-oss:20b"),
         ("google", "gemini-2.5-pro", "google:gemini-2.5-pro"),
         ("vertex_ai", "gemini-2.5-pro", "google:gemini-2.5-pro"),
-        ("github-copilot", "gpt-5.4", "openai:gpt-5.4"),
+        ("github-copilot", "gpt-5.4", "openai:gpt-5.4"),\n        ("github-copilot", "kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
         ("github-copilot", "o3", "openai:o3"),
         (
             "amazon-bedrock",
