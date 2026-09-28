@@ -1,0 +1,32 @@
+name: Materialize issue 24
+
+on:
+  push:
+    branches:
+      - feat/gemini-cli-model-detection-24
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.event.head_commit.message == 'chore: materialize validated issue 24'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply validated transformation
+        run: python .bursia/apply_issue_24.py
+      - name: Remove temporary materializer
+        run: rm -rf .bursia .github/workflows/materialize-24.yml
+      - name: Commit final issue diff
+        run: |
+          git config user.name "soyeladice-svg"
+          git config user.email "soyeladice@gmail.com"
+          git add -A
+          git commit -m "feat: implement issue #24"
+          git push
