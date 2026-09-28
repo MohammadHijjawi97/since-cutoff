@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 - 2026-09-28
 
 - A parameter removed from an SDK method that still takes `extra_body` or `extra_query`
   (anthropic, openai and other Stainless-generated clients) no longer gets "do not pass them":

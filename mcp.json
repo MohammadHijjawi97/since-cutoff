@@ -4,7 +4,7 @@
     "since-cutoff": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["since-cutoff==0.4.0", "mcp"]
+      "args": ["since-cutoff==0.4.1", "mcp"]
     }
   }
 }
