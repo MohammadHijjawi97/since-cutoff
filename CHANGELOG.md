@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.5.0 - 2026-09-28
+## Unreleased
 
-- The MCP server exposes two short prompts, `check_project` and `before_upgrade`, that guide an
-  agent to the existing read-only tools without adding network access or model calls to prompt
-  discovery itself.
+- The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
+  the existing read-only tools; listing them needs no network or API key.
+## 0.5.0 - 2026-09-28
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
   agent to run to remove the notes (found in a catalogue's review of the skill).
