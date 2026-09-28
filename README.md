@@ -436,13 +436,18 @@ How the measurement works and what these numbers do and do not show, in more det
 ## Use it from any agent (MCP)
 
 `since-cutoff mcp` is an MCP server that lets a coding agent ask "what changed in this library
-since my training cutoff?" before it writes code. It has three read-only tools:
+since my training cutoff?" before it writes code. It has three read-only tools and two prompts:
 
 | tool | answers |
 |---|---|
 | `api_changes(package, model, symbol=...)` | what changed in one library between the release at the model's cutoff and the latest (or a given) version, hard breaks first |
 | `project_changes(project_dir, model)` | the same for every dependency of a project at its pinned version, starting with the changed APIs your code uses: for each, the files that use it (at most 3), its note, the runtime caveat and names that look similar, not confirmed as replacements |
 | `model_cutoff(model)` | a model's training cutoff, from [models.dev](https://models.dev) |
+
+| prompt | asks the agent to |
+|---|---|
+| `check_project(project_dir=".")` | call `project_changes` with its own model id, start with old-form uses, and offer `since-cutoff sync` for AGENTS.md notes |
+| `before_upgrade(package, to_version="")` | read the pinned package version, call `api_changes` for the intended upgrade, and list what project code needs to change |
 
 The agent passes its own model id, so the answer covers what changed after that model's training
 cutoff. The tools read PyPI and package sources statically: no model calls, no API key, no
