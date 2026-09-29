@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+
 ## 0.5.0 - 2026-09-28
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the
