@@ -398,7 +398,7 @@ def _best(change: APIChange, files: Sequence[FileUse]) -> tuple[tuple[str, ...],
     found = [_in_file(merged, f) for f in files]
     for how in (PATH_MATCH, NAME_MATCH):
         best: tuple[str, ...] = ()
-        for _, names, matched in found:
+        for _, names, matched, _ in found:
             if matched == how and _weight(change, names) > _weight(change, best):
                 best = names
         if best:
@@ -421,7 +421,7 @@ def _with_paths(change: APIChange) -> list[tuple[APIChange, frozenset[str]]]:
 
 def _in_file(
     merged: list[tuple[APIChange, frozenset[str]]], f: FileUse
-) -> tuple[APIChange | None, tuple[str, ...], str | None]:
+) -> tuple[APIChange | None, tuple[str, ...], str | None, frozenset[str]]:
     """The names of a change that one file uses, the merged change they are of, and how they
     were matched: through a path (PATH_MATCH), else, for a change without import paths, by its
     package and name (NAME_MATCH)."""
@@ -431,14 +431,21 @@ def _in_file(
         if len(names) > len(best[1]):
             best = (c, names)
     if best[1]:
-        return best[0], best[1], PATH_MATCH
+        return best[0], best[1], PATH_MATCH, next(
+            paths for c, paths in merged if c is best[0]
+        )
     for c, _ in merged:
         if c.import_paths is not None:
             continue  # the diff recorded its paths: the name alone is not enough
         names = _used_in(c, f, frozenset(_same_name(c, f)))
         if len(names) > len(best[1]):
             best = (c, names)
-    return best[0], best[1], NAME_MATCH if best[1] else None
+    return (
+        best[0],
+        best[1],
+        NAME_MATCH if best[1] else None,
+        frozenset(_same_name(best[0], f)) if best[0] is not None else frozenset(),
+    )
 
 
 def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
@@ -454,10 +461,42 @@ def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
     merged = _with_paths(change)
     found = []
     for f in files:
-        c, names, how = _in_file(merged, f)
+        c, names, how, by_path = _in_file(merged, f)
         if c is not None and how is not None:
             kind = _use_kind(c, f, names)
-            found.append(Use(f.file, None, None, kind, names, how, form(change, names)))
+            site_kind = {
+                USE_KEYWORD: "keyword",
+                USE_CALL: "call",
+                USE_MEMBER: "member",
+                USE_REFERENCE: "reference",
+            }.get(kind)
+            site_name = f"{names[0]}:{names[1]}" if len(names) == 2 else names[0]
+
+            def site_matches(k: str, name: str) -> bool:
+                if k != site_kind:
+                    return False
+
+                if site_kind == "keyword":
+                    if ":" not in name:
+                        return False
+                    path, parameter = name.rsplit(":", 1)
+                    return parameter == names[1] and (path in by_path or any(p.rsplit(".", 1)[0] == path for p in by_path if p.endswith(".__init__")))
+
+                if site_kind == "call":
+                    return name in by_path
+
+                return name == site_name
+
+            matching_sites = sorted(
+                (line, column)
+                for k, name, line, column in f.sites
+                if site_matches(k, name)
+            )
+            if matching_sites:
+                for line, column in matching_sites:
+                    found.append(Use(f.file, line, column, kind, names, how, form(change, names)))
+            elif not f.sites or site_kind is None:
+                found.append(Use(f.file, None, None, kind, names, how, form(change, names)))
     return ordered(found)
 
 
@@ -540,7 +579,7 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
         callable_name = found[0].rsplit(".", 1)[-1]
         passed = wanted is not None and any((p, wanted) in f.keyword_paths for p in by_path)
     elif name == "__init__":
-        named = {path.rsplit(".", 1)[0] for path in by_path} & f.paths
+        named = {path.rsplit(".", 1)[0] for path in by_path if "." in path} & f.paths
         if not named:
             return ()
         # The class called under any of its names: ``AsyncClient`` for a change merged with

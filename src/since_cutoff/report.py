@@ -414,11 +414,11 @@ def headline(
         text = Text.assemble(
             f"Probed {_plural(p['valid'], 'API change')}: ",
             (f"{p['stale']} stale", "red"),
-            " · ",
+            " Â· ",
             (f"{p['wrong']} wrong", "magenta"),
-            " · ",
+            " Â· ",
             (f"{p['deprecated']} deprecated", "yellow"),
-            " · ",
+            " Â· ",
             (f"{p['pass']} correct", "green"),
         )
         excluded = {k: v for k, v in p["excluded"].items() if v}
@@ -581,18 +581,19 @@ def render_console(
     *,
     verbose: bool = False,
     shown: Collection[str] = (),
+    fail_on: Collection[str] = (),
 ) -> None:
     """0.3's summary: the headline panel, the dependency table, the scan's warnings (but those
     in ``shown``, printed already) and what the model got wrong."""
     s = summary(scan, run)
     if s["model"]:
-        title = f"since-cutoff · {escape(s['model'])} · training cutoff {s['cutoff']}"
+        title = f"since-cutoff Â· {escape(s['model'])} Â· training cutoff {s['cutoff']}"
     else:
-        title = f"since-cutoff · custom cutoff {s['cutoff']}"
+        title = f"since-cutoff Â· custom cutoff {s['cutoff']}"
     sub = Text(
-        f"{scan.project.root.name} · {_deps(s['dependencies_total'])}"
+        f"{scan.project.root.name} Â· {_deps(s['dependencies_total'])}"
         + (f" ({s['dependencies_skipped']} not checked)" if s["dependencies_skipped"] else "")
-        + f" · versions from {s['version_source']}"
+        + f" Â· versions from {s['version_source']}"
     )
     lines = headline(scan, run, s)
     # rich fits a panel to its body and title but not to its subtitle, which it would cut: size
@@ -812,6 +813,7 @@ def render_scan(
     verbose: bool = False,
     limit: int = 8,
     shown: Collection[str] = (),
+    fail_on: Collection[str] = (),
 ) -> None:
     """What ``since-cutoff scan`` prints: the changed APIs the project's code uses first
     (:func:`scan_lines`), each with where the code uses it and its note, then one line for the
@@ -825,6 +827,7 @@ def render_scan(
         verbose=verbose,
         show_all=show_all,
         shown=shown,
+        fail_on=fail_on,
     )
     for line in lines:
         console.print(line, soft_wrap=True)
@@ -842,6 +845,7 @@ def scan_lines(
     verbose: bool = False,
     show_all: bool = False,
     shown: Collection[str] = (),
+    fail_on: Collection[str] = (),
 ) -> list[Text]:
     """The lines of :func:`render_scan` before 0.3's layout (the scan's warnings last, but
     those in ``shown``).
@@ -881,7 +885,7 @@ def scan_lines(
             group = u.package.name
             out.append(Text(""))
             prose(versions_text(scan, u.package), "bold")
-        out += _api_lines(scan, u, width, verbose)
+        out += _api_lines(scan, u, width, verbose, fail_on)
     if new:
         if used:
             out.append(Text(""))
@@ -1124,7 +1128,7 @@ def _snippet(root: Path, use: Use, cache: dict[str, list[str]]) -> str | None:
     return lines[use.line - 1].strip() if 0 < use.line <= len(lines) else None
 
 
-def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[Text]:
+def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool, fail_on: Collection[str] = ()) -> list[Text]:
     """One used API in the scan's first section: what changed and the label, where, the note,
     the runtime caveat and the names that merely look similar."""
     label = FORM_LABELS[u.form]
@@ -1138,7 +1142,8 @@ def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[
     column = max(len(where) for where, _ in shown[:cut]) if shown else 0
     snippets: dict[str, list[str]] = {}
     for where, here in shown[:cut]:
-        what = _snippet(scan.project.root, here[0], snippets) or use_text(here)
+        snippet = _snippet(scan.project.root, here[0], snippets)
+        what = f"{snippet} - {use_text(here)}" if snippet and "old-form" in fail_on else (snippet or use_text(here))
         for i, line in enumerate(
             _wrap(what, width, f"    {where.ljust(column)}   ", " " * (column + 7))
         ):
@@ -1485,7 +1490,7 @@ def _used_report_md(scan: ScanResult) -> list[str]:
             group = u.package.name
             out += ["", f"### {versions_text(scan, u.package)}", ""]
         wheres = [f"`{w}` ({use_text(here, code=True)})" for w, here in places(u)]
-        out.append(f"- **{api_head(u, code=True)}** · {FORM_LABELS[u.form]}")
+        out.append(f"- **{api_head(u, code=True)}** Â· {FORM_LABELS[u.form]}")
         out.append(f"  - Used in: {', '.join(wheres) or 'a file of your code'}")
         out.append(f"  - Note: {u.note.line}")
         if u.note.change.kind == DEPENDENCY_SWITCHED:
@@ -1723,16 +1728,16 @@ def _md_change(
     change: APIChange, files: Sequence[FileUse], *, example: bool = False, used_in: bool = False
 ) -> str:
     """One Markdown list item: the change, how many paths share it, and what the code uses
-    (with ``used_in``, where: " · used in `app/main.py`"); below it, the "Runtime:" caveat when
+    (with ``used_in``, where: " Â· used in `app/main.py`"); below it, the "Runtime:" caveat when
     the new version still reads a removed parameter."""
     others = other_paths_text(change, example=example)
     uses = uses_text(change, files)
-    mark = f" · **your code uses {uses}**" if uses else ""
+    mark = f" Â· **your code uses {uses}**" if uses else ""
     if uses and used_in:
         wheres = list(dict.fromkeys(u.where for u in selection_uses(change, files) if u.file))
         shown = ", ".join(f"`{w}`" for w in wheres[:LOCATIONS_SHOWN])
         more = f" and {len(wheres) - LOCATIONS_SHOWN} more" if len(wheres) > LOCATIONS_SHOWN else ""
-        mark += f" · used in {shown}{more}" if shown else ""
+        mark += f" Â· used in {shown}{more}" if shown else ""
     runtime = runtime_text([change])
     below = f"\n  - Runtime: {runtime}" if runtime else ""
     if change.kind == DEPENDENCY_SWITCHED:
@@ -1779,7 +1784,7 @@ def render_scan_markdown(
     out = [
         "## since-cutoff scan",
         "",
-        f"{_cutoff_md(s)} · project `{project.root.name}`, versions from `{s['version_source']}`",
+        f"{_cutoff_md(s)} Â· project `{project.root.name}`, versions from `{s['version_source']}`",
         "",
     ]
     out += _used_markdown(scan, env)
@@ -1999,8 +2004,8 @@ def _used_api_json(scan: ScanResult, u: UsedAPI) -> dict[str, Any]:
     """One entry of ``used_apis``: a changed API the project's code uses, its changes, where
     and how the code uses it, and the note from the API diff for it.
 
-    ``locations`` are file-level for now: ``line``, ``column`` and ``code`` stay null until the
-    scan records where in each file (issue #8). ``used_in`` lists the files."""
+    ``locations`` records the file, line, column, kind, names, form, match and source snippet
+    for each use. ``used_in`` lists the files."""
     p, note = u.package, u.note
     snippets: dict[str, list[str]] = {}
     locations = []

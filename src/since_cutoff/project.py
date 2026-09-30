@@ -1015,6 +1015,8 @@ class FileUse:
     # of one of its classes): ``("httpx.HTTPError", "huggingface_hub")`` for ``try:
     # hf_hub_download(...)`` ``except httpx.HTTPError:``.
     handled: frozenset[tuple[str, str]] = frozenset()
+    # Where each API-related use occurs: (kind, name, line, column).
+    sites: frozenset[tuple[str, str, int, int]] = frozenset()
 
     def imports(self, import_names: Iterable[str]) -> bool:
         """Whether the file imports a distribution with these import names (``requests``,
@@ -1222,9 +1224,13 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
     calls: set[str] = set()
     keywords: set[tuple[str, str]] = set()
     keyword_chains: set[tuple[str, str]] = set()
+    sites: set[tuple[str, str, int, int]] = set()
+
     for node in nodes:
         if isinstance(node, ast.Attribute):
             attributes.add(node.attr)
+            if isinstance(node.value, ast.Name) and node.value.id in bound:
+                sites.add(("member", node.attr, node.lineno, node.col_offset))
             inner = node.value
             chain = _dotted(node)
             head, _, rest = (chain or "").partition(".")
@@ -1240,6 +1246,10 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
             named = resolve(inner)  # ``Starlette.routes``, or a module's attribute
             kinds = {named} if named else made(inner) or instances.get(_dotted(inner) or "", set())
             members.update((kind, node.attr) for kind in kinds)
+            if kinds:
+                sites.add(("member", node.attr, node.lineno, node.col_offset))
+            if named:
+                sites.add(("reference", node.attr, node.lineno, node.col_offset))
         elif isinstance(node, ast.Name) and star and node.id not in bound:
             for module in star:
                 reach(f"{module}.{node.id}")
@@ -1252,7 +1262,19 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
                 callee = bound.get(func.id, func.id).rsplit(".", 1)[-1]
             if callee:
                 calls.add(callee)
+                call_paths = callee_paths(func)
+                site_callees = call_paths or {callee}
+                sites.update(
+                    ("call", path, node.lineno, node.col_offset)
+                    for path in site_callees
+                )
                 passed = [k.arg for k in node.keywords if k.arg]
+                sites.update(
+                    ("keyword", f"{path}:{k.arg}", node.lineno, node.col_offset)
+                    for path in site_callees
+                    for k in node.keywords
+                    if k.arg
+                )
                 keywords.update((callee, k) for k in passed)
                 targets = callee_paths(func)
                 keyword_paths.update((p, k) for p in targets for k in passed)
@@ -1287,6 +1309,7 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
         frozenset(keyword_modules),
         frozenset(positional_modules),
         frozenset(_handled(nodes, resolve, bound, instances)),
+        frozenset(sites),
     )
 
 

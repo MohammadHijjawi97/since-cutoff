@@ -239,7 +239,7 @@ class RichReporter(Reporter):
 
     def stage(self, title: str, total: int | None = None) -> None:
         self.done()
-        self.console.print(f"[dim]•[/dim] {escape(title)}")
+        self.console.print(f"[dim]â€¢[/dim] {escape(title)}")
         self.count, self.total = 0, total or 0
         self.next_line = max(1, self.total // self.LOG_LINES)
         if not self.console.is_terminal or not _interactive(self.console.file):
@@ -266,7 +266,7 @@ class RichReporter(Reporter):
             self.next_line = self.count + max(1, self.total // self.LOG_LINES)
 
     def info(self, message: str) -> None:
-        self.console.print(f"[dim]•[/dim] {escape(message)}")
+        self.console.print(f"[dim]â€¢[/dim] {escape(message)}")
 
     def warn(self, message: str) -> None:
         self.console.print(f"[yellow]![/yellow] {escape(message)}")
@@ -852,8 +852,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         shown = reporter.warned
         if args.command == "scan":
             render_scan(
-                ui, scan, show_all=args.all, verbose=args.verbose, limit=args.limit, shown=shown
-            )
+                ui, scan, show_all=args.all, verbose=args.verbose, limit=args.limit, shown=shown, fail_on=set(getattr(args, "fail_on", None) or ()))
         else:
             render_console(ui, scan, run, verbose=args.verbose, shown=shown)
 
@@ -863,7 +862,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
                 for path in block_targets(project.root, args.target):
                     action = apply_block(path, run.block)
                     ui.print(
-                        f"\n[green]✓[/green] {action.capitalize()} {escape(str(path))} with "
+                        f"\n[green]âœ“[/green] {action.capitalize()} {escape(str(path))} with "
                         f"{len(run.notes)} notes"
                     )
             elif not json_mode:
@@ -983,18 +982,18 @@ def _use_detected_model(
 
 
 def _model_line(target: ModelTarget, source: str | None = None) -> str:
-    """``• Model claude-sonnet-4-5, training cutoff 2025-07-31 (from models.dev)``, as rich
+    """``â€¢ Model claude-sonnet-4-5, training cutoff 2025-07-31 (from models.dev)``, as rich
     markup; a cutoff alone; several models (``sync --model a,b``) with their earliest cutoff."""
     day = target.cutoff.isoformat()
     where = f"[dim](from {escape(source or target.cutoff_source)})[/dim]"
     if not target.model_id:
-        return f"[dim]•[/dim] Custom cutoff [bold]{day}[/bold] {where}"
+        return f"[dim]â€¢[/dim] Custom cutoff [bold]{day}[/bold] {where}"
     names = model_names(target.model_id)
     if len(names) > 1:
         shown = ", ".join(f"[bold]{escape(n)}[/bold]" for n in names)
-        return f"[dim]•[/dim] Models {shown}, earliest training cutoff [bold]{day}[/bold] {where}"
+        return f"[dim]â€¢[/dim] Models {shown}, earliest training cutoff [bold]{day}[/bold] {where}"
     return (
-        f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
+        f"[dim]â€¢[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
         f"[bold]{day}[/bold] {where}"
     )
 
@@ -1126,7 +1125,7 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
             remove_block(p.target.path)
         else:
             apply_block(p.target.path, p.block)
-        out.print(f"[green]✓[/green] {escape(written_text(p))}")
+        out.print(f"[green]âœ“[/green] {escape(written_text(p))}")
     if any(p.target.text for p in changed):
         out.print("[dim]Text outside the since-cutoff markers is unchanged.[/dim]")
     return EXIT_OK
