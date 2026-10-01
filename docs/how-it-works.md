@@ -52,8 +52,11 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    modules, or only empty ones), is reported as first released after the cutoff.
 4. **The API diff.** Both versions are downloaded once (wheels, falling back to sdists; only
    `.py`/`.pyi` files are extracted) and loaded *statically* with
-   [griffe](https://mkdocstrings.github.io/griffe/). since-cutoff reports only changes that
-   break code written for the old version:
+   [griffe](https://mkdocstrings.github.io/griffe/). A module the pinned release ships
+   compiled, with no `.py` source and no `.pyi` stub (an extension module in a wheel, a Cython
+   `.pyx` in an sdist), cannot be read this way: when it was Python at the cutoff, the scan
+   warns that its changes are not reported, rather than reporting it as removed.
+   since-cutoff reports only changes that break code written for the old version:
 
    | kind | example |
    |---|---|

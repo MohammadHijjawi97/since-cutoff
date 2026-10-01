@@ -30,7 +30,7 @@ import textwrap
 import warnings
 from collections import deque
 from collections.abc import Iterable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -77,7 +77,9 @@ log = logging.getLogger(__name__)
 # ``FastMCP.from_openapi``); and "still names" leaves out the names a module only exports
 # (``__all__``, ``__getattr__``, ``__dir__``) and a package name in a list of requirements or a
 # documentation example (``examples=``, ``description=``).
-DIFF_SCHEMA = 19
+# 20: a module the pinned release ships compiled, without a source or a stub, is not removed,
+# nor is what it defines (issue #52; the scan warns instead: Engine._unread_key).
+DIFF_SCHEMA = 20
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
@@ -635,6 +637,22 @@ def _stubs_only(root: Path, import_name: str) -> bool:
     return not (root / top).exists() and (base.is_dir() or base.with_suffix(".pyi").exists())
 
 
+def _in_compiled(path: str, compiled: frozenset[str]) -> bool:
+    """Is ``path`` one of the ``compiled`` modules, or inside one?"""
+    return any(path == m or path.startswith(m + ".") for m in compiled)
+
+
+def unread_modules(old_root: Path, new_compiled: Sequence[str]) -> list[str]:
+    """The public modules the pinned release ships compiled, without a source or a stub, that
+    the older release (extracted at ``old_root``) had as Python source or a stub: their API
+    is not compared, and the scan says so instead of reporting them as removed."""
+    return [
+        m
+        for m in new_compiled
+        if not any(part.startswith("_") for part in m.split(".")) and _module_exists(old_root, m)
+    ]
+
+
 def diff_sources(
     package: str,
     old_version: str,
@@ -645,6 +663,7 @@ def diff_sources(
     *,
     old_requires: Sequence[str] = (),
     new_requires: Sequence[str] = (),
+    new_compiled: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Diff two extracted source trees. Returns plain dicts (picklable across processes).
 
@@ -652,6 +671,10 @@ def diff_sources(
     with them, a distribution the pinned release requires instead of one the older release
     required is a change of its own when the public API switched to its types
     (DEPENDENCY_SWITCHED).
+
+    ``new_compiled`` are the modules the pinned release ships compiled, without a source or a
+    stub (SourceTree.compiled): what a static reading cannot see there is not reported as
+    removed (:func:`unread_modules` names them for the scan's warnings).
 
     Never raises for problems in the analysed package: griffe can fail on unusual code, and one
     bad top-level module must not hide the changes found in the others.
@@ -666,6 +689,7 @@ def diff_sources(
             import_names,
             old_requires=old_requires,
             new_requires=new_requires,
+            new_compiled=new_compiled,
         )
     return [c.to_dict() for c in _group(changes)]
 
@@ -680,8 +704,10 @@ def _diff_imports(
     *,
     old_requires: Sequence[str] = (),
     new_requires: Sequence[str] = (),
+    new_compiled: Sequence[str] = (),
 ) -> list[APIChange]:
     changes: list[APIChange] = []
+    compiled = frozenset(new_compiled)
     # The trees are kept for the dependency pass only when a requirement went (a base one, or
     # one of an extra both releases define): in most release pairs none did (87% of 1991
     # measured for the base requirements), and the pass is skipped.
@@ -696,7 +722,9 @@ def _diff_imports(
         try:
             new = load_api(import_name, new_root)
         except Exception as exc:
-            if not _module_exists(new_root, import_name):
+            if not _module_exists(new_root, import_name) and not _in_compiled(
+                import_name, compiled
+            ):
                 changes.append(
                     APIChange(
                         package=package,
@@ -717,7 +745,8 @@ def _diff_imports(
         if dropped:
             loaded.append((old, new))
         try:
-            changes.extend(_Differ(package, old_version, new_version, old, new).run())
+            differ = _Differ(package, old_version, new_version, old, new, compiled=compiled)
+            changes.extend(differ.run())
         except Exception as exc:
             log.debug("diff of %s failed: %s", import_name, exc)
     if dropped and loaded:
@@ -741,13 +770,22 @@ def _diff_imports(
 
 class _Differ:
     def __init__(
-        self, package: str, old_version: str, new_version: str, old: Any, new: Any
+        self,
+        package: str,
+        old_version: str,
+        new_version: str,
+        old: Any,
+        new: Any,
+        *,
+        compiled: frozenset[str] = frozenset(),
     ) -> None:
         self.package = package
         self.old_version = old_version
         self.new_version = new_version
         self.old = old
         self.new = new
+        # Modules the new release ships compiled, without a source or a stub (see diff_sources).
+        self.compiled = compiled
         self._public_map: dict[str, str] | None = None
         self._new_index: dict[str, list[str]] | None = None
         self._old_names: set[str] | None = None  # see old_module_level_names
@@ -864,7 +902,7 @@ class _Differ:
                     # Folded with the other classes that inherited it (see _fold_inherited).
                     self._inherited.setdefault(_origin(obj), []).append(obj)
                 return None  # when the new bases cannot be followed, it may well still be there
-            if self._not_removed(obj):
+            if self._not_removed(obj) or self._unreadable(obj):
                 return None
             served, warning = self._served(obj)
             if served:
@@ -1281,6 +1319,19 @@ class _Differ:
             return any(_star_from_outside(m, package) for m in new_module.members.values())
         except Exception:
             return False
+
+    def _unreadable(self, obj: Any) -> bool:
+        """Is the removed object a module the new release ships compiled, without a source or
+        a stub, or is it defined in one (directly, or through a re-export)? The static view
+        cannot see into it, which is not the same as its being gone (issue #52)."""
+        if not self.compiled:
+            return False
+        paths = [str(obj.path)]
+        with suppress(Exception):
+            paths.append(str(obj.canonical_path))
+        if getattr(obj, "is_alias", False):
+            paths.append(str(getattr(obj, "target_path", "")))
+        return any(_in_compiled(p, self.compiled) for p in paths)
 
     def _source(self, module: Any) -> _Source:
         key = id(module)
