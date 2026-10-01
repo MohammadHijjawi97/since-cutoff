@@ -10,16 +10,19 @@ Without ``--model``, since-cutoff tests the model the user's coding agent is set
    ``claude-code:<model>``; else Claude Code's default. Other agents' files say nothing about
    the model running here.
 3. Elsewhere, by scope: first the agents' environment variables (Claude Code's
-   ``ANTHROPIC_MODEL``, then Aider's ``AIDER_MODEL``); then the project's settings, the nearest
-   folder first; then the user's. The project's settings are looked for from the project folder
-   up to the repository root (the first folder with ``.git``), never in the home directory or
-   above it; in each folder, and then among the user's settings, in this order:
+   ``ANTHROPIC_MODEL``, Gemini CLI's ``GEMINI_MODEL``, then Aider's ``AIDER_MODEL``); then the
+   project's settings, the nearest folder first; then the user's. The project's settings are
+   looked for from the project folder up to the repository root (the first folder with
+   ``.git``), never in the home directory or above it; in each folder, and then among the
+   user's settings, in this order:
 
    - Claude Code: ``.claude/settings.local.json``, ``.claude/settings.json``;
      ``~/.claude/settings.json`` or ``$CLAUDE_CONFIG_DIR/settings.json``.
    - Codex: ``.codex/config.toml``; ``$CODEX_HOME/config.toml`` or ``~/.codex/config.toml``.
      As Codex merges them, a ``profile`` selected in any of them picks ``[profiles.<name>]``
      -> ``openai:<model>``.
+   - Gemini CLI: ``model`` in ``.gemini/settings.json``; ``~/.gemini/settings.json``.
+     Recent versions use ``{"model": {"name": "gemini-..."} }``; older ones may use a string.
    - OpenCode: ``model`` (``provider/model``) in ``opencode.json`` or ``opencode.jsonc``;
      ``~/.config/opencode/`` (or ``$XDG_CONFIG_HOME/opencode/``).
    - Aider: ``model:`` in ``.aider.conf.yml``; ``~/.aider.conf.yml``. Aider's short aliases
@@ -59,14 +62,16 @@ ENV_VARS = (
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
     "XDG_CONFIG_HOME",
+    "GEMINI_MODEL",
     "AIDER_MODEL",
 )
 # What the model is called when no setting names one (``run`` asks Claude Code which it is).
 DEFAULT_SOURCE = "Claude Code's default (no model setting found)"
 NOT_FOUND_HINT = (
     "No model setting found (SINCE_CUTOFF_MODEL, ANTHROPIC_MODEL, or the Claude Code, Codex, "
-    "OpenCode and Aider settings), so this tests Claude Code's default model. To test another, "
-    "pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. SINCE_CUTOFF_MODEL=openai:gpt-5.4"
+    "Gemini CLI, OpenCode and Aider settings), so this tests Claude Code's default model. To "
+    "test another, pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. "
+    "SINCE_CUTOFF_MODEL=openai:gpt-5.4"
 )
 CLAUDE_CODE_NOT_FOUND_HINT = (
     "Running inside Claude Code, whose settings name no model (ANTHROPIC_MODEL, "
@@ -76,9 +81,9 @@ CLAUDE_CODE_NOT_FOUND_HINT = (
 # The same for ``scan`` and ``sync``, which test nothing: they use the model's training cutoff.
 NOT_FOUND_HINT_CUTOFF = (
     "No model setting found (SINCE_CUTOFF_MODEL, ANTHROPIC_MODEL, or the Claude Code, Codex, "
-    "OpenCode and Aider settings), so this uses the training cutoff of Claude Code's default "
-    "model. For another model's, pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. "
-    "SINCE_CUTOFF_MODEL=openai:gpt-5.4"
+    "Gemini CLI, OpenCode and Aider settings), so this uses the training cutoff of Claude "
+    "Code's default model. For another model's, pass --model provider:model or set "
+    "SINCE_CUTOFF_MODEL, e.g. SINCE_CUTOFF_MODEL=openai:gpt-5.4"
 )
 CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF = (
     "Running inside Claude Code, whose settings name no model (ANTHROPIC_MODEL, "
@@ -187,7 +192,9 @@ def detect_model(
     if spec:
         return Detected(spec, "SINCE_CUTOFF_MODEL")
     agents: tuple[Callable[[_Places], tuple[_Rank, Detected] | None], ...] = (
-        (_claude_code,) if inside_claude_code(env) else (_claude_code, _codex, _opencode, _aider)
+        (_claude_code,)
+        if inside_claude_code(env)
+        else (_claude_code, _codex, _gemini, _opencode, _aider)
     )
     found: list[tuple[_Rank, int, Detected]] = []
     for order, agent in enumerate(agents):
@@ -298,6 +305,24 @@ def _codex(places: _Places) -> tuple[_Rank, Detected] | None:
     rank, model, source = hit
     provider = next((p for _, t, _ in tables if (p := _text(t.get("model_provider")))), None)
     return rank, Detected(hosted_spec(provider or "openai", model), source)
+
+
+def _gemini(places: _Places) -> tuple[_Rank, Detected] | None:
+    model = places.var("GEMINI_MODEL")
+    if model:
+        return (_ENV, 0), _named("Gemini CLI", model, _maker_spec(model), "GEMINI_MODEL")
+
+    files = [
+        ((_PROJECT, distance), folder / ".gemini" / "settings.json")
+        for distance, folder in enumerate(places.project_folders())
+    ]
+    files.append(((_USER, 0), places.home / ".gemini" / "settings.json"))
+    for rank, path in files:
+        value = _json_object(path).get("model")
+        model = _text(value.get("name")) if isinstance(value, dict) else _text(value)
+        if model:
+            return rank, _named("Gemini CLI", model, _maker_spec(model), places.shown(path))
+    return None
 
 
 def _opencode(places: _Places) -> tuple[_Rank, Detected] | None:

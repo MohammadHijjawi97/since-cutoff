@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
+  `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
+  are supported, and unknown aliases are reported instead of guessed.
 
 ## 0.5.0 - 2026-09-28
 
