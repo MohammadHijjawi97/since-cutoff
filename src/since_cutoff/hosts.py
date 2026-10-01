@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from since_cutoff.models import PROVIDER_ALIASES, bare_model_id
+from since_cutoff.models import bare_model_id
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -106,7 +106,7 @@ _MAKERS = (
     (re.compile(r"deepseek-"), "deepseek"),
     (re.compile(r"grok-"), "xai"),
     (re.compile(r"(?:mistral|codestral|devstral|magistral|ministral)-"), "mistral"),
-    (re.compile(r"(?:qwen[\\d.]*|qwq|qvq)-"), "alibaba"),
+    (re.compile(r"(?:qwen[\d.]*|qwq|qvq)-"), "alibaba"),
     (re.compile(r"kimi-"), "moonshotai"),
     (re.compile(r"glm-"), "zai"),
     (re.compile(r"llama-"), "llama"),
