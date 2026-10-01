@@ -3,6 +3,11 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
+  end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
+  set in many containers). argparse wrote them itself, past the check for a closed pipe:
+  Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
+  exited with 0.
 
 ## 0.5.0 - 2026-09-28
 
