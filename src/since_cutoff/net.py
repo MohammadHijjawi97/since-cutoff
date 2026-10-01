@@ -23,6 +23,12 @@ class HTTPError(Exception):
         super().__init__(f"{url}: {self.reason}")
 
     @property
+    def transient(self) -> bool:
+        """A failure that retrying later may fix (no response, 429, 5xx): what
+        :func:`request` retries, as opposed to an answer such as 404."""
+        return self.status is None or self.status in _TRANSIENT_STATUS
+
+    @property
     def reason(self) -> str:
         """A short, human-readable description (no raw urllib reprs)."""
         if self.status is None:
@@ -36,6 +42,10 @@ class HTTPError(Exception):
 
 class ResponseTooLarge(HTTPError):
     """The response went past ``max_bytes`` (see :func:`request`)."""
+
+    @property
+    def transient(self) -> bool:
+        return False
 
     @property
     def reason(self) -> str:
