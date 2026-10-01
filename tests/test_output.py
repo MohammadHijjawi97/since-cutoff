@@ -95,7 +95,11 @@ def driver(tmp_path: Path) -> list[str]:
 
 
 def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PYTHONIOENCODING", "PYTHONUTF8", "PYTHONUNBUFFERED")
+    }
     env.update(SINCE_CUTOFF_CACHE=str(tmp_path / "cli-cache"), **extra)
     env.pop("COLUMNS", None)
     return env
@@ -149,20 +153,32 @@ def test_output_to_nul_does_not_crash(tmp_path, driver) -> None:
         assert done.returncode == expected
 
 
+@pytest.mark.parametrize("unbuffered", [False, True], ids=["buffered", "unbuffered"])
 @pytest.mark.parametrize(
     "args",
-    [["scan", "APP", *CUTOFF], ["scan", "APP", *CUTOFF, "--json"], ["--help"]],
-    ids=["scan", "json", "help"],
+    [
+        ["scan", "APP", *CUTOFF],
+        ["scan", "APP", *CUTOFF, "--json"],
+        ["--help"],
+        ["scan", "--help"],
+        ["--version"],
+    ],
+    ids=["scan", "json", "help", "scan-help", "version"],
 )
-def test_a_closed_pipe_ends_the_run_quietly(tmp_path, driver, args) -> None:
+def test_a_closed_pipe_ends_the_run_quietly(tmp_path, driver, args, unbuffered) -> None:
     """``since-cutoff scan | head``: the reader goes away. No traceback and no exit code 120
-    from Python's last flush; the shell's code for a writer stopped by SIGPIPE instead."""
+    from Python's last flush; the shell's code for a writer stopped by SIGPIPE instead.
+
+    With PYTHONUNBUFFERED (set in many containers) argparse's own write of the help or the
+    version hit the closed pipe: Python 3.11 and later ignored it and exited with 0, 3.10
+    printed a BrokenPipeError traceback and exited with 1."""
     app = make_app(tmp_path)
+    env = _env(tmp_path, **({"PYTHONUNBUFFERED": "1"} if unbuffered else {}))
     proc = subprocess.Popen(
         [*driver, *(str(app) if a == "APP" else a for a in args)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=_env(tmp_path),
+        env=env,
     )
     assert proc.stdout is not None and proc.stderr is not None
     proc.stdout.close()  # before the child writes anything
