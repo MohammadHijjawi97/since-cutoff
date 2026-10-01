@@ -71,6 +71,7 @@ def test_model_cutoff_accepts_the_usual_spellings(tools: Tools, spec: str) -> No
 def test_model_ids_prefer_the_model_maker_over_resellers(tools: Tools) -> None:
     # gpt-5.4 is listed by github-copilot too, which sorts first alphabetically.
     assert tools.model_cutoff("gpt-5.4").startswith("gpt-5.4 (openai")
+    assert tools.model_cutoff("kimi-k2.7-code").startswith("kimi-k2.7-code (moonshotai")
 
 
 @pytest.mark.parametrize(
