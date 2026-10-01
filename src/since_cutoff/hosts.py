@@ -11,9 +11,10 @@ Without ``--model``, since-cutoff tests the model the user's coding agent is set
    the model running here.
 3. Elsewhere, by scope: first the agents' environment variables (Claude Code's
    ``ANTHROPIC_MODEL``, Gemini CLI's ``GEMINI_MODEL``, then Aider's ``AIDER_MODEL``); then the
-   project's settings, the nearest folder first; then the user's. The project's settings are looked for from the project folder
-   up to the repository root (the first folder with ``.git``), never in the home directory or
-   above it; in each folder, and then among the user's settings, in this order:
+   project's settings, the nearest folder first; then the user's. The project's settings are
+   looked for from the project folder up to the repository root (the first folder with
+   ``.git``), never in the home directory or above it; in each folder, and then among the
+   user's settings, in this order:
 
    - Claude Code: ``.claude/settings.local.json``, ``.claude/settings.json``;
      ``~/.claude/settings.json`` or ``$CLAUDE_CONFIG_DIR/settings.json``.
@@ -68,8 +69,9 @@ ENV_VARS = (
 DEFAULT_SOURCE = "Claude Code's default (no model setting found)"
 NOT_FOUND_HINT = (
     "No model setting found (SINCE_CUTOFF_MODEL, ANTHROPIC_MODEL, or the Claude Code, Codex, "
-    "Gemini CLI, OpenCode and Aider settings), so this tests Claude Code's default model. To test another, "
-    "pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. SINCE_CUTOFF_MODEL=openai:gpt-5.4"
+    "Gemini CLI, OpenCode and Aider settings), so this tests Claude Code's default model. To "
+    "test another, pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. "
+    "SINCE_CUTOFF_MODEL=openai:gpt-5.4"
 )
 CLAUDE_CODE_NOT_FOUND_HINT = (
     "Running inside Claude Code, whose settings name no model (ANTHROPIC_MODEL, "
@@ -79,9 +81,9 @@ CLAUDE_CODE_NOT_FOUND_HINT = (
 # The same for ``scan`` and ``sync``, which test nothing: they use the model's training cutoff.
 NOT_FOUND_HINT_CUTOFF = (
     "No model setting found (SINCE_CUTOFF_MODEL, ANTHROPIC_MODEL, or the Claude Code, Codex, "
-    "Gemini CLI, OpenCode and Aider settings), so this uses the training cutoff of Claude Code's default "
-    "model. For another model's, pass --model provider:model or set SINCE_CUTOFF_MODEL, e.g. "
-    "SINCE_CUTOFF_MODEL=openai:gpt-5.4"
+    "Gemini CLI, OpenCode and Aider settings), so this uses the training cutoff of Claude "
+    "Code's default model. For another model's, pass --model provider:model or set "
+    "SINCE_CUTOFF_MODEL, e.g. SINCE_CUTOFF_MODEL=openai:gpt-5.4"
 )
 CLAUDE_CODE_NOT_FOUND_HINT_CUTOFF = (
     "Running inside Claude Code, whose settings name no model (ANTHROPIC_MODEL, "
