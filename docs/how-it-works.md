@@ -504,7 +504,8 @@ for the regression check `changes_still_correct` and `ci95_changes_still_correct
 `results.json` (`settings`) and report.md ("Run settings") also record what the numbers depend
 on besides the answers: the since-cutoff version, the model under test and where it came from,
 the task and note writer, the Claude Code effort, the prompt version, the API diff schema, the
-probe, held-out and regression budgets, the Python version, the tasks file and who wrote its
+griffe version that read the sources (cached diffs are keyed on it, so a griffe upgrade diffs
+again), the probe, held-out and regression budgets, the Python version, the tasks file and who wrote its
 tasks, the baselines compared, and the date.
 
 ### Baselines (`--compare`)

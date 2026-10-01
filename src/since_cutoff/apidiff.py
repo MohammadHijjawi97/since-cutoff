@@ -32,6 +32,8 @@ from collections import deque
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
+from functools import cache
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -472,6 +474,19 @@ def _argument(parameter: str | None) -> str:
 
 
 # --------------------------------------------------------------------- loading
+@cache
+def griffe_version() -> str:
+    """The version of the griffe that reads the sources. A diff is griffe's reading as much as
+    this module's, so cached diffs are keyed on it too. griffe 2 ships its code in the
+    ``griffelib`` distribution (``griffe`` is a meta-package that requires it)."""
+    for distribution in ("griffelib", "griffe"):
+        try:
+            return metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            continue
+    return "unknown"
+
+
 def load_api(import_name: str, root: Path) -> Any:
     """Load one top-level package statically. ``foo-stubs`` directories load as ``foo``."""
 

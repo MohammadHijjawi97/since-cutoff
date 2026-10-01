@@ -9,7 +9,11 @@
   places instead of 23 where `mcp.client.streamable_http` came before `mcp.client.sse`: only
   `sse` still imports `McpHttpClientFactory`, so its `__call__` (`timeout`, `auth` and its
   return) did not match between the releases. Modules are now read in the order of their names.
-  A diff already in the cache keeps its result until the next diff schema.
+- Cached API diffs are keyed on the installed griffe's version too: griffe reads the sources and
+  is a range dependency, so after an upgrade the diffs the old one made are made again instead
+  of served from the cache. `results.json`, `scan --json` (`settings.griffe_version`,
+  `report_schema` 3) and report.md record which griffe it was. Diffs cached by an earlier
+  since-cutoff are made once more, so the mcp switch above shows its 23 places there too.
 - `scripts/record_diff_fixtures.py` re-records the real diffs in `tests/fixtures/diffs` from
   PyPI, after a diff schema bump for example; `--check` only says which would change.
 
