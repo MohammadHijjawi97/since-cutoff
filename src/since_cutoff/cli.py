@@ -1303,7 +1303,12 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
         "llama": 9,
     }
     models.sort(
-        key=lambda m: (priority.get(m.provider, len(priority)), m.provider, m.release_date or date.min, m.id)
+        key=lambda m: (
+            priority.get(m.provider, len(priority)),
+            m.provider,
+            m.release_date or date.min,
+            m.id,
+        )
     )
     if not out.is_terminal:
         for m in models:
