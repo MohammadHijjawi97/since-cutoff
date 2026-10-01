@@ -17,17 +17,21 @@ from since_cutoff.apidiff import (
     REMOVED,
     APIChange,
     diff_sources,
+    unread_modules,
 )
 from since_cutoff.selection import collapse
 from tests.conftest import write_tree
 
 
 def diff(
-    tmp_path: Path, old: dict[str, str], new: dict[str, str], names=("pkg",)
+    tmp_path: Path, old: dict[str, str], new: dict[str, str], names=("pkg",), compiled=()
 ) -> list[APIChange]:
+    """``compiled``: the modules the new release ships compiled, without a source or a stub
+    (SourceTree.compiled; the extension modules themselves are never extracted)."""
     a = write_tree(tmp_path / "old", old)
     b = write_tree(tmp_path / "new", new)
-    return [APIChange.from_dict(c) for c in diff_sources("pkg", "1", a, "2", b, list(names))]
+    result = diff_sources("pkg", "1", a, "2", b, list(names), new_compiled=list(compiled))
+    return [APIChange.from_dict(c) for c in result]
 
 
 def found(changes: list[APIChange]) -> set[tuple[str, str, str | None]]:
@@ -344,6 +348,65 @@ def test_a_function_now_a_method_of_its_class_is_not_removed(tmp_path):
         "pkg/utils.py": "",
     }
     assert found(diff(tmp_path, old, new)) == {(REMOVED, "pkg.utils.helper", None)}
+
+
+# ------------------------------------------------------- compiled modules
+# Only sources and stubs are extracted: a module the new release ships as an extension module
+# (``fast.cpython-312-x86_64-linux-gnu.so``, ``fast.pyd``) with no stub looked removed, with
+# everything re-exported from it (issue #52).
+FAST = "def speedy(x: int) -> int:\n    return x\n"
+
+
+def test_a_module_that_became_compiled_is_not_removed(tmp_path):
+    old = {"pkg/__init__.py": "from pkg.fast import speedy\n", "pkg/fast.py": FAST}
+    new = {"pkg/__init__.py": "from pkg.fast import speedy\n"}  # and fast.cpython-312-*.so
+    assert diff(tmp_path, old, new, compiled=["pkg.fast"]) == []
+    # What it reported before the scan knew of the compiled module:
+    assert (REMOVED, "pkg.fast", None) in found(diff(tmp_path / "unaware", old, new))
+
+
+def test_a_compiled_module_that_lost_its_stub_is_not_removed(tmp_path):
+    stub = "def speedy(x: int) -> int: ...\n"
+    old = {"pkg/__init__.py": "", "pkg/fast.pyi": stub}  # and fast.cpython-312-*.so
+    new = {"pkg/__init__.py": ""}  # the same extension module, no stub any more
+    assert diff(tmp_path, old, new, compiled=["pkg.fast"]) == []
+    assert (REMOVED, "pkg.fast", None) in found(diff(tmp_path / "unaware", old, new))
+
+
+def test_a_top_level_module_that_became_compiled_is_not_removed(tmp_path):
+    old = {"fastmod.py": FAST}
+    new: dict[str, str] = {}  # fastmod.abi3.so
+    assert diff(tmp_path, old, new, names=("fastmod",), compiled=["fastmod"]) == []
+    assert found(diff(tmp_path / "unaware", old, new, names=("fastmod",))) == {
+        (REMOVED, "fastmod", None)
+    }
+
+
+def test_a_module_removed_with_nothing_in_its_place_is_still_removed(tmp_path):
+    old = {"pkg/__init__.py": "", "pkg/fast.py": FAST, "pkg/slow.py": FAST}
+    new = {"pkg/__init__.py": ""}  # fast is compiled now; slow is gone
+    assert found(diff(tmp_path, old, new, compiled=["pkg.fast"])) == {(REMOVED, "pkg.slow", None)}
+    # A name that only starts like a compiled module is not inside it.
+    old = {"pkg/__init__.py": "", "pkg/fast.py": FAST, "pkg/faster.py": FAST}
+    new = {"pkg/__init__.py": ""}
+    assert found(diff(tmp_path / "prefix", old, new, compiled=["pkg.fast"])) == {
+        (REMOVED, "pkg.faster", None)
+    }
+
+
+def test_unread_modules_are_the_public_ones_that_had_a_source_or_a_stub(tmp_path):
+    old = write_tree(
+        tmp_path / "old",
+        {
+            "pkg/__init__.py": "",
+            "pkg/fast.py": FAST,
+            "pkg/stubbed.pyi": FAST,
+            "pkg/_speedups.py": FAST,  # private: never compared anyway
+            "pkg/sub/__init__.py": "",
+        },
+    )
+    compiled = ["pkg._speedups", "pkg.always", "pkg.fast", "pkg.stubbed", "pkg.sub"]
+    assert unread_modules(old, compiled) == ["pkg.fast", "pkg.stubbed", "pkg.sub"]
 
 
 # ------------------------------------------------------------------- stubs
