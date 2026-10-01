@@ -3,6 +3,7 @@ and sdists, including hostile archives."""
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -451,6 +452,38 @@ def test_a_corrupt_download_is_a_package_error(index, cache, filename) -> None:
     index.add("toy", "1.0", filename, b"<html>Bad gateway</html>")
     with pytest.raises(PackageIndexError, match=rf"^could not extract {filename}: "):
         PyPI(cache).source("toy", "1.0")
+    assert leftovers(cache) == []
+
+
+def test_a_download_matching_its_pypi_sha256_extracts(index, cache) -> None:
+    blob = wheel({"toy/__init__.py": "x = 1\n"})
+    digest = hashlib.sha256(blob).hexdigest()
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", blob, digests={"sha256": digest})
+    tree = PyPI(cache).source("toy", "1.0")
+    assert files_in(tree.root) == {".since-cutoff.json", "toy/__init__.py"}
+    assert leftovers(cache) == []
+
+
+def test_a_download_with_a_mismatched_sha256_is_refused(index, cache) -> None:
+    blob = wheel({"toy/__init__.py": "x = 1\n"})
+    actual_hash = hashlib.sha256(blob).hexdigest()
+    wrong_hash = "a" * 64
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", blob, digests={"sha256": wrong_hash})
+    with pytest.raises(PackageIndexError) as info:
+        PyPI(cache).source("toy", "1.0")
+    msg = str(info.value)
+    assert "toy-1.0-py3-none-any.whl" in msg
+    assert wrong_hash in msg
+    assert actual_hash in msg
+    assert not (cache.root / "sources" / "toy-1.0").exists()
+    assert leftovers(cache) == []
+
+
+def test_a_download_without_a_sha256_still_extracts(index, cache) -> None:
+    blob = wheel({"toy/__init__.py": "x = 1\n"})
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", blob)
+    tree = PyPI(cache).source("toy", "1.0")
+    assert files_in(tree.root) == {".since-cutoff.json", "toy/__init__.py"}
     assert leftovers(cache) == []
 
 

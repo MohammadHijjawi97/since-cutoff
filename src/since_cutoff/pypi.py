@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import email.parser
+import hashlib
 import io
 import json
 import re
@@ -220,6 +221,14 @@ class PyPI:
             ) from exc
         except net.HTTPError as exc:
             raise PackageIndexError(f"could not download {filename}: {exc.reason}") from exc
+
+        expected_sha256 = (artifact.get("digests") or {}).get("sha256")
+        if expected_sha256:
+            actual_sha256 = hashlib.sha256(blob).hexdigest()
+            if actual_sha256.lower() != expected_sha256.lower():
+                raise PackageIndexError(
+                    f"hash mismatch for {filename}: expected {expected_sha256}, got {actual_sha256}"
+                )
 
         sources.mkdir(parents=True, exist_ok=True)
         # A unique directory per extraction, published with an atomic rename, so concurrent
