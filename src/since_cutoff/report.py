@@ -31,6 +31,7 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     REMOVED,
     APIChange,
+    griffe_version,
 )
 from since_cutoff.apidiff import (
     DEPRECATED as CHANGE_DEPRECATED,
@@ -110,7 +111,8 @@ from since_cutoff.stats import (
 REPO_URL = "https://github.com/MohammadHijjawi97/since-cutoff"
 # results.json and ``scan --json`` gained keys in 0.4 (``used``, ``used_apis``,
 # ``notes_preview``); none of 0.3's was removed or changed. 0.3 wrote no report_schema.
-REPORT_SCHEMA = 2
+# 3: ``settings.griffe_version``, the griffe that read the sources for the diff.
+REPORT_SCHEMA = 3
 # The import paths results.json lists per change (the shortest; ``import_paths_total`` counts
 # them all). A method of a base class can have thousands: transformers' PreTrainedModel.
 IMPORT_PATHS_SHOWN = 5
@@ -226,6 +228,7 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "settings": {
             "tool_version": __version__,
             "diff_schema": DIFF_SCHEMA,
+            "griffe_version": griffe_version(),
             "date": now.date().isoformat(),
             **(run.settings if run is not None else {}),
         },
@@ -1577,6 +1580,7 @@ SETTING_LABELS = (
     ("effort", "Claude Code thinking effort"),
     ("prompt_version", "prompt version"),
     ("diff_schema", "API diff schema"),
+    ("griffe_version", "griffe version"),
     ("max_probes", "API changes probed, at most"),
     ("heldout", "held-out tasks per failure"),
     ("regression", "regression checks, at most"),

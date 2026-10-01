@@ -32,6 +32,8 @@ from collections import deque
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
+from functools import cache
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -472,6 +474,19 @@ def _argument(parameter: str | None) -> str:
 
 
 # --------------------------------------------------------------------- loading
+@cache
+def griffe_version() -> str:
+    """The version of the griffe that reads the sources. A diff is griffe's reading as much as
+    this module's, so cached diffs are keyed on it too. griffe 2 ships its code in the
+    ``griffelib`` distribution (``griffe`` is a meta-package that requires it)."""
+    for distribution in ("griffelib", "griffe"):
+        try:
+            return metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            continue
+    return "unknown"
+
+
 def load_api(import_name: str, root: Path) -> Any:
     """Load one top-level package statically. ``foo-stubs`` directories load as ``foo``."""
 
@@ -498,8 +513,19 @@ def _loader(root: Path) -> Any:
     griffe marks them otherwise, which leaves them out of ``from x import *`` (qdrant-client's
     ``grpc`` package, whose modules build their classes dynamically and declare them in stubs,
     would look empty).
+
+    A package's modules load by depth and then by name: griffe sorts them by depth only and
+    leaves the rest to the file system (``os.walk``), so an object that two sibling modules
+    import from a private one took its public path from the machine's directory order. mcp 1.28's ``McpHttpClientFactory`` was ``mcp.client.sse.McpHttpClientFactory`` on
+    one machine and ``mcp.client.streamable_http.McpHttpClientFactory`` on another, and only
+    ``sse`` still imports it in 2.2, so its switch to ``httpx2`` had 23 places or 20.
     """
     import griffe
+
+    class Finder(griffe.ModuleFinder):
+        def submodules(self, module: Any) -> list[Any]:
+            found = super().submodules(module)
+            return sorted(found, key=lambda sub: (len(sub[0]), sub[0], str(sub[1])))
 
     declared: list[Any] = []
 
@@ -523,12 +549,14 @@ def _loader(root: Path) -> Any:
                     member.runtime = True
             super().expand_wildcards(obj, **kwargs)
 
-    return Loader(
+    loader = Loader(
         extensions=griffe.load_extensions(Stubs()),
         search_paths=[str(root)],
         allow_inspection=False,
         store_source=True,
     )
+    loader.finder = Finder([str(root)])  # what griffe makes from the same search paths
+    return loader
 
 
 def _promote_overloads(container: Any) -> None:
@@ -968,10 +996,11 @@ class _Differ:
             elif _accepts_var_keyword(new_fn) and pkind != "positional_only":
                 if renamed is None or not _required(renamed):
                     return None  # still accepted through **kwargs
-                suggestions = _rename_hint(b.old_value, renamed)  # the new name is then missing
+                # The new name is then missing.
+                suggestions = _rename_hint(b.old_value, renamed, new_fn)
                 rename = bool(suggestions)
             elif renamed is not None:
-                suggestions = _rename_hint(b.old_value, renamed)
+                suggestions = _rename_hint(b.old_value, renamed, new_fn)
                 rename = bool(suggestions)
             else:
                 known = _parameter_names(old_fn)
@@ -2039,13 +2068,44 @@ def _renamed(fn: Any, other: Any, param: str) -> Any:
     return theirs[index] if theirs[index].name not in names else None
 
 
-def _rename_hint(old: Any, new: Any) -> list[str]:
+def _rename_hint(old: Any, new: Any, fn: Any) -> list[str]:
     """The new name of a positional parameter renamed in place, when it looks like the same
-    argument (a public name, the same annotation where both have one)."""
+    argument (a public name, the same annotation where both have one) and the docstring of
+    ``fn``, the new callable, does not say that one went and the other came."""
     before, after = getattr(old, "annotation", None), getattr(new, "annotation", None)
     if new.name.startswith("_") or (before and after and str(before) != str(after)):
         return []
+    if _documented_apart(fn, old.name, new.name):
+        return []
     return [new.name]
+
+
+def _documented_apart(fn: Any, removed: str, added: str) -> bool:
+    """Does the new version's docstring (the callable's, and its class's for ``__init__``)
+    say that ``removed`` was removed, or that ``added`` was added, without naming the other?
+    Then the parameter in the same place is a new one, not a rename: click 8.2's
+    ``CliRunner`` took ``catch_exceptions: bool = True`` where 8.1 took ``mix_stderr: bool =
+    True``, and says "Added the ``catch_exceptions`` parameter." and "``mix_stderr``
+    parameter has been removed."."""
+    owners = [fn, getattr(fn, "parent", None)] if getattr(fn, "name", "") == "__init__" else [fn]
+    for owner in owners:
+        lines = _doc_lines(owner)
+        for i in range(len(lines)):
+            text = _sentence(lines, i) or ""
+            if _mentions(text, removed) == _mentions(text, added):
+                continue  # neither, or a replacement ("removed in favour of ``new``")
+            if _mentions(text, removed) and re.search(r"\bremoved\b", text, re.IGNORECASE):
+                return True
+            if _mentions(text, added) and _ADDED_NOTE.match(text):
+                return True
+    return False
+
+
+# A version note that something is new: ".. versionadded:: 2.0", "Added the ``x`` parameter."
+# (after ".. versionchanged:: 2.0" too), "New in 2.0".
+_ADDED_NOTE = re.compile(
+    r"\.\.\s*versionadded::|(?:\.\.\s*versionchanged::\s*\S+\s*)?(?:added|new)\b", re.I
+)
 
 
 def _required(param: Any) -> bool:
@@ -2938,11 +2998,9 @@ def _handled_text(scope: Sequence[ast.AST], name: str) -> str | None:
         if entry:
             return entry[:300]
     for node in scope:
-        for n in ast.walk(node):
-            if isinstance(n, ast.Call) and _name(n.func) == "warn" and n.args:
-                text = " ".join(_message(n.args[0]).split())
-                if _mentions(text, name):
-                    return text[:300]
+        for text in _warn_messages(node):
+            if _mentions(text, name):
+                return text[:300]
     return None
 
 
@@ -2993,6 +3051,9 @@ def _file_of(obj: Any) -> str | None:
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 _ROLE = re.compile(r":(?:\w+:)+(?=`)")  # Sphinx roles: :func:`x`, :py:meth:`x`
 _NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+# A name alone in quotes is written as code too, as warnings often write it (httpx 0.27: "Use
+# 'proxy' or 'mounts' instead."; click 8.2: "Use 'Command' instead."); not an apostrophe.
+_QUOTED = re.compile(r"(?<![\w'\"])(['\"])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\1(?![\w'\"])")
 # Words of deprecation notes that are never the replacement's name.
 _PROSE = {
     "use",
@@ -3047,12 +3108,13 @@ _LITERALS = {"True", "False", "None"}
 
 def replacement_candidates(text: str, *, words: bool = True) -> list[str]:
     """Names a deprecation note may give as the replacement, the code-like ones first: in
-    backticks, called, dotted, snake_case or CamelCase. With ``words``, plain words of the
-    prose come last (the signatures baseline tries them; the notes do not)."""
+    backticks or quotes, called, dotted, snake_case or CamelCase. With ``words``, plain words
+    of the prose come last (the signatures baseline tries them; the notes do not)."""
     text = _ROLE.sub(" ", text)
     code: list[str] = []
     for span in _CODE_SPAN.findall(text):
         code += _NAME.findall(span.lstrip("~"))  # Sphinx's :func:`~pkg.name`
+    code += [m.group(2) for m in _QUOTED.finditer(text)]
     found: list[str] = []
     prose = _CODE_SPAN.sub(" ", text)
     for m in _NAME.finditer(prose):
@@ -3097,27 +3159,41 @@ def is_callable_api(obj: Any, root: str) -> bool:
     return str(getattr(obj, "path", "")).split(".")[0] == top
 
 
-# How a deprecation text states its replacement: "Use `stop` instead", "replaced by X",
-# "renamed to X", "in favour of X", "Deprecated: use X".
+# A name as a deprecation text writes it: bare, in backticks or quotes, called, or with a value.
+_WRITTEN = r"[`'\"]?{}(?:\(\))?(?:=[^\s`'\",]*)?[`'\"]?"
+# How a deprecation text states its replacement: "Use `stop` instead", "Use 'proxy' or
+# 'mounts' instead" (httpx 0.27: the others are ``alt``), "replaced by X", "renamed to X", "in
+# favour of X", "Deprecated: use X".
 STATED_REPLACEMENT = (
-    r"\buse\s+`?(?P<n>[\w.]+)(?:\(\))?(?:=[^\s`]*)?`?\s+(?:instead|in\s+its\s+place)\b",
-    r"\b(?:replaced|superseded)\s+(?:by|with)\s+`?(?P<n>[\w.]+)",
-    r"\brenamed\s+(?:to|as)\s+`?(?P<n>[\w.]+)",
-    r"\bin\s+favou?r\s+of\s+`?(?P<n>[\w.]+)",
-    r"\bdeprecated\W+(?:please\s+)?use\s+`?(?P<n>[\w.]+)",
+    r"\buse\s+"
+    + _WRITTEN.format(r"(?P<n>[\w.]+)")
+    + r"(?P<alt>(?:\s*(?:,|\bor\b)\s*"
+    + _WRITTEN.format(r"[\w.]+")
+    + r")*)\s+(?:instead|in\s+its\s+place)\b",
+    r"\b(?:replaced|superseded)\s+(?:by|with)\s+[`'\"]?(?P<n>[\w.]+)",
+    r"\brenamed\s+(?:to|as)\s+[`'\"]?(?P<n>[\w.]+)",
+    r"\bin\s+favou?r\s+of\s+[`'\"]?(?P<n>[\w.]+)",
+    r"\bdeprecated\W+(?:please\s+)?use\s+[`'\"]?(?P<n>[\w.]+)",
 )
+
+
+def stated_alternatives(match: re.Match[str]) -> list[str]:
+    """The names a STATED_REPLACEMENT match gives after its first: ``mounts`` in "Use 'proxy'
+    or 'mounts' instead", in the text's order."""
+    alt = re.sub(r"=[^\s`'\",]*", "", match.groupdict().get("alt") or "")
+    return [n.strip(".") for n in re.findall(r"[A-Za-z_][\w.]*", alt) if n != "or"]
 
 
 def stated_names(text: str) -> list[str]:
     """The names ``text`` states outright as the replacement ("Use fetch instead."), even as
     plain words, in the order it gives them."""
-    found: list[tuple[int, str]] = []
+    found: list[tuple[int, int, str]] = []
     for pattern in STATED_REPLACEMENT:
         for m in re.finditer(pattern, text, re.IGNORECASE):
-            name = m.group("n").strip(".")
-            if name and name not in _LITERALS and name.lower() not in _PROSE:
-                found.append((m.start("n"), name))
-    return list(dict.fromkeys(name for _, name in sorted(found)))
+            for i, name in enumerate((m.group("n").strip("."), *stated_alternatives(m))):
+                if name and name not in _LITERALS and name.lower() not in _PROSE:
+                    found.append((m.start("n"), i, name))
+    return list(dict.fromkeys(name for _, _, name in sorted(found)))
 
 
 def _named(text: str) -> list[str]:
@@ -3459,13 +3535,32 @@ def _warning_hint(fn: Any, param: str) -> str | None:
             tree = ast.parse(textwrap.dedent(fn.source))
     except Exception:  # no source (a stub), or code this Python cannot parse
         return None
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _name(node.func) == "warn" and node.args):
-            continue
-        text = " ".join(_message(node.args[0]).split())
+    for text in _warn_messages(tree):
         if "deprecat" in text.lower() and _mentions(text, param):
             return text
     return None
+
+
+def _warn_messages(tree: ast.AST) -> Iterator[str]:
+    """The text of each ``warn(...)`` call in ``tree``, on one line: its message, or for a
+    name, the message last assigned to that name before the call (httpx 0.27's
+    ``Client.__init__``: ``message = ("The 'proxies' argument is now deprecated." " Use 'proxy'
+    or 'mounts' instead.")``, then ``warnings.warn(message, DeprecationWarning)``)."""
+    assigned: dict[str, list[tuple[int, ast.expr]]] = {}
+    calls: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            if isinstance(target := node.targets[0], ast.Name):
+                assigned.setdefault(target.id, []).append((node.lineno, node.value))
+        elif isinstance(node, ast.Call) and _name(node.func) == "warn" and node.args:
+            calls.append(node)
+    for call in calls:
+        message = call.args[0]
+        if isinstance(message, ast.Name):
+            earlier = [a for a in assigned.get(message.id, ()) if a[0] <= call.lineno]
+            if earlier:
+                message = max(earlier, key=lambda a: a[0])[1]
+        yield " ".join(_message(message).split())
 
 
 def _message(node: ast.AST) -> str:

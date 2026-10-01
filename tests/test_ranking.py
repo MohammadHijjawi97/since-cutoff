@@ -757,7 +757,7 @@ def _fixture(name: str) -> tuple[PackageScan, dict[str, Any]]:
 
 def test_the_real_mcp_diff_fixture_is_current() -> None:
     _, data = _fixture("mcp-1.28.1-2.2.0")
-    assert data["schema"] == DIFF_SCHEMA, "re-record the fixture from the cache after a schema bump"
+    assert data["schema"] == DIFF_SCHEMA, "re-record it: python scripts/record_diff_fixtures.py"
 
 
 def test_mcp_2_leads_with_the_package_move_and_the_renames(tmp_path) -> None:
