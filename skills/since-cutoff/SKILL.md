@@ -45,8 +45,8 @@ report what it prints.
      type-checks: `since-cutoff run --quick`
 3. Name the model. Without `--model`, the tool tests the model your coding agent is set up with
    (`SINCE_CUTOFF_MODEL`; inside Claude Code, only Claude Code's settings; elsewhere the Claude
-   Code, Codex, Gemini CLI, OpenCode and Aider settings, the project's before the user's) and says where
-   it read it ("model from ..."). If that is not the model you are, or it warns that no model
+   Code, Codex, Gemini CLI, OpenCode and Aider settings, the project's before the user's) and
+   says where it read it ("model from ..."). If that is not the model you are, or it warns that no model
    setting was found, add `--model PROVIDER:MODEL` for the model you are (for example
    `--model openai:gpt-5.4`, or `--model claude-code:MODEL` for a model picked with
    `/model`). `run` calls Claude Code models through the `claude` CLI and other models through
