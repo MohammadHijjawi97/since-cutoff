@@ -3,6 +3,15 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- The API diff is the same on every machine: griffe read a package's sibling modules in the
+  order the file system lists them, so an object that several of them import from a private
+  module took its public path from that order. mcp 1.28.1 -> 2.2.0's switch to `httpx2` had 20
+  places instead of 23 where `mcp.client.streamable_http` came before `mcp.client.sse`: only
+  `sse` still imports `McpHttpClientFactory`, so its `__call__` (`timeout`, `auth` and its
+  return) did not match between the releases. Modules are now read in the order of their names.
+  A diff already in the cache keeps its result until the next diff schema.
+- `scripts/record_diff_fixtures.py` re-records the real diffs in `tests/fixtures/diffs` from
+  PyPI, after a diff schema bump for example; `--check` only says which would change.
 
 ## 0.5.0 - 2026-09-28
 

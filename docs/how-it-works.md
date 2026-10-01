@@ -69,13 +69,17 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
 
    Default values, attribute values and return annotations are ignored. Objects are reported
    under their shortest public path (`cryptography.hazmat.primitives.ciphers.aead.AESGCM`, not
-   a chain of module imports). Sync/async twins and raw-response wrappers are merged into one
-   change. A move needs the same object at the new path (a class or module that kept its public
-   names, a function with the old parameters, the same value), and "similar names now" offers
-   only names that are new in the same owner. A positional parameter renamed in place is one
-   change, with the new name as a suggestion. A removed `*args` or `**kwargs` is reported as such
-   (its parameter in results.json is `*args` or `**kwargs`), unless the new signature names the
-   parameters it took.
+   a chain of module imports). Sibling modules are read in the order of their names, not the
+   order the file system lists them in, so an object that several of them import from a private
+   module has the same path on every machine (mcp 1.28's `McpHttpClientFactory`, which
+   `mcp.client.sse` and `mcp.client.streamable_http` import, is
+   `mcp.client.sse.McpHttpClientFactory`). Sync/async twins and raw-response wrappers are merged
+   into one change. A move needs the same object at the new path (a class or module that kept
+   its public names, a function with the old parameters, the same value), and "similar names
+   now" offers only names that are new in the same owner. A positional parameter renamed in
+   place is one change, with the new name as a suggestion. A removed `*args` or `**kwargs` is
+   reported as such (its parameter in results.json is `*args` or `**kwargs`), unless the new
+   signature names the parameters it took.
 
    Not reported, because code written for the old version still works or never used them:
    - a name still listed in `__all__` of a module that binds names the source does not spell
@@ -221,9 +225,12 @@ result does not depend on what else is in the cache; one whose module is named o
 (Pillow's `PIL`) is missed, never matched wrongly. `Annotated[...]` counts only its type and
 `Literal[...]` nothing. A base class counts through the package's own classes (mcp 2.2's
 `OAuthClientProvider` derives from its `RedirectAwareAuth`, which derives from `httpx2.Auth`),
-but a subclass of a class whose own base switched is not counted again. A parameter is counted
-by the type it names now: openai 3's `http_client` takes an `httpx2.Client` in 8 signatures and
-an `httpx2.AsyncClient` in 6. A constructor is recorded under its class's path
+but a subclass of a class whose own base switched is not counted again. A method counts like a
+function, a Protocol's `__call__` included: code implements mcp's `McpHttpClientFactory` to pass
+`sse_client(httpx_client_factory=...)`, and in 2.2 its `__call__` takes `httpx2.Timeout` and
+`httpx2.Auth` and returns `httpx2.AsyncClient`, 3 of the switch's 23 places. A parameter is
+counted by the type it names now: openai 3's `http_client` takes an `httpx2.Client` in 8
+signatures and an `httpx2.AsyncClient` in 6. A constructor is recorded under its class's path
 (`openai.OpenAI`), the way code calls it, a classmethod or staticmethod under its class's
 (`fastmcp.FastMCP.from_openapi`), and each switched parameter with its position in the call
 (after `self` or `cls`), or none for a keyword-only one.

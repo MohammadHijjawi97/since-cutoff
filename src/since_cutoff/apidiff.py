@@ -498,8 +498,19 @@ def _loader(root: Path) -> Any:
     griffe marks them otherwise, which leaves them out of ``from x import *`` (qdrant-client's
     ``grpc`` package, whose modules build their classes dynamically and declare them in stubs,
     would look empty).
+
+    A package's modules load by depth and then by name: griffe sorts them by depth only and
+    leaves the rest to the file system (``os.walk``), so an object that two sibling modules
+    import from a private one took its public path from the machine's directory order. mcp 1.28's ``McpHttpClientFactory`` was ``mcp.client.sse.McpHttpClientFactory`` on
+    one machine and ``mcp.client.streamable_http.McpHttpClientFactory`` on another, and only
+    ``sse`` still imports it in 2.2, so its switch to ``httpx2`` had 23 places or 20.
     """
     import griffe
+
+    class Finder(griffe.ModuleFinder):
+        def submodules(self, module: Any) -> list[Any]:
+            found = super().submodules(module)
+            return sorted(found, key=lambda sub: (len(sub[0]), sub[0], str(sub[1])))
 
     declared: list[Any] = []
 
@@ -523,12 +534,14 @@ def _loader(root: Path) -> Any:
                     member.runtime = True
             super().expand_wildcards(obj, **kwargs)
 
-    return Loader(
+    loader = Loader(
         extensions=griffe.load_extensions(Stubs()),
         search_paths=[str(root)],
         allow_inspection=False,
         store_source=True,
     )
+    loader.finder = Finder([str(root)])  # what griffe makes from the same search paths
+    return loader
 
 
 def _promote_overloads(container: Any) -> None:
