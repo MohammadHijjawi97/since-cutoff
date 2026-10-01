@@ -306,9 +306,9 @@ with, and the model line says where it came from ("model from .claude/settings.j
    settings count: `ANTHROPIC_MODEL`, then the project's `.claude/settings.local.json` and
    `.claude/settings.json`, then `~/.claude/settings.json`.
 3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL`, `GEMINI_MODEL` or
-   `AIDER_MODEL`, then the project settings, nearest folder first, from the scanned folder up to
-   the repository root (never the home folder), then the user settings. In one folder the agents
-   count in this order:
+   `AIDER_MODEL`, then the project settings, nearest folder first, from the scanned folder up to the
+   repository root (never the home folder), then the user settings. In one folder the agents count
+   in this order:
 
 | agent | project settings | user settings |
 |---|---|---|
