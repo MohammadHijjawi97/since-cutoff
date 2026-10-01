@@ -83,7 +83,9 @@ kept line as it is), write the `SOURCE.md`, and add its table to `GOLDEN`. The f
 the sdist, so keep them small (the test allows 300 KB for all of them).
 
 `tests/fixtures/diffs` holds real API diffs that tests read instead of PyPI: mcp 1.28.1 -> 2.2.0,
-and the `dependency_switched` change of openai 2.44.0 -> 3.19.2. After a `DIFF_SCHEMA` bump, or
+the `dependency_switched` change of openai 2.44.0 -> 3.19.2, and httpx 0.27.2 -> 0.28.1 and
+click 8.1.8 -> 8.2.0, whose changelogs `tests/test_golden_diffs.py` checks them against (each
+file at most 150 KB: the fixtures ship in the sdist). After a `DIFF_SCHEMA` bump, or
 an `apidiff.py` change that changes what they report, re-record them from PyPI with
 `python scripts/record_diff_fixtures.py` (`--check` writes nothing and exits with code 1 when one
 would change; `pytest -m network` runs the same check), then read the fixtures' diff and update
