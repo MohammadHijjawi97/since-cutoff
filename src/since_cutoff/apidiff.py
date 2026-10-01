@@ -77,7 +77,10 @@ log = logging.getLogger(__name__)
 # ``FastMCP.from_openapi``); and "still names" leaves out the names a module only exports
 # (``__all__``, ``__getattr__``, ``__dir__``) and a package name in a list of requirements or a
 # documentation example (``examples=``, ``description=``).
-DIFF_SCHEMA = 19
+# 20: PEP 702's ``@deprecated`` imported through a library's compatibility module (``from
+# pkg._compat import deprecated``) is PEP 702's, not the library's own decorator
+# (``deprecated_by`` is None, so ``run`` probes it), and is found on an ``@overload`` (issue #44).
+DIFF_SCHEMA = 20
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
@@ -3525,14 +3528,29 @@ def _deprecated_form(obj: Any) -> str | None:
 
 
 def _resolves_to_pep702(obj: Any, path: str) -> bool:
+    """Whether the decorator at ``path`` is PEP 702's, imported through compatibility modules
+    (``from pkg._compat import deprecated``, where ``_compat`` imports it from
+    ``typing_extensions`` or, on 3.13 and later, ``warnings``).
+
+    Follows each import by the path it names, one module at a time: griffe cannot resolve the
+    last step (``final_target``) because ``typing_extensions`` is not loaded, which made the
+    decorator look like the library's own (issue #44).
+    """
     if not path.endswith(".deprecated"):
         return False
-    try:
-        target = obj.modules_collection.get_member(path)
-        final = target.final_target if getattr(target, "is_alias", False) else target
-        return str(getattr(target, "target_path", "")) in _PEP702 or str(final.path) in _PEP702
-    except Exception:
-        return False
+    seen: set[str] = set()
+    while path not in seen:
+        if path in _PEP702:
+            return True
+        seen.add(path)
+        try:
+            target = obj.modules_collection.get_member(path)
+        except Exception:
+            return False
+        if not getattr(target, "is_alias", False):
+            return False
+        path = str(target.target_path)
+    return False
 
 
 def _first_string_argument(expr: Any) -> str | None:

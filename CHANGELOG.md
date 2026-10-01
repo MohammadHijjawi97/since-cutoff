@@ -3,6 +3,12 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- PEP 702's `@deprecated` imported through a library's compatibility module (`from
+  pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
+  Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the
+  library's own decorator, which `run` does not probe because type checkers do not report
+  it, and was missed on an `@overload`. Diffs cached by earlier versions are recomputed once
+  (diff schema 20).
 
 ## 0.5.0 - 2026-09-28
 
