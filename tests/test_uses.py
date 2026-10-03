@@ -40,6 +40,7 @@ from since_cutoff.selection import (
     collapse,
     match,
     used_names,
+    uses,
     uses_text,
 )
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
@@ -59,6 +60,42 @@ def change(path: str, owner: str | None = None, parameter: str | None = None) ->
 
 
 # ------------------------------------------------------------ "your code uses"
+def test_uses_reports_call_lines() -> None:
+    removed = change("pkg.fetch")
+    files = code(
+        """
+        from pkg import fetch
+
+        result = fetch(url)
+        other = fetch(url)
+        """
+    )
+
+    found = uses(removed, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 4, 9),
+        ("", 5, 8),
+    ]
+
+
+def test_uses_reports_parameter_at_call_line() -> None:
+    removed = change("pkg.fetch", parameter="resume")
+    files = code(
+        """
+        from pkg import fetch
+
+        result = fetch(url, resume=True)
+        """
+    )
+
+    found = uses(removed, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 4, 9),
+    ]
+
+
 def test_a_module_level_name_counts_only_under_its_own_path() -> None:
     files = code(
         """

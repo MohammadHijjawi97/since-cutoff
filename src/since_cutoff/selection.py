@@ -69,8 +69,8 @@ _NEVER_OLD_FORM = (PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
 class Use(NamedTuple):
     """Where the project's code uses a change (:func:`uses`).
 
-    File-level for now: ``line`` and ``column`` (1-based and 0-based) stay None until the scan
-    records where in the file each name is used (issue #8, ``FileUse.sites``); the reports
+    ``line`` and ``column`` identify the recorded source location when the scan can match it;
+    a file-level fallback keeps them None when no specific site can be matched. The reports
     show ``app/main.py`` until then, and ``app/main.py:7`` with them.
     """
 
@@ -398,7 +398,7 @@ def _best(change: APIChange, files: Sequence[FileUse]) -> tuple[tuple[str, ...],
     found = [_in_file(merged, f) for f in files]
     for how in (PATH_MATCH, NAME_MATCH):
         best: tuple[str, ...] = ()
-        for _, names, matched in found:
+        for _, names, matched, _ in found:
             if matched == how and _weight(change, names) > _weight(change, best):
                 best = names
         if best:
@@ -421,7 +421,7 @@ def _with_paths(change: APIChange) -> list[tuple[APIChange, frozenset[str]]]:
 
 def _in_file(
     merged: list[tuple[APIChange, frozenset[str]]], f: FileUse
-) -> tuple[APIChange | None, tuple[str, ...], str | None]:
+) -> tuple[APIChange | None, tuple[str, ...], str | None, frozenset[str]]:
     """The names of a change that one file uses, the merged change they are of, and how they
     were matched: through a path (PATH_MATCH), else, for a change without import paths, by its
     package and name (NAME_MATCH)."""
@@ -431,33 +431,84 @@ def _in_file(
         if len(names) > len(best[1]):
             best = (c, names)
     if best[1]:
-        return best[0], best[1], PATH_MATCH
+        return best[0], best[1], PATH_MATCH, next(
+            paths for c, paths in merged if c is best[0]
+        )
     for c, _ in merged:
         if c.import_paths is not None:
             continue  # the diff recorded its paths: the name alone is not enough
         names = _used_in(c, f, frozenset(_same_name(c, f)))
         if len(names) > len(best[1]):
             best = (c, names)
-    return best[0], best[1], NAME_MATCH if best[1] else None
+    return (
+        best[0],
+        best[1],
+        NAME_MATCH if best[1] else None,
+        frozenset(_same_name(best[0], f)) if best[0] is not None else frozenset(),
+    )
 
+
+def _site_matches(
+    kind: str,
+    name: str,
+    site_kind: str | None,
+    site_name: str,
+    names: tuple[str, ...],
+    by_path: frozenset[str],
+) -> bool:
+    if kind != site_kind:
+        return False
+    if site_kind == "keyword":
+        if ":" not in name:
+            return False
+        path, parameter = name.rsplit(":", 1)
+        return parameter == names[1] and (
+            path in by_path
+            or any(
+                p.rsplit(".", 1)[0] == path
+                for p in by_path
+                if p.endswith(".__init__")
+            )
+        )
+    if site_kind == "call":
+        return name in by_path
+    return name == site_name
 
 def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
     """Where the project's code uses a change: one :class:`Use` per file that uses it (the
     most names that file uses, as :func:`used_names` counts them), most specific first (a
     keyword, a call, a member, a reference), then by file.
 
-    File-level for now (``Use.line`` is None): recording each site's line and column is
-    issue #8, after which each file can give several uses, still most specific first.
+    Each matched source site gets its recorded line and column; when no site can be matched,
+    a file-level ``Use`` keeps them None. A file can therefore give several uses, still most
+    specific first.
     """
     if not files:
         return []
     merged = _with_paths(change)
     found = []
     for f in files:
-        c, names, how = _in_file(merged, f)
+        c, names, how, by_path = _in_file(merged, f)
         if c is not None and how is not None:
             kind = _use_kind(c, f, names)
-            found.append(Use(f.file, None, None, kind, names, how, form(change, names)))
+            site_kind = {
+                USE_KEYWORD: "keyword",
+                USE_CALL: "call",
+                USE_MEMBER: "member",
+                USE_REFERENCE: "reference",
+            }.get(kind)
+            site_name = f"{names[0]}:{names[1]}" if len(names) == 2 else names[0]
+
+            matching_sites = sorted(
+                (line, column)
+                for k, name, line, column in f.sites
+                if _site_matches(k, name, site_kind, site_name, names, by_path)
+            )
+            if matching_sites:
+                for line, column in matching_sites:
+                    found.append(Use(f.file, line, column, kind, names, how, form(change, names)))
+            else:
+                found.append(Use(f.file, None, None, kind, names, how, form(change, names)))
     return ordered(found)
 
 
