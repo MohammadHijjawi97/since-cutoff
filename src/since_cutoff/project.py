@@ -1,4 +1,4 @@
-"""Discover a Python project's dependencies and the exact versions it uses.
+﻿"""Discover a Python project's dependencies and the exact versions it uses.
 
 Version sources, most authoritative first: a lockfile (uv.lock, poetry.lock, pdm.lock,
 pylock.toml, Pipfile.lock), the project's virtual environment, pinned requirement files, and
@@ -980,12 +980,13 @@ class FileUse:
     members: frozenset[tuple[str, str]] = frozenset()
     # The file, relative to the project root, with "/" on every system: ``app/main.py``
     # (:func:`scan_sources`); "" when unknown. Where the code uses a change is file-level for
-    # now (selection.uses); the lines and columns are issue #8's.
-    file: str = ""
+    # (:func:`scan_sources`); "" when unknown. Source locations are recorded
+    # separately for each use when the scanner can match a specific site.
     # Every chain of two or more names read with dots, from its first name (or the first
     # attribute after a call): ``client.beta.messages.create``, ``get().messages.create`` as
     # ``messages.create``. What ``pairs`` cannot tell: whether ``messages.create`` is reached
     # through ``beta``.
+    file: str = ""
     chains: frozenset[str] = frozenset()
     # ``(callable, keyword)`` of each keyword argument whose callable the file shows the path
     # of: an imported name (``fetch(retries=1)`` after ``from toylib import fetch``:
@@ -1276,7 +1277,7 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
                     if k.arg
                 )
                 keywords.update((callee, k) for k in passed)
-                targets = callee_paths(func)
+                targets = call_paths
                 keyword_paths.update((p, k) for p in targets for k in passed)
                 keyword_modules.update(
                     (p, k.arg, m)

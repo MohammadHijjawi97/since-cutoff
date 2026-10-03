@@ -658,7 +658,7 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
 
 def _used_section(scan: ScanResult) -> list[str]:
     """project_changes' first section: each changed API the project's code uses, with where
-    (at most LOCATIONS_SHOWN files; the lines are issue #8's) and its note, in at most half of
+    (at most LOCATIONS_SHOWN source locations) and its note, in at most half of
     PROJECT_BUDGET, then the dependencies first released after the cutoff that the code
     imports; the bullet before it says how many APIs there are."""
     used = scan.used_apis()

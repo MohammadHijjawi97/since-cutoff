@@ -2,7 +2,7 @@
 note for each; then one line for the rest (``--all`` lists it). The same in the Markdown summary,
 report.md, JSON and the MCP answer; ``--fail-on`` and ``--annotate github`` for CI.
 
-Where the code uses an API is file-level here (``app/main.py``): the lines are issue #8's, and
+Where the code uses an API is reported at the matching source location (for example ``app/main.py:2``), and
 the "Used in" output is ready for them (``Use.line``)."""
 
 from __future__ import annotations
@@ -71,7 +71,6 @@ from since_cutoff.selection import (
     USES_API,
     Use,
     form,
-    used_names,
     uses,
 )
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
@@ -499,7 +498,7 @@ def test_scan_sources_records_each_file_relative_to_the_project(tmp_path) -> Non
 
 
 def test_the_used_in_output_is_ready_for_lines(scan: ScanResult, app: Path, monkeypatch) -> None:
-    """Once the scan records lines (issue #8), a place reads ``main.py:2`` with its code, the
+    """A place reads ``main.py:2`` with its code, the
     JSON has line, column and code, and an annotation has ``line`` and ``col``."""
     [send, _] = scan.used_apis()
     lined = [u._replace(line=2, column=0) if u.file == "main.py" else u for u in send.uses]

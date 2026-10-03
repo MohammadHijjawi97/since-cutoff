@@ -69,8 +69,8 @@ _NEVER_OLD_FORM = (PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
 class Use(NamedTuple):
     """Where the project's code uses a change (:func:`uses`).
 
-    File-level for now: ``line`` and ``column`` (1-based and 0-based) stay None until the scan
-    records where in the file each name is used (issue #8, ``FileUse.sites``); the reports
+    ``line`` and ``column`` identify the recorded source location when the scan can match it;
+    a file-level fallback keeps them None when no specific site can be matched. The reports
     show ``app/main.py`` until then, and ``app/main.py:7`` with them.
     """
 
@@ -448,13 +448,40 @@ def _in_file(
     )
 
 
+def _site_matches(
+    kind: str,
+    name: str,
+    site_kind: str | None,
+    site_name: str,
+    names: tuple[str, ...],
+    by_path: frozenset[str],
+) -> bool:
+    if kind != site_kind:
+        return False
+    if site_kind == "keyword":
+        if ":" not in name:
+            return False
+        path, parameter = name.rsplit(":", 1)
+        return parameter == names[1] and (
+            path in by_path
+            or any(
+                p.rsplit(".", 1)[0] == path
+                for p in by_path
+                if p.endswith(".__init__")
+            )
+        )
+    if site_kind == "call":
+        return name in by_path
+    return name == site_name
+
 def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
     """Where the project's code uses a change: one :class:`Use` per file that uses it (the
     most names that file uses, as :func:`used_names` counts them), most specific first (a
     keyword, a call, a member, a reference), then by file.
 
-    File-level for now (``Use.line`` is None): recording each site's line and column is
-    issue #8, after which each file can give several uses, still most specific first.
+    Each matched source site gets its recorded line and column; when no site can be matched,
+    a file-level ``Use`` keeps them None. A file can therefore give several uses, still most
+    specific first.
     """
     if not files:
         return []
@@ -472,30 +499,15 @@ def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
             }.get(kind)
             site_name = f"{names[0]}:{names[1]}" if len(names) == 2 else names[0]
 
-            def site_matches(k: str, name: str) -> bool:
-                if k != site_kind:
-                    return False
-
-                if site_kind == "keyword":
-                    if ":" not in name:
-                        return False
-                    path, parameter = name.rsplit(":", 1)
-                    return parameter == names[1] and (path in by_path or any(p.rsplit(".", 1)[0] == path for p in by_path if p.endswith(".__init__")))
-
-                if site_kind == "call":
-                    return name in by_path
-
-                return name == site_name
-
             matching_sites = sorted(
                 (line, column)
                 for k, name, line, column in f.sites
-                if site_matches(k, name)
+                if _site_matches(k, name, site_kind, site_name, names, by_path)
             )
             if matching_sites:
                 for line, column in matching_sites:
                     found.append(Use(f.file, line, column, kind, names, how, form(change, names)))
-            elif not f.sites or site_kind is None:
+            else:
                 found.append(Use(f.file, None, None, kind, names, how, form(change, names)))
     return ordered(found)
 
@@ -579,7 +591,7 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
         callable_name = found[0].rsplit(".", 1)[-1]
         passed = wanted is not None and any((p, wanted) in f.keyword_paths for p in by_path)
     elif name == "__init__":
-        named = {path.rsplit(".", 1)[0] for path in by_path if "." in path} & f.paths
+        named = {path.rsplit(".", 1)[0] for path in by_path} & f.paths
         if not named:
             return ()
         # The class called under any of its names: ``AsyncClient`` for a change merged with

@@ -414,11 +414,11 @@ def headline(
         text = Text.assemble(
             f"Probed {_plural(p['valid'], 'API change')}: ",
             (f"{p['stale']} stale", "red"),
-            " Â· ",
+            " · ",
             (f"{p['wrong']} wrong", "magenta"),
-            " Â· ",
+            " · ",
             (f"{p['deprecated']} deprecated", "yellow"),
-            " Â· ",
+            " · ",
             (f"{p['pass']} correct", "green"),
         )
         excluded = {k: v for k, v in p["excluded"].items() if v}
@@ -587,13 +587,13 @@ def render_console(
     in ``shown``, printed already) and what the model got wrong."""
     s = summary(scan, run)
     if s["model"]:
-        title = f"since-cutoff Â· {escape(s['model'])} Â· training cutoff {s['cutoff']}"
+        title = f"since-cutoff · {escape(s['model'])} · training cutoff {s['cutoff']}"
     else:
-        title = f"since-cutoff Â· custom cutoff {s['cutoff']}"
+        title = f"since-cutoff · custom cutoff {s['cutoff']}"
     sub = Text(
-        f"{scan.project.root.name} Â· {_deps(s['dependencies_total'])}"
+        f"{scan.project.root.name} · {_deps(s['dependencies_total'])}"
         + (f" ({s['dependencies_skipped']} not checked)" if s["dependencies_skipped"] else "")
-        + f" Â· versions from {s['version_source']}"
+        + f" · versions from {s['version_source']}"
     )
     lines = headline(scan, run, s)
     # rich fits a panel to its body and title but not to its subtitle, which it would cut: size
@@ -1490,7 +1490,7 @@ def _used_report_md(scan: ScanResult) -> list[str]:
             group = u.package.name
             out += ["", f"### {versions_text(scan, u.package)}", ""]
         wheres = [f"`{w}` ({use_text(here, code=True)})" for w, here in places(u)]
-        out.append(f"- **{api_head(u, code=True)}** Â· {FORM_LABELS[u.form]}")
+        out.append(f"- **{api_head(u, code=True)}** · {FORM_LABELS[u.form]}")
         out.append(f"  - Used in: {', '.join(wheres) or 'a file of your code'}")
         out.append(f"  - Note: {u.note.line}")
         if u.note.change.kind == DEPENDENCY_SWITCHED:
@@ -1728,16 +1728,16 @@ def _md_change(
     change: APIChange, files: Sequence[FileUse], *, example: bool = False, used_in: bool = False
 ) -> str:
     """One Markdown list item: the change, how many paths share it, and what the code uses
-    (with ``used_in``, where: " Â· used in `app/main.py`"); below it, the "Runtime:" caveat when
+    (with ``used_in``, where: " · used in `app/main.py`"); below it, the "Runtime:" caveat when
     the new version still reads a removed parameter."""
     others = other_paths_text(change, example=example)
     uses = uses_text(change, files)
-    mark = f" Â· **your code uses {uses}**" if uses else ""
+    mark = f" · **your code uses {uses}**" if uses else ""
     if uses and used_in:
         wheres = list(dict.fromkeys(u.where for u in selection_uses(change, files) if u.file))
         shown = ", ".join(f"`{w}`" for w in wheres[:LOCATIONS_SHOWN])
         more = f" and {len(wheres) - LOCATIONS_SHOWN} more" if len(wheres) > LOCATIONS_SHOWN else ""
-        mark += f" Â· used in {shown}{more}" if shown else ""
+        mark += f" · used in {shown}{more}" if shown else ""
     runtime = runtime_text([change])
     below = f"\n  - Runtime: {runtime}" if runtime else ""
     if change.kind == DEPENDENCY_SWITCHED:
@@ -1784,7 +1784,7 @@ def render_scan_markdown(
     out = [
         "## since-cutoff scan",
         "",
-        f"{_cutoff_md(s)} Â· project `{project.root.name}`, versions from `{s['version_source']}`",
+        f"{_cutoff_md(s)} · project `{project.root.name}`, versions from `{s['version_source']}`",
         "",
     ]
     out += _used_markdown(scan, env)
