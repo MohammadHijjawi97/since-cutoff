@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 
 ## 0.5.0 - 2026-09-28
 
