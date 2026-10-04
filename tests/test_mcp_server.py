@@ -440,6 +440,51 @@ def test_server_speaks_mcp_and_turns_failures_into_tool_errors(tools: Tools) -> 
     anyio.run(main)
 
 
+def test_server_lists_and_renders_read_only_prompts(tools: Tools) -> None:
+    from mcp import Client
+
+    server = build_server(tools)
+
+    async def main() -> None:
+        async with Client(server, mode="legacy") as client:
+            listed = {prompt.name: prompt for prompt in (await client.list_prompts()).prompts}
+            assert set(listed) == {"check_project", "before_upgrade"}
+            assert [(arg.name, arg.required) for arg in listed["check_project"].arguments] == [
+                ("project_dir", False)
+            ]
+            assert [(arg.name, arg.required) for arg in listed["before_upgrade"].arguments] == [
+                ("package", True),
+                ("to_version", False),
+            ]
+
+            default_project = await client.get_prompt("check_project")
+            project_text = default_project.messages[0].content.text
+            assert 'project_changes(project_dir="."' in project_text
+            assert "your own model id" in project_text
+            assert "old form" in project_text
+            assert "since-cutoff sync" in project_text
+
+            project = await client.get_prompt("check_project", {"project_dir": "backend"})
+            assert 'project_changes(project_dir="backend"' in project.messages[0].content.text
+
+            upgrade = await client.get_prompt(
+                "before_upgrade", {"package": "httpx", "to_version": "1.0"}
+            )
+            upgrade_text = upgrade.messages[0].content.text
+            assert "pinned version" in upgrade_text
+            assert 'api_changes(package="httpx"' in upgrade_text
+            assert 'to_version="1.0"' in upgrade_text
+            assert "similar names are not confirmed replacements" in upgrade_text
+
+            latest = await client.get_prompt("before_upgrade", {"package": "httpx"})
+            assert (
+                "omit to_version to compare with the latest release"
+                in latest.messages[0].content.text
+            )
+
+    anyio.run(main)
+
+
 def test_long_calls_report_progress(tools: Tools, tmp_path: Path) -> None:
     from mcp import Client
 
@@ -498,6 +543,8 @@ def test_the_server_starts_without_network_or_api_keys(
         async with Client(server, mode="legacy") as client:
             names = {t.name for t in (await client.list_tools()).tools}
             assert names == {"model_cutoff", "api_changes", "project_changes"}
+            prompts = {p.name for p in (await client.list_prompts()).prompts}
+            assert prompts == {"check_project", "before_upgrade"}
 
     anyio.run(main)
 

@@ -23,7 +23,7 @@ welcome, and first-time contributors are very welcome.
 | `project.py` | Reads lockfiles, requirements files and `.venv`, and scans the project's imports |
 | `pypi.py` | PyPI metadata and release dates; downloads and safely extracts sources |
 | `models.py` | Training cutoffs (models.dev plus a bundled snapshot) and model-id normalisation |
-| `hosts.py` | Which model the user's coding agent runs, read from Claude Code, Codex, OpenCode and Aider settings (the default for `--model`) |
+| `hosts.py` | Which model the user's coding agent runs, read from Claude Code, Codex, Gemini CLI, OpenCode and Aider settings (the default for `--model`) |
 | `apidiff.py` | The static API diff between two versions (griffe): removals, moves, parameters, deprecations |
 | `selection.py` | Where the project's code uses each change, in the old form or not, and which changes to probe |
 | `prompts.py` | Task, solver and note prompts, and the leak filter for tasks |
