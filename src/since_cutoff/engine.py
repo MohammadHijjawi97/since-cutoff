@@ -49,9 +49,8 @@ from since_cutoff.apidiff import (
     PARAM_REMOVED,
     PARAM_REQUIRED,
     APIChange,
-    diff_sources,
+    diff_sources_with_unread,
     load_api,
-    unread_modules,
 )
 from since_cutoff.apidiff import (
     DEPRECATED as CHANGE_DEPRECATED,
@@ -85,7 +84,7 @@ from since_cutoff.notes import (
 )
 from since_cutoff.project import Dependency, FileUse, Project
 from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
-from since_cutoff.pypi import PyPI, Release, SourceTree, is_placeholder
+from since_cutoff.pypi import SOURCE_SCHEMA, PyPI, Release, SourceTree, is_placeholder
 from since_cutoff.selection import (
     NAME_MATCH,
     OLD_FORM,
@@ -288,8 +287,9 @@ class PackageScan:
     # NEW (no release by the cutoff): the day of its first release, from the release list the
     # scan read anyway.
     first_released: str | None = None
-    # CHANGED: public modules the pinned release ships compiled, without a source or a stub,
-    # that had a source or a stub at the cutoff: their API was not compared (issue #52).
+    # CHANGED: modules the pinned release ships compiled, without a source or a stub, that hid
+    # something the release at the cutoff had: the diff did not report its removal, and could
+    # not compare it (issue #52; diff_sources_with_unread).
     unread: list[str] = field(default_factory=list)
 
     @property
@@ -361,14 +361,15 @@ class UsedAPI:
 
 
 def unread_warning(s: PackageScan) -> str:
-    """The scan's warning for a package whose pinned release ships modules compiled that had a
-    source or a stub at the cutoff (:attr:`PackageScan.unread`)."""
+    """The scan's warning for a package whose pinned release ships compiled modules that hid
+    something the release at the cutoff had (:attr:`PackageScan.unread`)."""
     one = len(s.unread) == 1
     what = "is a compiled module" if one else "are compiled modules"
+    it = "it" if one else "them"
     return (
         f"{s.name} {s.locked}: {', '.join(s.unread)} {what} without a .py source or a .pyi "
         f"stub, unlike in {s.cutoff_version}; since-cutoff does not run code, so changes to "
-        f"{'it' if one else 'them'} are not reported"
+        f"{it} and to the names taken from {it} are not reported"
     )
 
 
@@ -1168,16 +1169,15 @@ class Engine:
                 continue
             s.import_names = list(new.import_names)
             if id(s) in cached:
-                s.unread = list(self.store.get("diffs", self._unread_key(s)) or [])
-                self._finish(s, cached[id(s)], self._diff_key(s), store=False)
+                unread = self.store.get("diffs", self._unread_key(s)) or []
+                self._finish(s, (cached[id(s)], unread), self._diff_key(s), store=False)
                 continue
-            s.unread = unread_modules(old.root, new.compiled)
             names = sorted(set(old.import_names) | set(new.import_names))
             pending.append((s, old, new, names))
 
         if len(pending) <= 1 or not self.processes or os.environ.get("SINCE_CUTOFF_NO_PROCESSES"):
             for s, old, new, names in pending:
-                result = diff_sources(
+                result = diff_sources_with_unread(
                     s.name,
                     old.version,
                     old.root,
@@ -1195,7 +1195,7 @@ class Engine:
         try:
             futs = {
                 pool.submit(
-                    diff_sources,
+                    diff_sources_with_unread,
                     s.name,
                     old.version,
                     old.root,
@@ -1250,18 +1250,28 @@ class Engine:
 
     @staticmethod
     def _unread_key(s: PackageScan) -> str:
-        """Where a diff's :attr:`PackageScan.unread` is kept next to it: a cached diff does
-        not fetch the older release, which tells them apart."""
-        return stable_hash("unread", DIFF_SCHEMA, s.name, s.cutoff_version, s.locked)
+        """Where a diff's :attr:`PackageScan.unread` is kept next to it. It also depends on
+        what the source trees record as compiled (SOURCE_SCHEMA)."""
+        return stable_hash("unread", DIFF_SCHEMA, SOURCE_SCHEMA, s.name, s.cutoff_version, s.locked)
 
     def _finish(
-        self, s: PackageScan, result: list[dict[str, Any]], key: str, *, store: bool = True
+        self,
+        s: PackageScan,
+        result: tuple[list[dict[str, Any]], list[str]],
+        key: str,
+        *,
+        store: bool = True,
     ) -> None:
+        """Take a diff (its changes, and the compiled modules that hid something), computed or
+        from the cache; only a finished diff sets :attr:`PackageScan.unread`, so a failed one
+        warns of nothing."""
+        changes, unread = result
         if store:
-            self.store.set("diffs", key, result)
-            if s.unread:
-                self.store.set("diffs", self._unread_key(s), s.unread)
-        s.changes = [APIChange.from_dict(c) for c in result]
+            self.store.set("diffs", key, changes)
+            if unread:
+                self.store.set("diffs", self._unread_key(s), unread)
+        s.unread = list(unread)
+        s.changes = [APIChange.from_dict(c) for c in changes]
         # Module metadata alone (``__version__``) is not an API change worth flagging.
         s.status = CHANGED if s.distinct else UNCHANGED
         # A diff taken from the cache is instant: in a log, only a diff that was computed says

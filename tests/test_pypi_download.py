@@ -321,16 +321,18 @@ def test_a_wheel_records_its_compiled_modules_and_still_extracts_only_sources(in
             "toy/stubbed.pyi": "def f() -> None: ...\n",
             "toy/both.py": "def f() -> None: ...\n",
             "toy/both.cpython-312-x86_64-linux-gnu.so": elf,
-            # Not modules: a vendored shared library, mypyc's hashed helper.
+            # Not modules: a vendored shared library, mypyc's hashed helper (its hash may start
+            # with a letter or a digit).
             "toy.libs/libgfortran-040039e1.so.5.0.0": elf,
             "toy.libs/libz.so": elf,
-            "3f2b9a__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+            "a3f2b9e1d0c4__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+            "30fcd23745efe32ce681__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
         }
     )
     index.add("toy", "1.0", "toy-1.0-cp312-cp312-manylinux_2_17_x86_64.whl", blob)
     tree = PyPI(cache).source("toy", "1.0")
     assert tree.compiled == (
-        "toy.compiled_pkg",
+        "toy.compiled_pkg.__init__",  # its submodules have files of their own
         "toy.fast",
         "toy.limited",
         "toy.plain",

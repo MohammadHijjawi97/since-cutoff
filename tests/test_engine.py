@@ -12,9 +12,8 @@ from since_cutoff.cache import DiskCache
 from since_cutoff.engine import CHANGED, KNOWN, NEW, PASS, STALE, Engine, Settings
 from since_cutoff.notes import BLOCK_END, BLOCK_START, NOTE_DIFF, TAG_DIFF
 from since_cutoff.project import load_project
-from since_cutoff.pypi import SourceTree
 from since_cutoff.report import render_markdown, summary, to_json
-from tests.conftest import FakePyPI, ScriptedModel, write_tree
+from tests.conftest import ScriptedModel, compiled_fastlib
 
 pytestmark = pytest.mark.pyright
 
@@ -70,45 +69,32 @@ def test_package_newer_than_the_model(tmp_path, cache, fake_pypi, scripted):
     assert scan.package("toylib").status == NEW
 
 
-def test_a_module_that_became_compiled_is_a_warning_not_a_removal(tmp_path, cache, scripted):
-    """Issue #52: fastlib 2.0 ships ``fastlib.fast`` as an extension module without a stub.
-    Its API is not compared, and the scan says so, whether the diff is new or cached."""
-    v1 = write_tree(
-        tmp_path / "fastlib-1.0",
-        {
-            "fastlib/__init__.py": "from fastlib.fast import speedy\n",
-            "fastlib/fast.py": "def speedy(x: int) -> int:\n    return x\n",
-            "fastlib/slow.py": "def crawl() -> None: ...\n",
-        },
-    )
-    v2 = write_tree(
-        tmp_path / "fastlib-2.0", {"fastlib/__init__.py": "from fastlib.fast import speedy\n"}
-    )
-    pypi = FakePyPI(
-        cache,
-        {"fastlib": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")]},
-        {
-            ("fastlib", "1.0"): SourceTree("fastlib", "1.0", v1, ("fastlib",)),
-            ("fastlib", "2.0"): SourceTree(
-                "fastlib", "2.0", v2, ("fastlib",), compiled=("fastlib.fast",)
-            ),
-        },
-    )
+@pytest.mark.parametrize("module", ["fastlib.fast", "fastlib._core"], ids=["public", "private"])
+def test_a_module_that_became_compiled_is_a_warning_not_a_removal(
+    tmp_path, cache, scripted, module
+):
+    """Issue #52: fastlib 2.0 ships ``module`` as an extension module without a stub. It is
+    not removed and its API is not compared, and the scan says so, whether the diff is new or
+    cached; ``gone``, which ``fastlib`` no longer imports from it, is removed."""
+    pypi = compiled_fastlib(tmp_path, cache, module)
     project = load_project(make_project(tmp_path, '"fastlib==2.0"'))
     for attempt in ("diffed", "cached"):
         engine = make_engine(cache, pypi, scripted)
         scan = engine.scan(project, engine.resolve_target())
         pkg = scan.package("fastlib")
-        assert {(c.kind, c.path) for c in pkg.changes} == {(REMOVED, "fastlib.slow")}, attempt
-        assert pkg.unread == ["fastlib.fast"], attempt
+        assert {(c.kind, c.path) for c in pkg.changes} == {
+            (REMOVED, "fastlib.gone"),
+            (REMOVED, "fastlib.slow"),
+        }, attempt
+        assert pkg.unread == [module], attempt
         assert scan.warnings == [
-            "fastlib 2.0: fastlib.fast is a compiled module without a .py source or a .pyi "
-            "stub, unlike in 1.0; since-cutoff does not run code, so changes to it are not "
-            "reported"
+            f"fastlib 2.0: {module} is a compiled module without a .py source or a .pyi stub, "
+            "unlike in 1.0; since-cutoff does not run code, so changes to it and to the names "
+            "taken from it are not reported"
         ], attempt
-        assert "fastlib.fast is a compiled module" in render_markdown(scan, None)
-        # Kept next to the diff: the cached run does not fetch fastlib 1.0 to find it again.
-        assert cache.get("diffs", Engine._unread_key(pkg)) == ["fastlib.fast"]
+        assert f"{module} is a compiled module" in render_markdown(scan, None)
+        # Kept next to the diff, under a key that knows how the source trees were read.
+        assert cache.get("diffs", Engine._unread_key(pkg)) == [module]
 
 
 def test_full_run_measures_fixes_and_verifies(tmp_path, cache, fake_pypi):

@@ -76,7 +76,8 @@ class SourceTree:
     import_names: tuple[str, ...]
     requires: tuple[str, ...] = ()
     # Dotted names of the modules the distribution ships compiled, with no ``.py`` source and
-    # no ``.pyi`` stub of the same name: a static reading sees nothing of them.
+    # no ``.pyi`` stub of the same name: a static reading sees nothing of them. A package whose
+    # own ``__init__`` is compiled is ``pkg.__init__``.
     compiled: tuple[str, ...] = ()
 
 
@@ -469,17 +470,17 @@ def _compiled_modules(members: list[str], suffixes: tuple[str, ...]) -> list[str
     Only sources are extracted, so without this list a public module that became compiled
     (``pkg/fast.py`` -> ``pkg/fast.cpython-312-x86_64-linux-gnu.so``) looked removed.
     ``suffixes`` are the compiled forms: extension modules in a wheel, Cython sources in an
-    sdist. A file whose path does not spell a module (``numpy.libs/libopenblas.so``, a shared
-    library a wheel vendors) is none.
+    sdist. A package whose ``__init__`` is compiled is ``pkg.__init__``: its submodules still
+    have files of their own. A file whose path does not spell a module
+    (``numpy.libs/libopenblas.so``, a shared library a wheel vendors) is none, nor is mypyc's
+    helper module (``<hash>__mypyc.cpython-312-x86_64-linux-gnu.so``), which no code imports.
     """
     readable: set[str] = set()
     compiled: dict[str, str] = {}
     for member in members:
         path = PurePosixPath(member.replace("\\", "/"))
         parts = [*path.parent.parts, path.name.split(".", 1)[0]]
-        if parts[-1] == "__init__":  # a package whose __init__ is compiled
-            parts.pop()
-        if not parts or not all(p.isidentifier() for p in parts):
+        if not all(p.isidentifier() for p in parts) or parts[-1].endswith("__mypyc"):
             continue
         key = "/".join(parts)
         if path.suffix in _SOURCE_SUFFIXES:

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from since_cutoff.apidiff import (
     DEPRECATED,
     KIND_CHANGED,
@@ -17,7 +19,7 @@ from since_cutoff.apidiff import (
     REMOVED,
     APIChange,
     diff_sources,
-    unread_modules,
+    diff_sources_with_unread,
 )
 from since_cutoff.selection import collapse
 from tests.conftest import write_tree
@@ -354,13 +356,25 @@ def test_a_function_now_a_method_of_its_class_is_not_removed(tmp_path):
 # Only sources and stubs are extracted: a module the new release ships as an extension module
 # (``fast.cpython-312-x86_64-linux-gnu.so``, ``fast.pyd``) with no stub looked removed, with
 # everything re-exported from it (issue #52).
-FAST = "def speedy(x: int) -> int:\n    return x\n"
+FAST = "def speedy(x: int) -> int:\n    return x\n\ndef gone() -> None: ...\n"
+
+
+def unread(
+    tmp_path: Path, old: dict[str, str], new: dict[str, str], names=("pkg",), compiled=()
+) -> tuple[set[tuple[str, str, str | None]], list[str]]:
+    """What :func:`diff_sources_with_unread` finds, and the compiled modules it names."""
+    a = write_tree(tmp_path / "old", old)
+    b = write_tree(tmp_path / "new", new)
+    result, hid = diff_sources_with_unread(
+        "pkg", "1", a, "2", b, list(names), new_compiled=list(compiled)
+    )
+    return found([APIChange.from_dict(c) for c in result]), hid
 
 
 def test_a_module_that_became_compiled_is_not_removed(tmp_path):
     old = {"pkg/__init__.py": "from pkg.fast import speedy\n", "pkg/fast.py": FAST}
     new = {"pkg/__init__.py": "from pkg.fast import speedy\n"}  # and fast.cpython-312-*.so
-    assert diff(tmp_path, old, new, compiled=["pkg.fast"]) == []
+    assert unread(tmp_path, old, new, compiled=["pkg.fast"]) == (set(), ["pkg.fast"])
     # What it reported before the scan knew of the compiled module:
     assert (REMOVED, "pkg.fast", None) in found(diff(tmp_path / "unaware", old, new))
 
@@ -369,17 +383,16 @@ def test_a_compiled_module_that_lost_its_stub_is_not_removed(tmp_path):
     stub = "def speedy(x: int) -> int: ...\n"
     old = {"pkg/__init__.py": "", "pkg/fast.pyi": stub}  # and fast.cpython-312-*.so
     new = {"pkg/__init__.py": ""}  # the same extension module, no stub any more
-    assert diff(tmp_path, old, new, compiled=["pkg.fast"]) == []
+    assert unread(tmp_path, old, new, compiled=["pkg.fast"]) == (set(), ["pkg.fast"])
     assert (REMOVED, "pkg.fast", None) in found(diff(tmp_path / "unaware", old, new))
 
 
 def test_a_top_level_module_that_became_compiled_is_not_removed(tmp_path):
     old = {"fastmod.py": FAST}
     new: dict[str, str] = {}  # fastmod.abi3.so
-    assert diff(tmp_path, old, new, names=("fastmod",), compiled=["fastmod"]) == []
-    assert found(diff(tmp_path / "unaware", old, new, names=("fastmod",))) == {
-        (REMOVED, "fastmod", None)
-    }
+    names = ("fastmod",)
+    assert unread(tmp_path, old, new, names, compiled=["fastmod"]) == (set(), ["fastmod"])
+    assert found(diff(tmp_path / "unaware", old, new, names=names)) == {(REMOVED, "fastmod", None)}
 
 
 def test_a_module_removed_with_nothing_in_its_place_is_still_removed(tmp_path):
@@ -394,19 +407,46 @@ def test_a_module_removed_with_nothing_in_its_place_is_still_removed(tmp_path):
     }
 
 
-def test_unread_modules_are_the_public_ones_that_had_a_source_or_a_stub(tmp_path):
-    old = write_tree(
-        tmp_path / "old",
-        {
-            "pkg/__init__.py": "",
-            "pkg/fast.py": FAST,
-            "pkg/stubbed.pyi": FAST,
-            "pkg/_speedups.py": FAST,  # private: never compared anyway
-            "pkg/sub/__init__.py": "",
-        },
+@pytest.mark.parametrize("module", ["pkg.fast", "pkg._core"], ids=["public", "private"])
+def test_a_name_a_readable_module_no_longer_imports_from_a_compiled_one_is_removed(
+    tmp_path, module
+):
+    """``from pkg import gone`` fails once ``pkg/__init__.py`` stops importing it, whether or
+    not the module it came from is compiled now."""
+    old = {
+        "pkg/__init__.py": f"from {module} import gone, speedy\n",
+        f"pkg/{module.split('.')[1]}.py": FAST,
+    }
+    new = {"pkg/__init__.py": f"from {module} import speedy\n"}
+    assert unread(tmp_path, old, new, compiled=[module]) == (
+        {(REMOVED, "pkg.gone", None)},
+        [module],  # private too: pkg.speedy comes from it
     )
-    compiled = ["pkg._speedups", "pkg.always", "pkg.fast", "pkg.stubbed", "pkg.sub"]
-    assert unread_modules(old, compiled) == ["pkg.fast", "pkg.stubbed", "pkg.sub"]
+    # Still imported, or star-imported from the compiled module: hidden, not removed.
+    for kept in (f"from {module} import gone, speedy\n", f"from {module} import *\n"):
+        new = {"pkg/__init__.py": kept}
+        assert unread(tmp_path / kept[-9:-1], old, new, compiled=[module]) == (set(), [module])
+
+
+def test_a_compiled_package_init_hides_its_own_names_not_its_submodules(tmp_path):
+    """``pkg/__init__.cpython-312-x86_64-linux-gnu.so`` is ``pkg.__init__``: the names
+    ``pkg`` defines are hidden, the readable ``pkg/sub.py`` is still compared."""
+    old = {
+        "pkg/__init__.py": "def foo() -> None: ...\n",
+        "pkg/sub.py": "def bar() -> None: ...\n\ndef baz() -> None: ...\n",
+        "pkg/old.py": "",
+    }
+    new = {"pkg/sub.py": "def bar() -> None: ...\n"}  # and __init__.cpython-312-*.so
+    assert unread(tmp_path, old, new, compiled=["pkg.__init__"]) == (
+        {(REMOVED, "pkg.sub.baz", None), (REMOVED, "pkg.old", None)},
+        ["pkg.__init__"],
+    )
+
+
+def test_a_module_compiled_in_both_releases_is_not_unread(tmp_path):
+    # No source or stub at the cutoff either: nothing was compared then, nothing is lost now.
+    old = new = {"pkg/__init__.py": "from pkg._core import speedy\n"}
+    assert unread(tmp_path, old, new, compiled=["pkg._core"]) == (set(), [])
 
 
 # ------------------------------------------------------------------- stubs

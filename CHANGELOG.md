@@ -6,14 +6,18 @@
 - Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
   (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
   reseller listings.
-- A public module that the pinned release ships compiled, with no `.py` source and no `.pyi`
-  stub (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost
-  its stub), is no longer reported as removed, nor is what it defines (#52). Since only
-  sources are extracted, the diff could not tell it from a removal. The source tree now
-  records the compiled modules (extension modules in wheels, Cython `.pyx` files without a
-  `.py` in sdists), and the scan warns that changes to such a module are not reported.
-  Sources and diffs cached by earlier versions are extracted and recomputed once (source
-  schema 3, diff schema 20).
+- A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
+  (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
+  stub), is no longer reported as removed, nor is what it defines or a name a readable
+  module still imports from it (#52). Since only sources are extracted, the diff could not
+  tell it from a removal. A name a readable module stopped importing from it is still
+  removed, and a package whose `__init__` is compiled hides only its own names, not its
+  readable submodules. The source tree now records the compiled modules (extension modules
+  in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
+  and the scan, the report and the MCP tools warn that changes to such a module, private
+  ones included, and to the names taken from it are not reported. After upgrading, cached
+  sources are downloaded and extracted again once (source schema 3) and cached diffs are
+  recomputed (diff schema 20).
 
 ## 0.5.0 - 2026-09-28
 

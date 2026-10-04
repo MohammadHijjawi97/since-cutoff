@@ -54,6 +54,7 @@ from since_cutoff.engine import (
     ScanResult,
     Settings,
     UsedAPI,
+    unread_warning,
 )
 from since_cutoff.errors import ModelLookupError, PackageIndexError, SinceCutoffError
 from since_cutoff.models import (
@@ -330,6 +331,8 @@ class Tools:
             raise PackageIndexError(scan.reason or f"could not diff {name}")
         if scan.status == NEW:  # the release at the cutoff was an empty placeholder
             return "\n".join([*head, "", _placeholder_note(old, new)]) + "\n"
+        if scan.unread:  # compiled modules: no changes found there is not the same as none
+            head.append(f"- Warning: {unread_warning(scan)}")
         changes = scan.distinct
         head.append(f"- {_counts(changes)}")
         if not changes:
@@ -601,6 +604,7 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
     if target.note:
         out.append(f"- {target.note}")
     out += [f"- Warning: {w}" for w in project.warnings]  # (`only` gets its own line below)
+    out += [f"- Warning: {unread_warning(p)}" for p in scan.packages if p.unread]
     out.append(
         f"- API changed after the cutoff: {len(changed)}; first released after it: {len(new)}; "
         f"unchanged or older: {len(quiet)}; not checked: {len(skipped)}"
