@@ -29,6 +29,17 @@ PROVIDER_ALIASES = {
     "gemini": "google",
     "xai": "xai",
     "mistral": "mistral",
+    "alibaba": "alibaba",
+    "qwen": "alibaba",
+    "dashscope": "alibaba",
+    "moonshotai": "moonshotai",
+    "moonshot": "moonshotai",
+    "kimi": "moonshotai",
+    "zai": "zai",
+    "zhipu": "zai",
+    "glm": "zai",
+    "llama": "llama",
+    "meta": "llama",
 }
 # The model makers themselves: preferred over resellers that list the same model id.
 FIRST_PARTY = frozenset(PROVIDER_ALIASES.values())

@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 - When PyPI cannot be reached (no network, a timeout, 429 or 5xx after the retries), a
   package's release list cached more than 12 hours ago is used instead of failing, and the
   scan warns from which day each such copy is: releases published after it are unknown

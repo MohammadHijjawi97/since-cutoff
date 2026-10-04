@@ -106,6 +106,10 @@ _MAKERS = (
     (re.compile(r"deepseek-"), "deepseek"),
     (re.compile(r"grok-"), "xai"),
     (re.compile(r"(?:mistral|codestral|devstral|magistral|ministral)-"), "mistral"),
+    (re.compile(r"(?:qwen[\d.]*|qwq|qvq)-"), "alibaba"),
+    (re.compile(r"kimi-"), "moonshotai"),
+    (re.compile(r"glm-"), "zai"),
+    (re.compile(r"llama-"), "llama"),
 )
 # Aider's documented model aliases (``aider --model 4o``) as the models they stand for. Aider's
 # sonnet, opus and haiku are left to hosted_spec, which reads them as the newest of the family.
@@ -208,7 +212,11 @@ def hosted_spec(provider: str | None, model: str) -> str:
     name = (provider or "").strip().lower()
     if name in _CALLABLE:
         return f"{_CALLABLE[name]}:{model}"
-    return _maker_spec(model) or (f"{name}:{model}" if name else model)
+
+    maker_spec = _maker_spec(model)
+    if maker_spec is not None:
+        return maker_spec
+    return f"{name}:{model}" if name else model
 
 
 def claude_settings_model(path: Path) -> str | None:
