@@ -10,7 +10,8 @@ account, no server of its own and no telemetry, and it collects no personal data
   your code uses. This stays on your machine.
 - The notes block in `AGENTS.md` or `CLAUDE.md`, for `sync`, `status` and `unapply`.
 - Without `--model`, the model fields of your coding agent's settings (Claude Code, Codex,
-  OpenCode, Aider) and the `SINCE_CUTOFF_MODEL`, `ANTHROPIC_MODEL` and `AIDER_MODEL` variables,
+  Gemini CLI, OpenCode, Aider) and the `SINCE_CUTOFF_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`
+  and `AIDER_MODEL` variables,
   to know which model to use. Only the model fields are read.
 
 ## What it sends, and where

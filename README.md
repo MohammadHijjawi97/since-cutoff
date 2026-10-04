@@ -138,8 +138,8 @@ Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) a
 `since-cutoff`. Run it from your project root: it reads `uv.lock`, `poetry.lock`, `pdm.lock`,
 `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` or a `.venv`
 (not `setup.py` or `setup.cfg`). Without `--model` it uses the model your coding agent is set
-up with, from the Claude Code, Codex, OpenCode or Aider settings; for any other model, pass
-`--model` (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
+up with, from the Claude Code, Codex, Gemini CLI, OpenCode or Aider settings; for any other
+model, pass `--model` (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
 `scan`, `sync` and `status` call no model and need no API key; `run` sends prompts to the model
 provider and uses your API credits or Claude Code usage.
 
@@ -268,8 +268,9 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 This installs the same skill through the open [skills](https://github.com/vercel-labs/skills)
 CLI for Codex, Cursor, Gemini CLI, GitHub Copilot, OpenCode and other agents that read
-`SKILL.md`. since-cutoff reads the model from the Codex, OpenCode and Aider settings too; for
-other agents, tell it which model to use, for example `since-cutoff scan --model openai:gpt-5.4`.
+`SKILL.md`. since-cutoff reads the model from the Codex, Gemini CLI, OpenCode and Aider settings
+too; for other agents, tell it which model to use, for example
+`since-cutoff scan --model openai:gpt-5.4`.
 Add the MCP server as shown below.
 
 Prompts that work well:
@@ -304,15 +305,16 @@ with, and the model line says where it came from ("model from .claude/settings.j
 2. Inside Claude Code (which sets `CLAUDECODE=1` for the commands it runs), only Claude Code's
    settings count: `ANTHROPIC_MODEL`, then the project's `.claude/settings.local.json` and
    `.claude/settings.json`, then `~/.claude/settings.json`.
-3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL` or `AIDER_MODEL`, then the
-   project settings, nearest folder first, from the scanned folder up to the repository root
-   (never the home folder), then the user settings. In one folder the agents count in this
-   order:
+3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL`, `GEMINI_MODEL` or
+   `AIDER_MODEL`, then the project settings, nearest folder first, from the scanned folder up to
+   the repository root (never the home folder), then the user settings. In one folder the agents
+   count in this order:
 
 | agent | project settings | user settings |
 |---|---|---|
 | Claude Code | `.claude/settings.local.json`, `.claude/settings.json` | `~/.claude/settings.json` |
 | Codex | `.codex/config.toml`, with its selected profile | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
+| Gemini CLI | `.gemini/settings.json` | `~/.gemini/settings.json` |
 | OpenCode | `opencode.json`, `opencode.jsonc` | `~/.config/opencode/` |
 | Aider | `.aider.conf.yml`, with Aider's aliases (`4o`, `flash`, `r1`, ...) | `~/.aider.conf.yml` |
 
@@ -436,13 +438,18 @@ How the measurement works and what these numbers do and do not show, in more det
 ## Use it from any agent (MCP)
 
 `since-cutoff mcp` is an MCP server that lets a coding agent ask "what changed in this library
-since my training cutoff?" before it writes code. It has three read-only tools:
+since my training cutoff?" before it writes code. It has three read-only tools and two prompts:
 
 | tool | answers |
 |---|---|
 | `api_changes(package, model, symbol=...)` | what changed in one library between the release at the model's cutoff and the latest (or a given) version, hard breaks first |
 | `project_changes(project_dir, model)` | the same for every dependency of a project at its pinned version, starting with the changed APIs your code uses: for each, the files that use it (at most 3), its note, the runtime caveat and names that look similar, not confirmed as replacements |
 | `model_cutoff(model)` | a model's training cutoff, from [models.dev](https://models.dev) |
+
+| prompt | asks the agent to |
+|---|---|
+| `check_project(project_dir=".")` | call `project_changes` with its own model id, start with old-form uses, and offer `since-cutoff sync` for AGENTS.md notes |
+| `before_upgrade(package, to_version="")` | read the pinned package version, call `api_changes` for the intended upgrade, and list what project code needs to change |
 
 The agent passes its own model id, so the answer covers what changed after that model's training
 cutoff. The tools read PyPI and package sources statically: no model calls, no API key, no
