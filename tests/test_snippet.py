@@ -3,10 +3,11 @@ from since_cutoff.checker import _Snippet
 
 def test_annotated_assignment():
     snippet = _Snippet(
-        "import toylib\nclient: toylib.Client = None",
+        "import toylib\nclient: toylib.Client = None\nc: object = toylib.Client()",
         ("toylib",),
     )
     assert "client" in snippet.bound
+    assert "c" in snippet.bound
 
 
 def test_walrus_operator():
@@ -49,9 +50,11 @@ def test_negative_propagation_branches():
         "    pass\n"
         "with toylib.Client():\n"
         "    pass\n"
-        "def helper():\n"
+        "def helper(x: int):\n"
         "    return 1\n"
         "class Base:\n"
+        "    pass\n"
+        "class Mine(Base):\n"
         "    pass",
         ("toylib",),
     )
@@ -60,23 +63,27 @@ def test_negative_propagation_branches():
     assert "f" not in snippet.bound
     assert "c" in snippet.bound
     assert "helper" not in snippet.bound
+    assert "x" not in snippet.bound
     assert "Base" not in snippet.bound
+    assert "Mine" not in snippet.bound
 
 
 def test_involves_target_declared_type():
     snippet = _Snippet(
-        "import toylib\nx: toylib.Opts = {}",
+        "import toylib\nx: toylib.Opts = {}\nn: int = 0",
         ("toylib",),
     )
     assert snippet.involves_target(1, 17)
+    assert not snippet.involves_target(2, 9)
 
 
 def test_involves_target_return_annotation():
     snippet = _Snippet(
-        "import toylib\ndef get_opts() -> toylib.Opts:\n    return {}",
+        "import toylib\ndef get_opts() -> toylib.Opts:\n    return {}\nn = 1",
         ("toylib",),
     )
     assert snippet.involves_target(2, 4)
+    assert not snippet.involves_target(3, 4)
 
 
 def test_tuple_assignment():
@@ -144,10 +151,18 @@ def test_function_argument_annotation():
 
 def test_function_return_annotation():
     snippet = _Snippet(
-        "import toylib\ndef get_client() -> toylib.Client:\n    return toylib.Client()",
+        "import toylib\ndef get_client() -> toylib.Client:\n    ...",
         ("toylib",),
     )
     assert "get_client" in snippet.bound
+
+
+def test_function_return_value():
+    snippet = _Snippet(
+        "import toylib\ndef make():\n    return toylib.Client()",
+        ("toylib",),
+    )
+    assert "make" in snippet.bound
 
 
 def test_class_inheritance():
