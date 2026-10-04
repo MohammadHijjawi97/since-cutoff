@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 - PEP 702's `@deprecated` imported through a library's compatibility module (`from
   pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
   Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the
