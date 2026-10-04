@@ -9,6 +9,8 @@
 - Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
   (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
   reseller listings.
+- The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
+  the existing read-only tools; listing them needs no network or API key.
 - The API diff is the same on every machine: griffe read a package's sibling modules in the
   order the file system lists them, so an object that several of them import from a private
   module took its public path from that order. mcp 1.28.1 -> 2.2.0's switch to `httpx2` had 20
