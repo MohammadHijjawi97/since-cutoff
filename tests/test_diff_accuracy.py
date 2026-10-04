@@ -423,9 +423,9 @@ def test_a_name_a_readable_module_no_longer_imports_from_a_compiled_one_is_remov
         [module],  # private too: pkg.speedy comes from it
     )
     # Still imported, or star-imported from the compiled module: hidden, not removed.
-    for kept in (f"from {module} import gone, speedy\n", f"from {module} import *\n"):
+    for i, kept in enumerate((f"from {module} import gone, speedy\n", f"from {module} import *\n")):
         new = {"pkg/__init__.py": kept}
-        assert unread(tmp_path / kept[-9:-1], old, new, compiled=[module]) == (set(), [module])
+        assert unread(tmp_path / f"kept{i}", old, new, compiled=[module]) == (set(), [module])
 
 
 def test_a_compiled_package_init_hides_its_own_names_not_its_submodules(tmp_path):
