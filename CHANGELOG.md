@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 - `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
   end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
   set in many containers). argparse wrote them itself, past the check for a closed pipe:

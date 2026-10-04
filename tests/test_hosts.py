@@ -299,7 +299,39 @@ def test_aider_aliases_are_the_models_they_stand_for(
     assert detect(root, home) == (spec, ".aider.conf.yml")
 
 
-@pytest.mark.parametrize("model", ["my-local-model", "openai", "deepseek/"])
+@pytest.mark.parametrize(
+    ("model", "spec"),
+    [
+        ("dashscope/qwen3-coder-plus", "alibaba:qwen3-coder-plus"),
+        ("moonshot/kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
+        ("glm-4.6", "zai:glm-4.6"),
+        ("llama-3.3-70b-instruct", "llama:llama-3.3-70b-instruct"),
+    ],
+)
+def test_aider_recognises_additional_model_makers(
+    root: Path, home: Path, model: str, spec: str
+) -> None:
+    write(root / ".aider.conf.yml", f"model: {model}\n")
+    assert detect(root, home) == (spec, ".aider.conf.yml")
+
+
+@pytest.mark.parametrize(
+    ("model", "spec"),
+    [
+        ("qwen3-coder-plus", "alibaba:qwen3-coder-plus"),
+        ("kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
+        ("glm-4.6", "zai:glm-4.6"),
+        ("llama-3.3-70b-instruct", "llama:llama-3.3-70b-instruct"),
+    ],
+)
+def test_opencode_bare_ids_resolve_to_their_makers(
+    root: Path, home: Path, model: str, spec: str
+) -> None:
+    write(root / "opencode.json", json.dumps({"model": model}))
+    assert detect(root, home) == (spec, "opencode.json")
+
+
+@pytest.mark.parametrize("model", ["my-local-model", "openai", "qwen", "deepseek/"])
 def test_a_model_name_since_cutoff_cannot_place_is_reported_not_guessed(
     root: Path, home: Path, model: str
 ) -> None:
@@ -312,12 +344,12 @@ def test_a_model_name_since_cutoff_cannot_place_is_reported_not_guessed(
 
 
 def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, home: Path) -> None:
-    write(root / "opencode.json", '{"model": "lmstudio/qwen3-coder"}')
-    assert detect(root, home) == ("lmstudio:qwen3-coder", "opencode.json")
+    write(root / "opencode.json", '{"model": "lmstudio/my-local-model"}')
+    assert detect(root, home) == ("lmstudio:my-local-model", "opencode.json")
     with pytest.raises(ProviderError) as info:
-        check_spec("lmstudio:qwen3-coder")
-    assert "'openai-compatible:qwen3-coder' with --base-url" in str(info.value)
-    assert "'<provider>:lmstudio:qwen3-coder', or," in str(info.value)
+        check_spec("lmstudio:my-local-model")
+    assert "'openai-compatible:my-local-model' with --base-url" in str(info.value)
+    assert "'<provider>:lmstudio:my-local-model', or," in str(info.value)
 
 
 # ------------------------------------------------------ provider/model names
@@ -332,6 +364,7 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("google", "gemini-2.5-pro", "google:gemini-2.5-pro"),
         ("vertex_ai", "gemini-2.5-pro", "google:gemini-2.5-pro"),
         ("github-copilot", "gpt-5.4", "openai:gpt-5.4"),
+        ("github-copilot", "kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
         ("github-copilot", "o3", "openai:o3"),
         (
             "amazon-bedrock",
@@ -341,7 +374,7 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("google-vertex-anthropic", "claude-opus-4-1@20250805", "anthropic:claude-opus-4-1"),
         ("opencode", "grok-code", "xai:grok-code"),
         ("mistral", "devstral-medium-2507", "mistral:devstral-medium-2507"),
-        ("groq", "llama-3.3-70b-versatile", "groq:llama-3.3-70b-versatile"),
+        ("groq", "llama-3.3-70b-versatile", "llama:llama-3.3-70b-versatile"),
         (None, "sonnet", "anthropic:sonnet"),
         (None, "my-local-model", "my-local-model"),
     ],
