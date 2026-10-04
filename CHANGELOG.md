@@ -3,6 +3,12 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
+  `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
+  are supported, and unknown aliases are reported instead of guessed.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 - The API diff is the same on every machine: griffe read a package's sibling modules in the
   order the file system lists them, so an object that several of them import from a private
   module took its public path from that order. mcp 1.28.1 -> 2.2.0's switch to `httpx2` had 20
