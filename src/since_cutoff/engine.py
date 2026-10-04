@@ -375,6 +375,10 @@ class ScanResult:
     target: ModelTarget
     packages: list[PackageScan]
     warnings: list[str] = field(default_factory=list)
+    # The packages whose release list is an older cached copy because PyPI could not be
+    # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
+    # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
+    stale: dict[str, date] = field(default_factory=dict)
 
     @property
     def changed(self) -> list[PackageScan]:
@@ -1079,7 +1083,7 @@ class Engine:
         scans.sort(
             key=lambda s: (s.status != CHANGED, not s.imported, *(-n for n in s.counts), s.name)
         )
-        return ScanResult(project, target, scans, warnings)
+        return ScanResult(project, target, scans, warnings, stale)
 
     def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
         scan = PackageScan(dep.key, dep.version, dep.source, dep.direct)
