@@ -1,12 +1,12 @@
 """Golden API diffs of real release pairs: tests/fixtures/diffs, recorded from PyPI with
-scripts/record_diff_fixtures.py (the network test in test_dependency_switch.py checks that they
-still are what the releases give).
+scripts/record_diff_fixtures.py.
 
 Each pair here has breaking changes its own changelog documents, and the tests assert those,
-plus what the source shows where the changelog says less, and the notes an agent gets. A change
-in since-cutoff or in griffe that shifts what a real pair reports fails here, not in a user's
-AGENTS.md. (mcp's and openai's fixtures are read by test_ranking.py and
-test_dependency_switch.py.)
+plus what the source shows where the changelog says less, and the notes an agent gets. They
+read the recorded diffs, so a change to the notes fails here. A change in since-cutoff's diff
+or in griffe that shifts what a real pair reports fails the network test that diffs every pair
+again from PyPI (test_dependency_switch.py, or ``record_diff_fixtures.py --check``). (mcp's
+and openai's fixtures are read by test_ranking.py and test_dependency_switch.py.)
 """
 
 from __future__ import annotations
@@ -66,6 +66,12 @@ def test_httpx_0_28_removed_proxies_and_app() -> None:
     assert diff_note([changes[(PARAM_REMOVED, client, "proxies")]]).line == (
         "`Client()` no longer accepts `proxies`; do not pass it. Use `proxy` or `mounts` "
         "instead of `proxies`. [diff + library]"
+    )
+    # For `app` it gives advice ("Use the explicit style ..."), quoted, not a stated name.
+    assert diff_note([changes[(PARAM_REMOVED, client, "app")]]).line == (
+        "`Client()` no longer accepts `app`; do not pass it. On `app`, httpx 0.27.2 said: "
+        "\"Use the explicit style 'transport=WSGITransport(app=...)' instead.\" since-cutoff "
+        "found no replacement in httpx's deprecation text. [diff]"
     )
 
 

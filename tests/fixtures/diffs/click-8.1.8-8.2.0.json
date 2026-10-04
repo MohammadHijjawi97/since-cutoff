@@ -1,5 +1,5 @@
 {
- "schema": 19,
+ "schema": 20,
  "package": "click",
  "from_version": "8.1.8",
  "to_version": "8.2.0",

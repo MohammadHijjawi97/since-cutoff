@@ -867,6 +867,12 @@ def test_a_cached_diff_adds_no_progress_line_to_a_log(app, cache, fake_pypi) -> 
         labels.append(reporter.labels)
     computed, cached = labels
     assert "toylib" in computed and "toylib" not in cached and cached.count(None) == len(cached)
+    out = io.StringIO()
+    rich = cli.RichReporter(Console(file=out, width=160))
+    rich.stage("Diffing the API of 1 package released after its cutoff version", 1)
+    rich.advance(label=None)
+    rich.done()
+    assert "diffed" not in out.getvalue()
 
 
 def test_a_diff_another_griffe_made_is_made_again(app, cache, fake_pypi, monkeypatch) -> None:
@@ -889,9 +895,3 @@ def test_a_diff_another_griffe_made_is_made_again(app, cache, fake_pypi, monkeyp
     assert diffed("2.3.0")
     assert not diffed("2.3.0")
     assert diffed("2.4.0")
-    out = io.StringIO()
-    rich = cli.RichReporter(Console(file=out, width=160))
-    rich.stage("Diffing the API of 1 package released after its cutoff version", 1)
-    rich.advance(label=None)
-    rich.done()
-    assert "diffed" not in out.getvalue()

@@ -720,7 +720,7 @@ def _library_evidence(
     what = change.parameter or api_name(change)
     stated = _stated_replacement(text, names)
     if stated:
-        shown = " or ".join(f"`{_shown_name(s)}`" for s in stated)
+        shown = _listed([_shown_name(s) for s in stated], "or")
         sentence = (
             f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
         )

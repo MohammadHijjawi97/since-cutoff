@@ -79,7 +79,16 @@ log = logging.getLogger(__name__)
 # ``FastMCP.from_openapi``); and "still names" leaves out the names a module only exports
 # (``__all__``, ``__getattr__``, ``__dir__``) and a package name in a list of requirements or a
 # documentation example (``examples=``, ``description=``).
-DIFF_SCHEMA = 19
+# 20: a package's sibling modules load in the order of their names, not the file system's, so
+# an object that several of them import from a private module has one public path on every
+# machine (mcp 1.28's ``McpHttpClientFactory``: its switch's sites match across releases, 23
+# places not 20); ``warn(message)`` reads the message last assigned to ``message`` before the
+# call (``hint``, ``still_handled_text``: httpx 0.27's ``Client(proxies=...)``); a replacement
+# stated in quotes, or with alternatives ("Use 'proxy' or 'mounts' instead."), is a stated name
+# (``library_names``, and whether find_renamed runs); and a parameter in the place of a removed
+# one is no rename (``renamed``, ``suggestions``) when a version note in the new docstring says
+# the one was added or the other removed (click 8.2's ``CliRunner``).
+DIFF_SCHEMA = 20
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
@@ -2081,31 +2090,34 @@ def _rename_hint(old: Any, new: Any, fn: Any) -> list[str]:
 
 
 def _documented_apart(fn: Any, removed: str, added: str) -> bool:
-    """Does the new version's docstring (the callable's, and its class's for ``__init__``)
-    say that ``removed`` was removed, or that ``added`` was added, without naming the other?
-    Then the parameter in the same place is a new one, not a rename: click 8.2's
+    """Does a version note in the new version's docstring (the callable's, and its class's for
+    ``__init__``) say that ``removed`` was removed, or that ``added`` was added, without naming
+    the other? Then the parameter in the same place is a new one, not a rename: click 8.2's
     ``CliRunner`` took ``catch_exceptions: bool = True`` where 8.1 took ``mix_stderr: bool =
-    True``, and says "Added the ``catch_exceptions`` parameter." and "``mix_stderr``
-    parameter has been removed."."""
+    True``, and notes ".. versionchanged:: 8.2 Added the ``catch_exceptions`` parameter." and
+    ".. versionchanged:: 8.2 ``mix_stderr`` parameter has been removed.". Only version notes
+    count: "New ``start`` values ..." describing a parameter says nothing about its name."""
     owners = [fn, getattr(fn, "parent", None)] if getattr(fn, "name", "") == "__init__" else [fn]
     for owner in owners:
         lines = _doc_lines(owner)
-        for i in range(len(lines)):
+        for i, line in enumerate(lines):
+            note = _VERSION_NOTE.match(line.strip())
+            if note is None:
+                continue
             text = _sentence(lines, i) or ""
             if _mentions(text, removed) == _mentions(text, added):
                 continue  # neither, or a replacement ("removed in favour of ``new``")
             if _mentions(text, removed) and re.search(r"\bremoved\b", text, re.IGNORECASE):
                 return True
-            if _mentions(text, added) and _ADDED_NOTE.match(text):
+            said = text[len(note.group()) :].lstrip()
+            new = note.group(1).lower() == "added" or re.match(r"(?:added|new)\b", said, re.I)
+            if _mentions(text, added) and new:
                 return True
     return False
 
 
-# A version note that something is new: ".. versionadded:: 2.0", "Added the ``x`` parameter."
-# (after ".. versionchanged:: 2.0" too), "New in 2.0".
-_ADDED_NOTE = re.compile(
-    r"\.\.\s*versionadded::|(?:\.\.\s*versionchanged::\s*\S+\s*)?(?:added|new)\b", re.I
-)
+# A Sphinx version note: ".. versionadded:: 2.0", ".. versionchanged:: 2.0".
+_VERSION_NOTE = re.compile(r"\.\.\s*version(added|changed)::\s*\S*", re.IGNORECASE)
 
 
 def _required(param: Any) -> bool:
@@ -3051,9 +3063,6 @@ def _file_of(obj: Any) -> str | None:
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 _ROLE = re.compile(r":(?:\w+:)+(?=`)")  # Sphinx roles: :func:`x`, :py:meth:`x`
 _NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
-# A name alone in quotes is written as code too, as warnings often write it (httpx 0.27: "Use
-# 'proxy' or 'mounts' instead."; click 8.2: "Use 'Command' instead."); not an apostrophe.
-_QUOTED = re.compile(r"(?<![\w'\"])(['\"])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\1(?![\w'\"])")
 # Words of deprecation notes that are never the replacement's name.
 _PROSE = {
     "use",
@@ -3108,13 +3117,12 @@ _LITERALS = {"True", "False", "None"}
 
 def replacement_candidates(text: str, *, words: bool = True) -> list[str]:
     """Names a deprecation note may give as the replacement, the code-like ones first: in
-    backticks or quotes, called, dotted, snake_case or CamelCase. With ``words``, plain words
-    of the prose come last (the signatures baseline tries them; the notes do not)."""
+    backticks, called, dotted, snake_case or CamelCase. With ``words``, plain words of the
+    prose come last (the signatures baseline tries them; the notes do not)."""
     text = _ROLE.sub(" ", text)
     code: list[str] = []
     for span in _CODE_SPAN.findall(text):
         code += _NAME.findall(span.lstrip("~"))  # Sphinx's :func:`~pkg.name`
-    code += [m.group(2) for m in _QUOTED.finditer(text)]
     found: list[str] = []
     prose = _CODE_SPAN.sub(" ", text)
     for m in _NAME.finditer(prose):
@@ -3167,7 +3175,7 @@ _WRITTEN = r"[`'\"]?{}(?:\(\))?(?:=[^\s`'\",]*)?[`'\"]?"
 STATED_REPLACEMENT = (
     r"\buse\s+"
     + _WRITTEN.format(r"(?P<n>[\w.]+)")
-    + r"(?P<alt>(?:\s*(?:,|\bor\b)\s*"
+    + r"(?P<alt>(?:\s*(?:,(?:\s*or\b)?|\bor\b)\s*"
     + _WRITTEN.format(r"[\w.]+")
     + r")*)\s+(?:instead|in\s+its\s+place)\b",
     r"\b(?:replaced|superseded)\s+(?:by|with)\s+[`'\"]?(?P<n>[\w.]+)",
@@ -3179,9 +3187,9 @@ STATED_REPLACEMENT = (
 
 def stated_alternatives(match: re.Match[str]) -> list[str]:
     """The names a STATED_REPLACEMENT match gives after its first: ``mounts`` in "Use 'proxy'
-    or 'mounts' instead", in the text's order."""
+    or 'mounts' instead", ``b`` and ``c`` in "Use a, b, or c instead", in the text's order."""
     alt = re.sub(r"=[^\s`'\",]*", "", match.groupdict().get("alt") or "")
-    return [n.strip(".") for n in re.findall(r"[A-Za-z_][\w.]*", alt) if n != "or"]
+    return [n.strip(".") for n in re.findall(r"[A-Za-z_][\w.]*", alt) if n.lower() != "or"]
 
 
 def stated_names(text: str) -> list[str]:
