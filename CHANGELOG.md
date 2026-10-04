@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+- Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
+  `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
+  are supported, and unknown aliases are reported instead of guessed.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 - The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
   the existing read-only tools; listing them needs no network or API key.
+
 ## 0.5.0 - 2026-09-28
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the

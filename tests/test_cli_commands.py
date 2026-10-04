@@ -124,6 +124,16 @@ MODELS = {
             "claude-no-cutoff": {"release_date": "2025-01-01"},
         }
     },
+    "llama": {
+        "models": {
+            "llama-3.3-70b-versatile": {"knowledge": "2024-12", "release_date": "2024-12-06"}
+        }
+    },
+    "groq": {
+        "models": {
+            "llama-3.3-70b-versatile": {"knowledge": "2024-12", "release_date": "2024-12-06"}
+        }
+    },
 }
 
 
@@ -141,12 +151,17 @@ def test_models_prints_one_line_per_model_for_scripts(models_cache, capsys) -> N
         "anthropic\tclaude-old\t2024-04\t2024-06-20",
         "anthropic\tclaude-new\t2025-07-31\t2025-09-29",
         "openai\tgpt-x\t2024-10\t2025-01-01",
+        "llama\tllama-3.3-70b-versatile\t2024-12\t2024-12-06",
+        "groq\tllama-3.3-70b-versatile\t2024-12\t2024-12-06",
         "zeta\tz-1\t2024-01\t2024-05-01",
     ]
     assert cli.main(["models", "CLAUDE-N", "--offline"]) == 0
     assert capsys.readouterr().out == "anthropic\tclaude-new\t2025-07-31\t2025-09-29\n"
     assert cli.main(["models", "llama", "--offline"]) == 0
-    assert capsys.readouterr().out == ""
+    assert capsys.readouterr().out.splitlines() == [
+        "llama\tllama-3.3-70b-versatile\t2024-12\t2024-12-06",
+        "groq\tllama-3.3-70b-versatile\t2024-12\t2024-12-06",
+    ]
 
 
 def test_models_prints_a_table_in_a_terminal(models_cache, monkeypatch) -> None:

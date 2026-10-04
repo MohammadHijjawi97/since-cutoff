@@ -324,7 +324,8 @@ def _common(p: argparse.ArgumentParser) -> None:
         "--model",
         help="model to test, as provider:model (default: the model your coding agent is set up "
         "with: SINCE_CUTOFF_MODEL; inside Claude Code, Claude Code's model; elsewhere the "
-        "Claude Code, Codex, OpenCode and Aider settings, the project's before the user's; else "
+        "Claude Code, Codex, Gemini CLI, OpenCode and Aider settings, the project's before the "
+        "user's; else "
         "claude-code, Claude Code's default; scan with --cutoff alone uses no model). "
         "Providers: claude-code, anthropic, openai, openrouter, deepseek, ollama, openai-compatible",
     )
@@ -1290,9 +1291,25 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
     registry = ModelRegistry(DiskCache(), offline=args.offline)
     q = args.query.lower()
     models = [m for m in registry.all_models() if q in m.id.lower() and m.knowledge]
-    priority = {"anthropic": 0, "openai": 1, "google": 2, "deepseek": 3, "xai": 4, "mistral": 5}
+    priority = {
+        "anthropic": 0,
+        "openai": 1,
+        "google": 2,
+        "deepseek": 3,
+        "xai": 4,
+        "mistral": 5,
+        "alibaba": 6,
+        "moonshotai": 7,
+        "zai": 8,
+        "llama": 9,
+    }
     models.sort(
-        key=lambda m: (priority.get(m.provider, 9), m.provider, m.release_date or date.min, m.id)
+        key=lambda m: (
+            priority.get(m.provider, len(priority)),
+            m.provider,
+            m.release_date or date.min,
+            m.id,
+        )
     )
     if not out.is_terminal:
         for m in models:

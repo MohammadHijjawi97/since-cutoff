@@ -138,8 +138,8 @@ Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) a
 `since-cutoff`. Run it from your project root: it reads `uv.lock`, `poetry.lock`, `pdm.lock`,
 `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` or a `.venv`
 (not `setup.py` or `setup.cfg`). Without `--model` it uses the model your coding agent is set
-up with, from the Claude Code, Codex, OpenCode or Aider settings; for any other model, pass
-`--model` (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
+up with, from the Claude Code, Codex, Gemini CLI, OpenCode or Aider settings; for any other
+model, pass `--model` (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
 `scan`, `sync` and `status` call no model and need no API key; `run` sends prompts to the model
 provider and uses your API credits or Claude Code usage.
 
@@ -268,8 +268,9 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 This installs the same skill through the open [skills](https://github.com/vercel-labs/skills)
 CLI for Codex, Cursor, Gemini CLI, GitHub Copilot, OpenCode and other agents that read
-`SKILL.md`. since-cutoff reads the model from the Codex, OpenCode and Aider settings too; for
-other agents, tell it which model to use, for example `since-cutoff scan --model openai:gpt-5.4`.
+`SKILL.md`. since-cutoff reads the model from the Codex, Gemini CLI, OpenCode and Aider settings
+too; for other agents, tell it which model to use, for example
+`since-cutoff scan --model openai:gpt-5.4`.
 Add the MCP server as shown below.
 
 Prompts that work well:
@@ -304,15 +305,16 @@ with, and the model line says where it came from ("model from .claude/settings.j
 2. Inside Claude Code (which sets `CLAUDECODE=1` for the commands it runs), only Claude Code's
    settings count: `ANTHROPIC_MODEL`, then the project's `.claude/settings.local.json` and
    `.claude/settings.json`, then `~/.claude/settings.json`.
-3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL` or `AIDER_MODEL`, then the
-   project settings, nearest folder first, from the scanned folder up to the repository root
-   (never the home folder), then the user settings. In one folder the agents count in this
-   order:
+3. Elsewhere the most specific setting wins: first `ANTHROPIC_MODEL`, `GEMINI_MODEL` or
+   `AIDER_MODEL`, then the project settings, nearest folder first, from the scanned folder up to
+   the repository root (never the home folder), then the user settings. In one folder the agents
+   count in this order:
 
 | agent | project settings | user settings |
 |---|---|---|
 | Claude Code | `.claude/settings.local.json`, `.claude/settings.json` | `~/.claude/settings.json` |
 | Codex | `.codex/config.toml`, with its selected profile | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
+| Gemini CLI | `.gemini/settings.json` | `~/.gemini/settings.json` |
 | OpenCode | `opencode.json`, `opencode.jsonc` | `~/.config/opencode/` |
 | Aider | `.aider.conf.yml`, with Aider's aliases (`4o`, `flash`, `r1`, ...) | `~/.aider.conf.yml` |
 
@@ -749,8 +751,9 @@ meaning the same as `checks.example_type_checks`).
   inspection off; only `.py`/`.pyi` files are extracted, with path and size checks). The model's
   answers are only type-checked, locally, with basedpyright.
 - **Fetches** public package metadata and wheels from PyPI, and model cutoffs from models.dev (a
-  snapshot is bundled for offline use). Git, path, workspace and private-index dependencies are
-  never looked up on public PyPI by name. `status` fetches nothing.
+  snapshot is bundled for offline use). Each downloaded wheel or sdist is checked against the
+  sha256 that PyPI lists before extraction. Git, path, workspace and private-index dependencies
+  are never looked up on public PyPI by name. `status` fetches nothing.
 - **Sends** prompts only in `run`, and only to the model provider you choose: package names,
   versions, public signatures and docstrings of the changed APIs, the generated tasks and, for
   notes, the model's own answers. Never your source code. `scan`, `sync`, `status`, the MCP
