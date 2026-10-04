@@ -9,6 +9,8 @@
 - Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
   (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
   reseller listings.
+- The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
+  the existing read-only tools; listing them needs no network or API key.
 
 ## 0.5.0 - 2026-09-28
 
