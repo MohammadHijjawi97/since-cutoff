@@ -87,6 +87,14 @@ def test_lookup_handles_dated_and_dotted_ids(registry):
     assert registry.require("qwen3-coder:30b", "ollama").knowledge == date(2025, 4, 30)
 
 
+def test_lookup_prefers_additional_model_makers_over_resellers(tmp_path):
+    registry = ModelRegistry(DiskCache(tmp_path), offline=True)
+    assert registry.require("kimi-k2.7-code").provider == "moonshotai"
+    assert registry.require("qwen3-coder-plus", "qwen").provider == "alibaba"
+    assert registry.require("glm-4.6", "glm").provider == "zai"
+    assert registry.require("llama-3.3-70b-instruct", "meta").provider == "llama"
+
+
 def test_unknown_model_asks_for_cutoff(registry):
     with pytest.raises(ModelLookupError, match="--cutoff"):
         registry.require("mystery-model")

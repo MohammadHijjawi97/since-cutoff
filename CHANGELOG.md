@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
 - A public module that the pinned release ships compiled, with no `.py` source and no `.pyi`
   stub (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost
   its stub), is no longer reported as removed, nor is what it defines (#52). Since only
