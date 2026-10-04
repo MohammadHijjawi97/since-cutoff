@@ -1203,6 +1203,40 @@ def build_server(
             ),
             structured_output=False,
         )
+
+    @server.prompt(
+        name="check_project",
+        title="Check a project's dependency changes",
+        description="Check a project against the coding agent's own training cutoff.",
+    )
+    def check_project(project_dir: str = ".") -> str:
+        return (
+            f'Call project_changes(project_dir="{project_dir}", model=<your own model id>). '
+            "Start with changed APIs the project uses in the old form, and keep the tool's "
+            "evidence wording: removals, moves and parameter changes come from a static API diff; "
+            "similar names are not confirmed replacements. Then suggest since-cutoff sync "
+            "if the user wants to keep the resulting notes in AGENTS.md."
+        )
+
+    @server.prompt(
+        name="before_upgrade",
+        title="Check changes before a dependency upgrade",
+        description="Check what project code may need to change before upgrading one package.",
+    )
+    def before_upgrade(package: str, to_version: str = "") -> str:
+        target = (
+            f', to_version="{to_version}"'
+            if to_version
+            else " (omit to_version to compare with the latest release)"
+        )
+        return (
+            f"Read the pinned version of {package!r} from the project's lockfile. "
+            f'Call api_changes(package="{package}", from_version=<pinned version>{target}, '
+            "model=<your own model id>). List what the project's code must change, preserving "
+            "the tool's evidence wording: removals, moves and parameter changes come from a "
+            "static API diff; similar names are not confirmed replacements."
+        )
+
     return server
 
 
