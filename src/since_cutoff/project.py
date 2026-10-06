@@ -1,4 +1,4 @@
-﻿"""Discover a Python project's dependencies and the exact versions it uses.
+"""Discover a Python project's dependencies and the exact versions it uses.
 
 Version sources, most authoritative first: a lockfile (uv.lock, poetry.lock, pdm.lock,
 pylock.toml, Pipfile.lock), the project's virtual environment, pinned requirement files, and
@@ -1175,12 +1175,17 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
     keyword_paths: set[tuple[str, str]] = set()
     keyword_modules: set[tuple[str, str, str]] = set()
     positional_modules: set[tuple[str, int, str]] = set()
+    sites: set[tuple[str, str, int, int]] = set()
+
     for node in nodes:
         bases = {p for p in map(resolve, node.bases) if p} if isinstance(node, ast.ClassDef) else ()
         for n in ast.walk(node) if bases else ():
             # ``self.routes`` or ``super().routes`` in a subclass of an imported class.
             if isinstance(n, ast.Attribute) and _on_self(n.value):
                 members.update((base, n.attr) for base in bases)
+                sites.update(
+                    ("member", f"{base}.{n.attr}", n.lineno, n.col_offset) for base in bases
+                )
             elif (
                 isinstance(n, ast.Call)
                 and isinstance(n.func, ast.Attribute)
@@ -1188,6 +1193,12 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
             ):
                 keyword_paths.update(
                     (f"{base}.{n.func.attr}", k.arg) for base in bases for k in n.keywords if k.arg
+                )
+                sites.update(
+                    ("keyword", f"{base}.{n.func.attr}:{k.arg}", n.lineno, n.col_offset)
+                    for base in bases
+                    for k in n.keywords
+                    if k.arg
                 )
                 # ``super().__init__(http_client=...)`` calls the base class itself.
                 method = "" if n.func.attr == "__init__" else f".{n.func.attr}"
@@ -1225,13 +1236,10 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
     calls: set[str] = set()
     keywords: set[tuple[str, str]] = set()
     keyword_chains: set[tuple[str, str]] = set()
-    sites: set[tuple[str, str, int, int]] = set()
 
     for node in nodes:
         if isinstance(node, ast.Attribute):
             attributes.add(node.attr)
-            if isinstance(node.value, ast.Name) and node.value.id in bound:
-                sites.add(("member", node.attr, node.lineno, node.col_offset))
             inner = node.value
             chain = _dotted(node)
             head, _, rest = (chain or "").partition(".")
@@ -1247,13 +1255,19 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
             named = resolve(inner)  # ``Starlette.routes``, or a module's attribute
             kinds = {named} if named else made(inner) or instances.get(_dotted(inner) or "", set())
             members.update((kind, node.attr) for kind in kinds)
-            if kinds:
-                sites.add(("member", node.attr, node.lineno, node.col_offset))
+            sites.update(
+                ("member", f"{kind}.{node.attr}", node.lineno, node.col_offset) for kind in kinds
+            )
             if named:
-                sites.add(("reference", node.attr, node.lineno, node.col_offset))
-        elif isinstance(node, ast.Name) and star and node.id not in bound:
-            for module in star:
-                reach(f"{module}.{node.id}")
+                sites.add(("reference", f"{named}.{node.attr}", node.lineno, node.col_offset))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in bound:
+                sites.add(("reference", bound[node.id], node.lineno, node.col_offset))
+            elif star:
+                for module in star:
+                    path = f"{module}.{node.id}"
+                    reach(path)
+                    sites.add(("reference", path, node.lineno, node.col_offset))
         elif isinstance(node, ast.Call):
             func = node.func
             callee = None
@@ -1265,10 +1279,7 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
                 calls.add(callee)
                 call_paths = callee_paths(func)
                 site_callees = call_paths or {callee}
-                sites.update(
-                    ("call", path, node.lineno, node.col_offset)
-                    for path in site_callees
-                )
+                sites.update(("call", path, node.lineno, node.col_offset) for path in site_callees)
                 passed = [k.arg for k in node.keywords if k.arg]
                 sites.update(
                     ("keyword", f"{path}:{k.arg}", node.lineno, node.col_offset)

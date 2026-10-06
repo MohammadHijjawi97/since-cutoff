@@ -431,9 +431,7 @@ def _in_file(
         if len(names) > len(best[1]):
             best = (c, names)
     if best[1]:
-        return best[0], best[1], PATH_MATCH, next(
-            paths for c, paths in merged if c is best[0]
-        )
+        return best[0], best[1], PATH_MATCH, next(paths for c, paths in merged if c is best[0])
     for c, _ in merged:
         if c.import_paths is not None:
             continue  # the diff recorded its paths: the name alone is not enough
@@ -464,15 +462,16 @@ def _site_matches(
         path, parameter = name.rsplit(":", 1)
         return parameter == names[1] and (
             path in by_path
-            or any(
-                p.rsplit(".", 1)[0] == path
-                for p in by_path
-                if p.endswith(".__init__")
-            )
+            or any(p.rsplit(".", 1)[0] == path for p in by_path if p.endswith(".__init__"))
         )
     if site_kind == "call":
+        return name in by_path or any(
+            p.rsplit(".", 1)[0] == name for p in by_path if p.endswith(".__init__")
+        )
+    if site_kind in ("member", "reference"):
         return name in by_path
     return name == site_name
+
 
 def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
     """Where the project's code uses a change: one :class:`Use` per file that uses it (the

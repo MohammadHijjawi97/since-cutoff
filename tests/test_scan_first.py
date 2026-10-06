@@ -123,13 +123,13 @@ Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (20
 
 toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml pins 2.0)
   Client.send: temperature was removed; stream is now keyword-only                          old form
-    main.py:2        Client().send('hi', temperature=0.2)
-    sub/other.py:2   Client().send('x')
+    main.py:2        Client().send('hi', temperature=0.2) - passes temperature to send
+    sub/other.py:2   Client().send('x') - calls send
     Note: `Client.send()` no longer accepts `temperature`; do not pass it. since-cutoff found no
           replacement in toylib's deprecation text. Pass `stream` to `Client.send()` by keyword.
           [diff]
   fetch: now requires timeout                                                          uses this API
-    main.py:3   fetch('u')
+    main.py:3   fetch('u') - calls fetch
     Note: `toylib.fetch()` now requires `timeout`. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
@@ -189,9 +189,9 @@ def test_verbose_lists_every_file_and_the_default_three(tmp_path, cache, fake_py
     scan = scan_app(root, cache, fake_pypi, date(2025, 7, 31))
     short = text_of(scan_lines(scan))
     shown = [
-        "    main.py:2     Client().send('x')",
-        "    sub/m0.py:2   Client().send('y')",
-        "    sub/m1.py:2   Client().send('y')",
+        "    main.py:2     Client().send('x') - calls send",
+        "    sub/m0.py:2   Client().send('y') - calls send",
+        "    sub/m1.py:2   Client().send('y') - calls send",
     ]
     assert "\n".join(shown) in short
     assert "sub/m2.py" not in short and "    and 2 more (-v lists them)" in short
@@ -623,9 +623,13 @@ def test_the_markdown_summary_leads_with_a_table_and_links(scan: ScanResult, app
     plain = render_scan_markdown(scan)
     assert "| `main.py:2`<br>`sub/other.py:2` | `Client.send`" in plain and "/blob/" not in plain
     root = {**env, "GITHUB_WORKSPACE": str(app), "GITHUB_SERVER_URL": "https://ghe.example/"}
-    assert "(https://ghe.example/o/r/blob/abc123/main.py#L2)" in render_scan_markdown(scan, env=root)
+    assert "(https://ghe.example/o/r/blob/abc123/main.py#L2)" in render_scan_markdown(
+        scan, env=root
+    )
     outside = {**env, "GITHUB_WORKSPACE": str(app / "elsewhere")}
-    assert "(https://github.com/o/r/blob/abc123/main.py#L2)" in render_scan_markdown(scan, env=outside)
+    assert "(https://github.com/o/r/blob/abc123/main.py#L2)" in render_scan_markdown(
+        scan, env=outside
+    )
 
 
 def test_a_link_quotes_the_path(scan: ScanResult, monkeypatch) -> None:
@@ -633,7 +637,9 @@ def test_a_link_quotes_the_path(scan: ScanResult, monkeypatch) -> None:
     spaced = [u._replace(file="my app/main.py") for u in send.uses]
     monkeypatch.setattr(ScanResult, "used_apis", lambda self: [replace(send, uses=spaced)])
     env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "s"}
-    assert "(https://github.com/o/r/blob/s/my%20app/main.py#L2)" in render_scan_markdown(scan, env=env)
+    assert "(https://github.com/o/r/blob/s/my%20app/main.py#L2)" in render_scan_markdown(
+        scan, env=env
+    )
 
 
 def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
@@ -650,11 +656,12 @@ def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
     )
     assert (
         "  - Used in: `main.py:2` (passes `temperature` to `send`), "
-        "`sub/other.py:2` (calls `send`)"
-        in md
+        "`sub/other.py:2` (calls `send`)" in md
     )
     full = md.split("## All changes found")[1]
-    assert "**your code uses `send` and `temperature`** · used in `main.py:2`, `sub/other.py:2" in full
+    assert (
+        "**your code uses `send` and `temperature`** · used in `main.py:2`, `sub/other.py:2" in full
+    )
 
 
 # ------------------------------------------------------------------ CI: exit codes
