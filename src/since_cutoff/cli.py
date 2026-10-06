@@ -85,6 +85,7 @@ from since_cutoff.sync import (
     status_json,
     status_lines,
     sticky_target,
+    sync_json,
     target_status,
     up_to_date_text,
     written_text,
@@ -549,6 +550,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync.add_argument("-y", "--yes", action="store_true", help="write without asking")
     sync.add_argument(
+        "--json", action="store_true", help="print proposals and write results as JSON"
+    )
+    sync.add_argument(
         "--force",
         action="store_true",
         help="replace a block that was edited by hand (otherwise sync exits with code 4)",
@@ -710,6 +714,9 @@ def _main(argv: list[str] | None) -> int:
     if getattr(args, "debug", False):
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
     json_mode = getattr(args, "json", False)
+    if args.command == "sync" and json_mode and not (args.yes or args.check or args.dry_run):
+        err.print("[red]error:[/red] sync --json requires --yes, --check or --dry-run")
+        return 2
     markdown = getattr(args, "markdown", None)
     to_stdout = [
         flag
@@ -740,7 +747,7 @@ def _main(argv: list[str] | None) -> int:
         if args.command == "mcp":
             return _cmd_mcp(args)
         if args.command == "sync":
-            return _cmd_sync(args, out)
+            return _cmd_sync(args, ui)
         if args.command == "status":
             return _cmd_status(args, out)
         return _cmd_run(args, ui, json_mode)
@@ -1083,6 +1090,13 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         for t, basis, scope, suggestions, per_package in plans
     ]
     changed = [p for p in proposals if p.changed]
+    written: set[str] = set()
+
+    def finish(code: int) -> int:
+        if args.json:
+            STDOUT.write(json.dumps(sync_json(proposals, code, written), indent=2) + "\n")
+        return code
+
     for p in changed:
         out.print()
         for line in diff_lines(p):
@@ -1097,19 +1111,19 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
     if edited:
         for p in edited:
             out.print(f"[yellow]![/yellow] {escape(edited_text(p))}")
-        return EXIT_OK if args.dry_run and not args.check else EXIT_EDITED
+        return finish(EXIT_OK if args.dry_run and not args.check else EXIT_EDITED)
     for p in proposals:
         if not p.changed:
             out.print(escape(up_to_date_text(p, scans[(p.model, p.cutoff)])))
     if not changed:
-        return EXIT_OK
+        return finish(EXIT_OK)
     if args.check:
         for p in changed:
             out.print(escape(out_of_date_text(p)))
-        return EXIT_OUT_OF_DATE
+        return finish(EXIT_OUT_OF_DATE)
     if args.dry_run:
         out.print("Nothing written (--dry-run).")
-        return EXIT_OK
+        return finish(EXIT_OK)
     if not args.yes:
         names = " and ".join(p.target.name for p in changed)
         answer = _confirm(f"Write {'this' if len(changed) == 1 else 'these'} to {names}?", out)
@@ -1127,10 +1141,11 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
             remove_block(p.target.path)
         else:
             apply_block(p.target.path, p.block)
+        written.add(p.target.name)
         out.print(f"[green]✓[/green] {escape(written_text(p))}")
     if any(p.target.text for p in changed):
         out.print("[dim]Text outside the since-cutoff markers is unchanged.[/dim]")
-    return EXIT_OK
+    return finish(EXIT_OK)
 
 
 def _sync_scans(
