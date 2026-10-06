@@ -41,6 +41,8 @@ welcome, and first-time contributors are very welcome.
 
 ## Development setup
 
+See the [environment, files and exit-code reference](docs/reference.md) for runtime settings.
+
 ```bash
 git clone https://github.com/MohammadHijjawi97/since-cutoff
 cd since-cutoff

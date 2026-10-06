@@ -623,6 +623,8 @@ need PyPI, so skip them on pre-commit.ci (`ci: {skip: [since-cutoff-scan, since-
 
 ### Other CI
 
+See the [environment, files and exit-code reference](docs/reference.md) when configuring CI.
+
 ```bash
 # Markdown summary for any CI; exit code 3 if your code uses a changed API in the old form
 since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on old-form
@@ -746,6 +748,8 @@ source, and its note with `tags`, `applies_to` and `checks`) and, after `run`, `
 meaning the same as `checks.example_type_checks`).
 
 ## What it runs, sends and stores
+
+The [reference](docs/reference.md) lists environment variables and files read or written.
 
 - **Runs no package code and no model-written code.** Packages are read statically (griffe with
   inspection off; only `.py`/`.pyi` files are extracted, with path and size checks). The model's
