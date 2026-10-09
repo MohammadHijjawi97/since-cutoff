@@ -20,6 +20,12 @@
   (`f(x, verbose=False)` becoming `f(x, **kwargs)`) was reported as removed, a breaking change,
   although calls that pass it still work. griffe 2.3.1 changed how a parameter's kind prints,
   and the check for `**kwargs` read that text instead of the kind's name.
+- PEP 702's `@deprecated` imported through a library's compatibility module (`from
+  pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
+  Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the
+  library's own decorator, which `run` does not probe because type checkers do not report
+  it, and was missed on an `@overload`. Diffs cached by earlier versions are recomputed once
+  (diff schema 20).
 
 ## 0.5.0 - 2026-09-28
 
