@@ -228,6 +228,7 @@ def test_the_slug_is_githubs() -> None:
         "mantener-las-notas-al-día-sync-y-status"
     )
 
+
 @pytest.mark.parametrize(
     "fragment",
     (
