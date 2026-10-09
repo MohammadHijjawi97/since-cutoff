@@ -31,9 +31,8 @@ anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyprojec
   Messages.create: temperature, top_k and top_p were removed                          uses this API
     app/main.py   calls create
     Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
-          arguments. If the API still needs them, pass them through its `extra_body` or
-          `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation
-          text. [diff]
+          arguments. If the API still needs them, pass them through its `extra_body` argument.
+          [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
   pyproject.toml.
@@ -45,8 +44,8 @@ escriba para la 0.60.0 podría añadir `temperature=0.2` al editar la llamada. L
 `since-cutoff sync` escribe en AGENTS.md para evitarlo; su etiqueta, `[diff]`, indica en qué se
 basa: una comparación estática de las API públicas de las dos versiones. Que un parámetro salga
 de la firma no significa que la API haya dejado de aceptar el campo, así que, cuando el método
-fijado tiene un argumento `extra_body` o `extra_query`, la nota lo dice en lugar de pedir al
-asistente que quite el campo.
+fijado tiene un argumento `extra_body`, la nota lo dice en lugar de pedir al asistente que
+quite el campo.
 
 **Pruébalo en tu proyecto.** Sin clave de API y sin llamadas al modelo. En la raíz del proyecto:
 
@@ -174,10 +173,10 @@ termina así:
 
 ```markdown
 **anthropic 1.8.0** (0.60.0 at the cutoff)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` argument. [diff]
 
 **huggingface-hub 2.0.0** (0.34.3 at the cutoff)
-- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
+- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. For `proxies`, see https://github.com/huggingface/huggingface_hub/releases (2.0.0). [diff]
 <!-- since-cutoff:end -->
 ```
 
@@ -735,10 +734,10 @@ dice qué se comprobó, y no se afirma nada más:
 
 | etiqueta | qué se comprobó | qué no |
 |---|---|---|
-| `[diff]` | El cambio aparece en una comparación estática (griffe) de las API públicas de dos versiones: la más reciente publicada en la fecha de corte de entrenamiento del modelo o antes, y la versión que fija tu proyecto. El código fuente se lee, no se importa. Con `[diff]` solo, no se nombra ningún sustituto: la nota dice lo que dice el propio texto de obsolescencia de la biblioteca («there is no replacement for `resume_download`», no hay sustituto) o que since-cutoff no encontró ninguno en él. | El comportamiento, y si una llamada sigue funcionando: la versión fijada puede seguir aceptando un parámetro eliminado con un aviso, como hace huggingface-hub 2.0.0 con `resume_download`. La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Runtime:» cuando el código fuente fijado todavía gestiona uno; el bloque no, porque el consejo es el mismo. Si tu modelo se equivoca con él. |
+| `[diff]` | El cambio aparece en una comparación estática (griffe) de las API públicas de dos versiones: la más reciente publicada en la fecha de corte de entrenamiento del modelo o antes, y la versión que fija tu proyecto. El código fuente se lee, no se importa. Con `[diff]` solo, no se nombra ningún sustituto: la nota dice lo que dice el propio texto de obsolescencia de la biblioteca («there is no replacement for `resume_download`», no hay sustituto), o remite al registro de cambios del paquete (la URL «Changelog» de sus metadatos en PyPI, o si no su página de versiones en GitHub) con la versión fijada, o, cuando PyPI no indica ninguna de las dos, dice que since-cutoff no encontró ninguno en ese texto. | El comportamiento, y si una llamada sigue funcionando: la versión fijada puede seguir aceptando un parámetro eliminado con un aviso, como hace huggingface-hub 2.0.0 con `resume_download`. La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Runtime:» cuando el código fuente fijado todavía gestiona uno; el bloque no, porque el consejo es el mismo. Si tu modelo se equivoca con él. |
 | `[diff + library]` | Como `[diff]`, y el propio texto de obsolescencia de la biblioteca (un docstring, la entrada de un parámetro en el docstring, un mensaje de `@deprecated` o un texto de `warnings.warn`, en la versión anterior o, para una obsolescencia, en la fijada) indica el sustituto («Use `stop` instead»), y ese nombre existe en tu versión fijada. Un texto que solo menciona un nombre como consejo se cita bajo `[diff]`; no se toma como sustituto. | Que el sustituto se comporte igual. |
 | `[diff + move checked]` | Como `[diff]`, y el objeto en la nueva ruta es el mismo objeto hasta donde se puede contar: una clase o un módulo conserva al menos la mitad de los nombres públicos del anterior, una función conserva sus parámetros, un valor es el mismo. | El comportamiento. |
-| `[diff + metadata]` | El Requires-Dist de la versión anterior (el METADATA de su wheel) incluye una biblioteca que la versión fijada ya no incluye, y los lugares de la API pública que nombraban tipos de esa biblioteca (parámetros, tipos de retorno, atributos, clases base, reexportaciones) nombran tipos de otra biblioteca que la versión fijada requiere, o de una copia de la anterior que incluye, sin que quede ninguno de la anterior: openai 3.x, anthropic 1.8, huggingface-hub 2.0 y mcp 2.2 aceptan objetos de `httpx2` donde aceptaban objetos de `httpx`. | El comportamiento: si la versión fijada todavía acepta objetos de la biblioteca anterior (openai 3 convierte algunos, anthropic 1.8 lanza `TypeError`, según su código fuente). La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Installed:» (si tu proyecto, incluido su entorno virtual, todavía tiene la biblioteca anterior) y una línea «Runtime:» que señala dónde el código fuente fijado todavía la nombra. |
+| `[diff + metadata]` | El Requires-Dist de la versión anterior (el METADATA de su wheel) incluye una biblioteca que la versión fijada ya no incluye, y los lugares de la API pública que nombraban tipos de esa biblioteca (parámetros, tipos de retorno, atributos, clases base, reexportaciones) nombran tipos de otra biblioteca que la versión fijada requiere, o de una copia de la anterior que incluye, sin que quede ninguno de la anterior: openai 3.x, anthropic 1.8, huggingface-hub 2.0 y mcp 2.2 aceptan objetos de `httpx2` donde aceptaban objetos de `httpx`. `[metadata]` solo marca la única viñeta de un paquete publicado por primera vez después de la fecha de corte que tu código importa: no hay ninguna versión en la fecha de corte con la que comparar, así que la nota da la fecha de su primera versión, su resumen en PyPI y la URL de su registro de cambios. | El comportamiento: si la versión fijada todavía acepta objetos de la biblioteca anterior (openai 3 convierte algunos, anthropic 1.8 lanza `TypeError`, según su código fuente). La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Installed:» (si tu proyecto, incluido su entorno virtual, todavía tiene la biblioteca anterior) y una línea «Runtime:» que señala dónde el código fuente fijado todavía la nombra. |
 | `[diff; probable rename]` | Un parámetro en la misma posición y con la misma anotación tiene un nombre nuevo, y ninguna nota de versión del docstring de la versión fijada (`.. versionadded::`, `.. versionchanged::`) dice que uno se añadió o que el otro se eliminó. Una suposición, señalada como tal. | Que sea el mismo parámetro. |
 | `[type-checked]` | La escribió un modelo durante `since-cutoff run` y se conservó porque su ejemplo pasó la comprobación de tipos descrita abajo. | El comportamiento; que la explicación de la viñeta sea cierta más allá de los nombres que muestra. |
 | `[not confirmed]` | Solo con `sync --suggestions`: nombres de la versión fijada que se parecen a lo que se eliminó (la etiqueta de la viñeta es entonces `[diff; not confirmed]`). | Que alguno de ellos lo sustituya. |

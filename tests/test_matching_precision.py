@@ -352,8 +352,10 @@ def test_scope_imported_skips_params_mirrors_and_internal_hooks(tmp_path) -> Non
     project = Project(tmp_path, [], "uv.lock", imported_modules={"sdk"}, files=uses(code))
     scan = ScanResult(project, ModelTarget.cutoff_only(date(2025, 7, 31)), [package])
     # 6 APIs, 5 slots: without the rule, 2 of them went to the mirrors and 1 to the hook.
-    apis = {n.api for n in scan.scope_notes(SCOPE_IMPORTED)}
-    assert apis == {"Messages.create", "sdk.old0", "sdk.old1"}
+    notes = scan.scope_notes(SCOPE_IMPORTED)
+    # The two removals say the same: one bullet for both (notes.diff_notes with ``merge``).
+    assert {n.api for n in notes} == {"Messages.create", "sdk.old0"}
+    assert {c.path for n in notes for c in n.covered} >= {"sdk.old0", "sdk.old1"}
     # Only for the APIs the code does not use: a used one always gets its note.
     code += "from sdk.orm import MappedColumn\nMappedColumn.declarative_scan_for_composite(1)\n"
     scan = ScanResult(

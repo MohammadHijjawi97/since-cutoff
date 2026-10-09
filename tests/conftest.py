@@ -259,17 +259,23 @@ def _dt(s: str) -> datetime:
 
 
 class FakePyPI(PyPI):
-    """PyPI with in-memory release dates and local source trees."""
+    """PyPI with in-memory release dates and local source trees. ``info`` is what PyPI's
+    ``info`` says of a package (``summary``, ``project_urls``), by package; {} for the rest."""
 
     def __init__(
         self,
         cache: DiskCache,
         releases: dict[str, list[tuple[str, str]]],
         sources: dict[tuple[str, str], SourceTree],
+        info: dict[str, dict[str, Any]] | None = None,
     ):
         super().__init__(cache)
         self._releases = releases
         self._trees = sources
+        self._info = info or {}
+
+    def project(self, name: str) -> dict[str, Any]:
+        return {"info": dict(self._info.get(name, {})), "releases": {}}
 
     def releases(self, name: str) -> list[Release]:
         out = [

@@ -6,7 +6,9 @@ not know, each tagged with what was checked, and nothing else claimed.
 
   ============================  ==========================================================
   ``[diff]``                    the change is in the static comparison of the two releases'
-                                public APIs; no replacement is named ("do not pass it")
+                                public APIs; no replacement is named ("do not pass it"), and
+                                where the library's text names none, the note points at the
+                                package's changelog (from its PyPI metadata) instead
   ``[diff + library]``          the replacement is named in the library's own deprecation
                                 text and exists in the pinned version (``use `stop```)
   ``[diff + move checked]``     the object at the new path keeps the old one's public names
@@ -17,6 +19,9 @@ not know, each tagged with what was checked, and nothing else claimed.
                                 pinned one does not, and the public API that named its types
                                 names another required distribution's types instead
                                 (:func:`dependency_bullet`)
+  ``[metadata]``                a package first released after the cutoff, which no diff can
+                                describe: its first release's date, PyPI summary and changelog
+                                URL (:func:`new_package_note`)
   ``[not confirmed]``           names that merely look similar; only with ``suggestions``
   ============================  ==========================================================
 
@@ -60,12 +65,10 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     REMOVED,
     REQUEST_EXTRAS,
-    STATED_REPLACEMENT,
     APIChange,
     object_replacements,
     parameter_replacements,
     signature_parameters,
-    stated_alternatives,
 )
 from since_cutoff.errors import SinceCutoffError
 
@@ -108,8 +111,8 @@ _LEGEND = {
         "[move checked] the object at the new path keeps the old one's public names or parameters"
     ),
     TAG_METADATA: (
-        "[metadata] the two releases' declared requirements (Requires-Dist in their wheels' "
-        "METADATA)"
+        "[metadata] PyPI metadata: the two releases' Requires-Dist (in their wheels' METADATA), "
+        "or a package's release dates, summary and changelog URL"
     ),
     TAG_PROBABLE_RENAME: "[probable rename] a guess from the parameter's position and type",
     TAG_NOT_CONFIRMED: "[not confirmed] names that look similar, not confirmed as replacements",
@@ -125,6 +128,14 @@ EVIDENCE_METADATA = "requires_dist"  # a switched dependency (DEPENDENCY_SWITCHE
 # Who wrote a note (Note.source); a ``run --compare`` baseline's notes carry its arm's name.
 NOTE_MODEL = "model"
 NOTE_DIFF = "diff"
+
+# The kind of the change a note for a package first released after the cutoff is about
+# (:func:`new_package_note`): not a kind the API diff reports, since there is nothing to
+# compare it with.
+NEW_PACKAGE = "new_package"
+# The longest deprecated call form (an ``@overload``'s signature) a note quotes as it is; a
+# longer one is named by the parameters only it takes, or not at all.
+CALL_FORM_LIMIT = 120
 
 # What a block covers (its meta line's "scope").
 SCOPE_USED = "used"  # the changed APIs the project's code uses (scan, sync)
@@ -253,13 +264,19 @@ class Note:
         """What was checked, and what was not (``measured`` is filled in by a run's report)."""
         c = self.change
         compared = f"{c.from_version} vs {c.to_version}, diff schema {DIFF_SCHEMA}"
-        return {
-            "change": (
+        if c.kind == NEW_PACKAGE:
+            change = (
+                f"the release list and metadata of {c.package} on PyPI: no release by the cutoff"
+            )
+        elif c.kind == DEPENDENCY_SWITCHED:
+            change = (
                 "Requires-Dist of both releases' wheels (METADATA) and a static comparison of "
                 f"their public APIs (griffe), {compared}"
-                if c.kind == DEPENDENCY_SWITCHED
-                else f"static API diff (griffe), {compared}"
-            ),
+            )
+        else:
+            change = f"static API diff (griffe), {compared}"
+        return {
+            "change": change,
             "replacement": "; ".join(_replacement_check(r, c) for r in self.replacements) or None,
             "example_type_checks": (
                 True if TAG_TYPE_CHECKED in self.tag_list else self.example_type_checks
@@ -370,33 +387,96 @@ def is_stubs(package: str) -> bool:
 
 
 def diff_notes(
-    changes: Iterable[APIChange], lookup: ApiLookup | None = None, *, suggestions: bool = False
+    changes: Iterable[APIChange],
+    lookup: ApiLookup | None = None,
+    *,
+    suggestions: bool = False,
+    changelog: str | None = None,
+    merge: bool = False,
 ) -> list[Note]:
     """:func:`diff_note` for each API of ``changes`` (APIChange.api_key), in the order of the
-    first change of each."""
+    first change of each. ``changelog`` is where the package documents its releases
+    (:func:`pypi.changelog_url`), for a note that can name no replacement.
+
+    With ``merge`` (the notes a block holds: ScanResult.scope_notes), the notes that say the
+    same of several APIs of one package become one bullet that lists them (issue #5):
+    "`Anthropic.completions`, `anthropic.AI_PROMPT` and `anthropic.HUMAN_PROMPT` were removed;
+    do not use them.", "`huggingface_hub.hf_hub_download()` and
+    `huggingface_hub.snapshot_download()` no longer accept `proxies` ...". Two notes say the
+    same when their bullets are equal once each one's API name is taken out: the same changes,
+    the same evidence, the same quotes. The merged bullet stands where the first of them stood
+    and covers all their changes (Note.covered), with the APIs in the order of their names.
+    """
     by_api: dict[str, list[APIChange]] = {}
     for c in changes:
         by_api.setdefault(c.api_key, []).append(c)
-    return [diff_note(group, lookup, suggestions=suggestions) for group in by_api.values()]
+    notes = [
+        diff_note(group, lookup, suggestions=suggestions, changelog=changelog)
+        for group in by_api.values()
+    ]
+    if not merge:
+        return notes
+    alike: dict[tuple[str, str, str], list[Note]] = {}
+    for n in notes:
+        alike.setdefault(_shape(n), []).append(n)
+    out: list[Note] = []
+    done: set[tuple[str, str, str]] = set()
+    for n in notes:
+        shape = _shape(n)
+        if shape in done:
+            continue
+        done.add(shape)
+        group = alike[shape]
+        if len(group) == 1 or n.change.kind == DEPENDENCY_SWITCHED:
+            out += group
+            continue
+        merged = [c for m in group for c in m.covered]
+        out.append(diff_note(merged, lookup, suggestions=suggestions, changelog=changelog))
+    return out
+
+
+def _shape(note: Note) -> tuple[str, str, str]:
+    """What a note from the diff says, its API's name taken out: notes of one package and
+    version with the same shape say the same of their APIs (:func:`diff_notes`'s ``merge``)."""
+    api = note.api
+    text = note.bullet.replace(f"`{api}()`", "`()`").replace(f"`{api}`", "``")
+    return note.change.package, note.change.to_version, text
 
 
 def diff_note(
-    changes: Sequence[APIChange], lookup: ApiLookup | None = None, *, suggestions: bool = False
+    changes: Sequence[APIChange],
+    lookup: ApiLookup | None = None,
+    *,
+    suggestions: bool = False,
+    changelog: str | None = None,
 ) -> Note:
-    """One bullet for one API and all its changes (APIChange.api_key), from the diff alone.
+    """One bullet for one API and all its changes (APIChange.api_key), from the diff alone; or,
+    given the changes of several APIs that say the same (:func:`diff_notes` with ``merge``
+    checks that they do), one bullet that names them all, in the order of their names.
 
     The changes are stated in :func:`canonical_order`, whatever order they come in, so that the
     bullet does not depend on which of them the code uses. A replacement is named only when
-    the library's own text states it (the module docstring's table), and the tags say which;
-    text that only mentions a name as advice ("If you want to force a new download, use
-    `force_download=True`") is quoted, and is not a replacement. What has none is said right
-    after what it is about: "huggingface-hub's deprecation text says there is no replacement
-    for `x`" where the library says so, else "since-cutoff found no replacement in its
-    deprecation text" (what was read: docstrings, deprecation decorators, warnings). Names
-    that merely look similar go in ``not_confirmed``, never in the bullet, unless
-    ``suggestions`` asks for them (tagged ``[not confirmed]``); where the library says there is
-    no replacement, they are dropped. ``lookup`` is only used for a change from a diff older
-    than DIFF_SCHEMA 13, which did not record the names its library's text gives.
+    the library's own text states it (the module docstring's table), and the tags say which:
+    directly ("Use `stop` instead.", "renamed to `skip_if_logged_in`") as "Use `stop` instead
+    of `stop_sequences`.", or in a sentence that leads up to it ("replaced by newer agents
+    based on `FunctionAgent`", "in favor of the http-based alternatives implemented in
+    `HfApi`") as that sentence, quoted; text that only mentions a name as advice ("If you want
+    to force a new download, use `force_download=True`") is quoted, and is not a replacement.
+    What has none is said right after what it is about: "huggingface-hub's deprecation text
+    says there is no replacement for `x`" where the library says so; else a pointer to where
+    the package documents its releases, "See <changelog> (2.0.0).", when ``changelog`` is
+    known (:func:`pypi.changelog_url`), else "since-cutoff found no replacement in its
+    deprecation text" (what was read: docstrings, deprecation decorators, warnings). A removed
+    parameter of an SDK method that still takes ``extra_body`` points there instead, and says
+    nothing more. Names that merely look similar go in ``not_confirmed``, never in the bullet,
+    unless ``suggestions`` asks for them (tagged ``[not confirmed]``); where the library says
+    there is no replacement, they are dropped. ``lookup`` is only used for a change from a diff
+    older than DIFF_SCHEMA 13, which did not record the names its library's text gives.
+
+    A function deprecated in one call form only (an ``@overload``, APIChange.call_form) is
+    named by the parameters only that form takes: "`Server(...)` with `on_progress=` passed as
+    a keyword argument is deprecated"; a signature is quoted only when it is short
+    (CALL_FORM_LIMIT).
 
     A stubs package's notes (``pandas-stubs``) say what its declarations no longer have and
     that type checkers reject it, not that the runtime no longer accepts it.
@@ -406,12 +486,23 @@ def diff_note(
     given = list({id(c): c for c in changes}.values())
     if not given:
         raise ValueError("diff_note needs at least one change")
-    ordered = canonical_order(given)
+    by_api: dict[str, list[APIChange]] = {}
+    for c in canonical_order(given):
+        by_api.setdefault(c.api_key, []).append(c)
+    apis = sorted(by_api.values(), key=lambda g: api_name(g[0], g))
+    # The sentences are about the first API; the others say the same of theirs.
+    ordered = apis[0]
     first = ordered[0]
     package = first.package
     stubs = is_stubs(package)
-    name = api_name(first, ordered)
-    call = f"`{name}()`"
+    names = [api_name(g[0], g) for g in apis]
+    name = names[0]
+    many = len(names) > 1
+    s = "" if many else "s"  # accept(s), require(s)
+    was = "were" if many else "was"
+    it, its = ("them", "their") if many else ("it", "its")
+    subject_names = _listed(names, "and")
+    call = _listed([f"{n}()" for n in names], "and")
     tags = [TAG_DIFF]
     sentences: list[str] = []
     replacements: list[Replacement] = []
@@ -420,13 +511,14 @@ def diff_note(
 
     def subject() -> str:
         nonlocal said_what
-        text = call if not said_what else "It"
+        text = call if not said_what else ("They" if many else "It")
         said_what = True
         return text
 
     for kind in dict.fromkeys(c.kind for c in ordered):
         group = [c for c in ordered if c.kind == kind]
         params = _unique(c.parameter for c in group if c.parameter)
+        pointed = False  # a sentence says where a removed field goes: nothing more to add
         if kind == DEPENDENCY_SWITCHED:
             for c in group:
                 sentences.append(dependency_bullet(c))
@@ -444,10 +536,10 @@ def diff_note(
             for c in group:
                 if stubs:
                     sentences.append(
-                        f"{package} no longer declares `{name}`; type checkers reject it."
+                        f"{package} no longer declares {subject_names}; type checkers reject {it}."
                     )
                 else:
-                    sentences.append(f"`{name}` was removed; do not use it.")
+                    sentences.append(f"{subject_names} {was} removed; do not use {it}.")
                 if c.namesake:
                     sentences.append(f"The `{c.name}` at `{c.namesake}` is a different object.")
                 said_what = True
@@ -461,27 +553,29 @@ def diff_note(
                         f"checkers reject {pronoun}."
                     )
                     said_what = True
-                elif extras := _extra_request_arguments(group):
+                elif extra := _extra_request_argument(group):
                     # An SDK method that sends a request (Stainless-generated clients: anthropic,
-                    # openai, ...) takes fields it has no parameter for in extra_body/extra_query:
-                    # the parameter left the signature, not necessarily the API. "do not pass
-                    # them" made agents drop a field the task needed (the benchmark pilot).
+                    # openai, ...) takes fields it has no parameter for in extra_body (a body
+                    # field; extra_query is for a query field): the parameter left the
+                    # signature, not necessarily the API. "do not pass them" made agents drop a
+                    # field the task needed (the benchmark pilot).
                     sentences.append(
-                        f"{subject()} no longer accepts {_listed(plain, 'or')} as "
+                        f"{subject()} no longer accept{s} {_listed(plain, 'or')} as "
                         f"{'keyword arguments' if len(plain) > 1 else 'a keyword argument'}. "
-                        f"If the API still needs "
-                        f"{pronoun}, pass {pronoun} through its {_listed(extras, 'or')} argument."
+                        f"If the API still needs {pronoun}, pass {pronoun} through {its} "
+                        f"`{extra}` argument."
                     )
+                    pointed = True
                 else:
                     sentences.append(
-                        f"{subject()} no longer accepts {_listed(plain, 'or')}; do not pass "
+                        f"{subject()} no longer accept{s} {_listed(plain, 'or')}; do not pass "
                         f"{pronoun}."
                     )
             for p in params:
                 if p.startswith("*"):
                     what = "keyword" if p.startswith("**") else "positional"
                     sentences.append(
-                        f"{subject()} no longer accepts extra {what} arguments (`{p}`)."
+                        f"{subject()} no longer accept{s} extra {what} arguments (`{p}`)."
                     )
         elif kind == DEPRECATED:
             if params:
@@ -495,11 +589,10 @@ def diff_note(
             for c in group:
                 if c.parameter:
                     continue
-                form = f" called as `{_code(c.call_form)}`" if c.call_form else ""
-                sentences.append(f"`{name}`{form} is deprecated; avoid it in new code.")
+                sentences.append(_deprecated_sentence(c, names))
                 said_what = True
         elif kind == PARAM_REQUIRED:
-            sentences.append(f"{subject()} now requires {_listed(params, 'and')}.")
+            sentences.append(f"{subject()} now require{s} {_listed(params, 'and')}.")
         elif kind == PARAM_KEYWORD_ONLY:
             sentences.append(f"Pass {_listed(params, 'and')} to {call} by keyword.")
             said_what = True
@@ -513,12 +606,14 @@ def diff_note(
                     if c.old_kind and c.new_kind
                     else "changed kind"
                 )
-                sentences.append(f"`{name}` {kinds}; check its new signature before use.")
+                sentences.append(f"{subject_names} {kinds}; check {its} new signature before use.")
                 said_what = True
         # What to use instead, for what was removed or deprecated: right after it, so that a
         # sentence about what has no replacement cannot be read as about another change.
         if kind in (REMOVED, PARAM_REMOVED, DEPRECATED):
-            more = _replacement_sentences(group, name, lookup, replacements, tags, similar)
+            more = _replacement_sentences(
+                group, name, lookup, replacements, tags, similar, changelog, pointed=pointed
+            )
             sentences += more
             said_what = said_what and not more  # "It" would not be the API after them
     similar = [s for s in similar if s not in {r.text for r in replacements}]
@@ -541,6 +636,33 @@ def diff_note(
     )
 
 
+def _deprecated_sentence(change: APIChange, names: Sequence[str]) -> str:
+    """``x is deprecated; avoid it in new code.``; for a function deprecated in one call
+    form only (APIChange.call_form), which form: the parameters only it takes ("`Server(...)`
+    with `on_progress=` passed as a keyword argument is deprecated", APIChange.call_form_only),
+    else its signature when that is short (CALL_FORM_LIMIT), else just that one form is."""
+    many = len(names) > 1
+    be, it = ("are", "them") if many else ("is", "it")
+    subject = _listed(names, "and")
+    only = change.call_form_only or []
+    if change.call_form and only:
+        calls = _listed([f"{n}(...)" for n in names], "and")
+        keywords = _listed([f"{p}=" for p in only], "or")
+        arguments = "keyword arguments" if len(only) > 1 else "a keyword argument"
+        return (
+            f"{calls} with {keywords} passed as {arguments} {be} deprecated; avoid {it} in "
+            "new code."
+        )
+    if change.call_form and len(change.call_form) <= CALL_FORM_LIMIT:
+        form = _code(change.call_form)
+        return f"{subject} called as `{form}` {be} deprecated; avoid {it} in new code."
+    if change.call_form:
+        return (
+            f"One call form of {subject} (an overload) is deprecated; avoid that form in new code."
+        )
+    return f"{subject} {be} deprecated; avoid {it} in new code."
+
+
 def _replacement_sentences(
     group: list[APIChange],
     name: str,
@@ -548,9 +670,15 @@ def _replacement_sentences(
     replacements: list[Replacement],
     tags: list[str],
     similar: list[str],
+    changelog: str | None = None,
+    *,
+    pointed: bool = False,
 ) -> list[str]:
     """What to use instead of each change of ``group`` (one kind, of one API), and what has
-    none; ``replacements``, ``tags`` and ``similar`` gather the evidence for the note."""
+    none; ``replacements``, ``tags`` and ``similar`` gather the evidence for the note. With
+    ``pointed`` (the bullet says where a removed field goes already), nothing is said about
+    what has no replacement; with ``changelog``, that is a pointer to it instead of "found no
+    replacement"."""
     package = group[0].package
     sentences: list[str] = []
     none_said: list[str] = []  # the library's own text says nothing replaces it
@@ -599,14 +727,25 @@ def _replacement_sentences(
             f"{package}'s deprecation text says there is no replacement for "
             f"{_listed(_unique(none_said), 'or')}."
         )
-    if unnamed:
+    if unnamed and not pointed:
         # Named when the sentence is not about everything it follows.
         some = _unique(unnamed) != _unique(items)
-        rest = f" for {_listed(_unique(unnamed), 'or')}" if some else ""
-        sentences.append(
-            f"since-cutoff found no replacement{rest} in {package}'s deprecation text."
-        )
+        listed = _listed(_unique(unnamed), "or")
+        if changelog:
+            see = f"For {listed}, see" if some else "See"
+            sentences.append(f"{see} {_url(changelog)} ({group[0].to_version}).")
+        else:
+            rest = f" for {listed}" if some else ""
+            sentences.append(
+                f"since-cutoff found no replacement{rest} in {package}'s deprecation text."
+            )
     return sentences
+
+
+def _url(url: str) -> str:
+    """A URL from PyPI metadata as a note writes it: one line, nothing that ends the block or
+    a code span."""
+    return _one_line(url).replace(" ", "").replace("`", "")
 
 
 def says_no_replacement(change: APIChange) -> bool:
@@ -701,35 +840,52 @@ def _library_evidence(
 ) -> tuple[str, Replacement | None] | None:
     """What the library's own deprecation text for ``change`` gives, when it names something
     that exists in the new version (else None): the sentence, and the replacement when the
-    text states it as one ("Use `stop` instead."). Text that only mentions a name as advice
-    ("If you want to force a new download, use `force_download=True`") gives a quote and no
-    replacement (None), or nothing when there is nothing worth quoting."""
+    text states it as one (:func:`_stated_replacement`). Stated directly ("Use `stop`
+    instead.", "renamed to `skip_if_logged_in`"), the sentence is "Use `stop` instead of
+    `stop_sequences`."; stated in a sentence that leads up to the name ("replaced by newer
+    agents based on `FunctionAgent`", "in favor of the http-based alternatives implemented in
+    `HfApi`"), the sentence is that one, quoted, so that the library's own words stand (the
+    "Use ... instead" form when it is too long to quote). Text that only mentions a name as
+    advice ("If you want to force a new download, use `force_download=True`") gives a quote and
+    no replacement (None), or nothing when there is nothing worth quoting."""
     names = library_names(change, lookup)
     if not names:
         return None
+    what = change.parameter or api_name(change)
+    # "On `x`," only for a parameter: the API itself is what the bullet is about already.
+    on = f"On `{what}`, " if change.parameter else ""
+    # The old version's text (``hint``) and the pinned one's (``deprecation``), each with the
+    # version and file the note cites.
+    texts = [
+        (text, version, where, said)
+        for text, version, where, said in (
+            (change.hint, change.from_version, change.hint_file, "said"),
+            (change.deprecation, change.to_version, change.deprecation_file, "says"),
+        )
+        if text
+    ]
+    for text, version, where, said in texts:
+        stated = _stated_replacement(text, names)
+        if stated is None:
+            continue
+        found, direct = stated
+        source = f"{change.package} {version}" + (f" {where}" if where else "")
+        replacement = Replacement(found[0], EVIDENCE_LIBRARY, source, what)
+        shown = _listed([_shown_name(n) for n in found], "or")
+        use = f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
+        quote = "" if direct else _quote(text, found[0])
+        if quote:
+            return f'{on}{change.package} {version} {said}: "{quote}"', replacement
+        return use, replacement
+    # Nothing stated: the text that names one of them, quoted up to that sentence.
     best = names[0]
     last = best.rsplit(".", 1)[-1]
-    # The old version's text (``hint``) or the pinned one's (``deprecation``): the one that
-    # names it, and so the version and file the note cites.
-    if change.hint and (not change.deprecation or _mentions(change.hint, last)):
-        text, version, where, said = change.hint, change.from_version, change.hint_file, "said"
-    else:
-        text = change.deprecation or ""
-        version, where, said = change.to_version, change.deprecation_file, "says"
-    source = f"{change.package} {version}" + (f" {where}" if where else "")
-    what = change.parameter or api_name(change)
-    stated = _stated_replacement(text, names)
-    if stated:
-        shown = _listed([_shown_name(s) for s in stated], "or")
-        sentence = (
-            f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
-        )
-        return sentence, Replacement(stated[0], EVIDENCE_LIBRARY, source, what)
+    text, version, _where, said = next(
+        (t for t in texts if _mentions(_plain(t[0]), last)), texts[-1]
+    )
     quote = _quote(text, best)
     if not quote:
         return None
-    # "On `x`," only for a parameter: the API itself is what the bullet is about already.
-    on = f"On `{what}`, " if change.parameter else ""
     return f'{on}{change.package} {version} {said}: "{quote}"', None
 
 
@@ -773,16 +929,46 @@ def library_names(change: APIChange, lookup: ApiLookup | None = None) -> list[st
     return list(dict.fromkeys(found))
 
 
-def _stated_replacement(text: str, names: list[str]) -> list[str] | None:
-    """The ones of ``names`` that ``text`` states as the replacement, the first it gives
-    first ("Use `stop` instead."; httpx 0.27's "Use 'proxy' or 'mounts' instead."), or None
-    when the text only mentions them ("If you want to force a new download, use
-    `force_download=True`" is advice, not a replacement)."""
-    for pattern in STATED_REPLACEMENT:
-        for m in re.finditer(pattern, text, re.IGNORECASE):
-            said = [_named_as(s, names) for s in (m.group("n").strip("."), *stated_alternatives(m))]
-            if said[0] is not None:
-                return list(dict.fromkeys(n for n in said if n is not None))
+# How a deprecation text states its replacement, and where in the sentence the name is: after
+# "use", up to "instead" (every alternative in between: httpx 0.27's "Use 'proxy' or 'mounts'
+# instead."); after "replaced by", "renamed to", "in favour of", "deprecated: use", a
+# sentence-initial "Use" or "see", up to the end of the clause. A name right after the cue is
+# stated directly; one that the clause leads up to ("replaced by newer agents based on
+# `FunctionAgent`") is stated in that sentence.
+_CUES = (
+    re.compile(r"\buse\s+(?P<rest>.+?)\s+(?:instead|in\s+its\s+place)\b", re.IGNORECASE),
+    re.compile(r"\b(?:replaced|superseded)\s+(?:by|with)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\brenamed\s+(?:to|as)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\bin\s+favou?r\s+of\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\bdeprecated\W+(?:please\s+)?use\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"^\W*(?:please\s+)?use\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\b(?P<see>see)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+)
+_TOKEN = re.compile(r"[A-Za-z_][\w.]*")
+
+
+def _stated_replacement(text: str, names: list[str]) -> tuple[list[str], bool] | None:
+    """The ones of ``names`` that ``text`` states as the replacement (:data:`_CUES`), the
+    first it gives first, and whether it states them directly (nothing but the names after the
+    cue: "Use `stop` instead.", "Use 'proxy' or 'mounts' instead.", "renamed to
+    `skip_if_logged_in`") or in a sentence that leads up to them, or says more ("replaced by
+    newer agents based on `FunctionAgent`", "in favor of the http-based alternatives
+    implemented in [`HfApi`]", "use StateGraph with a 'messages' key instead"; "see `X`"
+    always, since it points at the name without saying to use it). None when the text only mentions them ("If you want to force a
+    new download, use `force_download=True`" is advice, not a replacement). Markup around a
+    name (Sphinx roles, MkDocs' ``[`X`]``) does not count."""
+    for sentence in _sentences(text):
+        matches = sorted(
+            (m for cue in _CUES for m in cue.finditer(sentence)), key=lambda m: m.start("rest")
+        )
+        for m in matches:
+            tokens = [t.strip(".") for t in _TOKEN.findall(m.group("rest"))]
+            said = [(t, _named_as(t, names)) for t in tokens if t]
+            found = _unique(n for _, n in said if n is not None)
+            if found:
+                # Direct: nothing but the names (and "or") after the cue.
+                only_names = all(n is not None or t.lower() in ("or", "and") for t, n in said)
+                return found, only_names and m.groupdict().get("see") is None
     return None
 
 
@@ -802,8 +988,19 @@ _NOISE = re.compile(
 )
 
 
+# Markup a docstring puts around a name: Sphinx roles (:func:`x`, :py:meth:`~pkg.x`) and
+# MkDocs' cross-references ([`HfApi`], ['Repository']).
+_ROLE = re.compile(r":(?:\w+:)+(?=`)")
+_BRACKETED = re.compile(r"\[([`'\"][^\[\]]*?[`'\"])\]")
+
+
+def _plain(text: str) -> str:
+    """``text`` without the markup around names: ``[`HfApi`]`` reads ```HfApi```."""
+    return _BRACKETED.sub(r"\1", _ROLE.sub("", text).replace("`~", "`"))
+
+
 def _sentences(text: str) -> list[str]:
-    return [s for s in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if s]
+    return [s for s in re.split(r"(?<=[.!?])\s+", " ".join(_plain(text).split())) if s]
 
 
 def _worth_quoting(sentence: str) -> bool:
@@ -1195,8 +1392,10 @@ def _unique(items: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
-def _extra_request_arguments(changes: Sequence[APIChange]) -> list[str]:
-    """``extra_body`` / ``extra_query`` when the pinned callable of these changes takes them.
+def _extra_request_argument(changes: Sequence[APIChange]) -> str | None:
+    """``extra_body`` when the pinned callable of these changes takes it (an SDK method that
+    sends a request: a removed parameter was a body field, as every parameter of a POST method
+    is), else ``extra_query`` when it takes only that (a GET method: a query field), else None.
 
     From ``request_extras`` (DIFF_SCHEMA 17), else from the recorded new signature, which
     is cut at 400 characters. Whether the API itself still takes a removed field is not
@@ -1211,7 +1410,7 @@ def _extra_request_arguments(changes: Sequence[APIChange]) -> list[str]:
             found.update(
                 name for name in REQUEST_EXTRAS if re.search(rf"[(,]\s*{name}\s*[:=,)]", signature)
             )
-    return [name for name in REQUEST_EXTRAS if name in found]
+    return next((name for name in REQUEST_EXTRAS if name in found), None)
 
 
 def _listed(names: Sequence[str], conjunction: str) -> str:
@@ -1229,6 +1428,34 @@ def _code(text: str | None) -> str:
 
 def _one_line(text: str) -> str:
     return " ".join(text.replace("<!--", "").replace("-->", "").split())
+
+
+# ------------------------------------------------- a package newer than the cutoff
+def new_package_note(
+    package: str,
+    version: str,
+    first_released: str | None,
+    summary: str | None = None,
+    changelog: str | None = None,
+) -> Note:
+    """The one bullet for a package first released after the cutoff that the project's code
+    imports: no release existed at the cutoff to compare with, so there is no diff, and the
+    model has no training data on it. What PyPI's metadata says of it: the day of its first
+    release (``first_released``, ISO), its one-line ``summary`` and where it documents its
+    releases (``changelog``, :func:`pypi.changelog_url`), each left out when unknown. Tagged
+    ``[metadata]``; about 40 tokens.
+
+    ``httpx2 2.13.1 was first released on 2026-05-11, after the cutoff; the model has no
+    training data on it. Summary: The next generation HTTP client. Changelog: https://...``
+    """
+    when = f"on {first_released}, after the cutoff" if first_released else "after the cutoff"
+    text = f"{package} {version} was first released {when}; the model has no training data on it."
+    if summary:
+        text += f" Summary: {safe_text(summary, 120).rstrip('.')}."
+    if changelog:
+        text += f" Changelog: {_url(changelog)}"
+    change = APIChange(package, "", version, NEW_PACKAGE, package, package)
+    return Note(change, text, None, False, NOTE_DIFF, (TAG_METADATA,), changes=[change])
 
 
 # ------------------------------------------------------------ model's notes

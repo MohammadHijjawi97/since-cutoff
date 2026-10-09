@@ -65,6 +65,7 @@ from since_cutoff.notes import (
     EVIDENCE_METADATA,
     EVIDENCE_MOVE,
     EVIDENCE_RENAME,
+    NEW_PACKAGE,
     NOTE_DIFF,
     NOTE_MODEL,
     SCOPE_IMPORTED,
@@ -891,12 +892,13 @@ def scan_lines(
         for p in new:
             prose(_new_package_text(p))
     other = None if show_all else _others_text(scan, used)
-    if used:
+    notes = scan.scope_notes() if used or new else []  # what sync writes
+    if notes:
         out.append(Text(""))
         prose(
             NOTES_READY.format(
-                count=_plural(len(used), "note"),
-                them="it" if len(used) == 1 else "them",
+                count=_plural(len(notes), "note"),
+                them="it" if len(notes) == 1 else "them",
                 target=_target_name(scan),
                 versions=scan.project.versions_word,
             ),
@@ -908,7 +910,7 @@ def scan_lines(
         if tip:
             prose(f"{tip}.", "yellow", at=width)
         out.append(Text(""))
-        for line in _form_legend(used) + tag_legend(t for u in used for t in u.note.tag_list):
+        for line in _form_legend(used) + tag_legend(t for n in notes for t in n.tag_list):
             prose(line, "dim", at=width)
         if other:
             prose(other, "dim", at=width)  # with the legend above it
@@ -1414,8 +1416,8 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
     if run is not None and run.block:
         out += _notes_md(run.notes, run.block, run=True)
     elif run is None:
-        diff_notes = scan.diff_notes()
-        out += _notes_md(diff_notes, scan.notes_block(diff_notes) or "", run=False)
+        notes = scan.scope_notes()
+        out += _notes_md(notes, scan.notes_block(notes) or "", run=False)
     if run is not None and run.probes:
         out += ["", "## Probes", ""]
         for a in run.probes:
@@ -1896,9 +1898,10 @@ def _used_markdown(scan: ScanResult, env: Mapping[str, str] | None) -> list[str]
         out.append("**Your code uses none of the APIs that changed after the cutoff**")
     for p in new:
         out += ["", _new_package_text(p)]
-    block = scan.notes_block(scan.diff_notes()) if used else None
+    notes = scan.scope_notes()
+    block = scan.notes_block(notes)
     if block:
-        count = _plural(len(used), "note")
+        count = _plural(len(notes), "note")
         out += [
             "",
             f"<details><summary>{count} ready for {_target_name(scan)} (`since-cutoff sync` "
@@ -1962,7 +1965,7 @@ def to_json(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "new_packages_imported": [p.name for p in scan.new_imported()],
     }
     data["used_apis"] = [_used_api_json(scan, u) for u in used]
-    notes = scan.diff_notes()
+    notes = scan.scope_notes()
     block = scan.notes_block(notes)
     data["notes_preview"] = (
         None
@@ -2136,12 +2139,13 @@ def _source_md(note: Note) -> str:
     """Where one note comes from: the diff, the library's text, a model; and what was not
     checked (the runtime caveat, the names that merely look similar)."""
     c = note.change
-    parts = [
-        f"`{note.api}` {tag_text(note.tag_list)}: {c.package} {c.from_version} -> {c.to_version}"
-    ]
+    versions = f"{c.from_version} -> {c.to_version}" if c.from_version else c.to_version
+    parts = [f"`{note.api}` {tag_text(note.tag_list)}: {c.package} {versions}"]
     if note.source == NOTE_MODEL:
         writer = f" by `{note.writer}`" if note.writer else ""
         parts.append(f"written{writer}; its example type-checks against {c.package} {c.to_version}")
+    elif note.source == NOTE_DIFF and c.kind == NEW_PACKAGE:
+        parts.append("stated from the package's release dates and metadata on PyPI")
     elif note.source == NOTE_DIFF and c.kind == DEPENDENCY_SWITCHED:
         parts.append("stated from both releases' Requires-Dist and the API diff")
     elif note.source == NOTE_DIFF:

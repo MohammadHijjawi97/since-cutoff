@@ -80,12 +80,20 @@ from since_cutoff.notes import (
     deps_hash,
     diff_note,
     diff_notes,
+    new_package_note,
     render_block,
     render_legacy_block,
 )
 from since_cutoff.project import Dependency, FileUse, Project
 from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
-from since_cutoff.pypi import SOURCE_SCHEMA, PyPI, Release, SourceTree, is_placeholder
+from since_cutoff.pypi import (
+    SOURCE_SCHEMA,
+    PyPI,
+    Release,
+    SourceTree,
+    changelog_url,
+    is_placeholder,
+)
 from since_cutoff.selection import (
     NAME_MATCH,
     OLD_FORM,
@@ -288,6 +296,11 @@ class PackageScan:
     # NEW (no release by the cutoff): the day of its first release, from the release list the
     # scan read anyway.
     first_released: str | None = None
+    # From the package's PyPI metadata, read with its release list: its one-line summary (NEW
+    # only), and where it documents its releases (pypi.changelog_url: a Changelog URL, else the
+    # GitHub releases page), for the notes. None when PyPI lists neither.
+    summary: str | None = None
+    changelog: str | None = None
     # CHANGED: modules the pinned release ships compiled, without a source or a stub, that hid
     # something the release at the cutoff had: the diff did not report its removal, and could
     # not compare it (issue #52; diff_sources_with_unread).
@@ -440,14 +453,25 @@ class ScanResult:
             return []
         return [c for c in self.ranked(package) if used_names(c, files)]
 
-    def diff_notes(self, *, suggestions: bool = False) -> list[Note]:
+    def diff_notes(self, *, suggestions: bool = False, merge: bool = False) -> list[Note]:
         """A note from the API diff (:func:`notes.diff_note`) for each changed API the project's
-        code uses, package by package in the order of the reports. No model is called, and
-        nothing of the libraries is run."""
+        code uses, package by package in the order of the reports; with ``merge``, one for
+        APIs that say the same (:func:`notes.diff_notes`). No model is called, and nothing of
+        the libraries is run."""
         return [
             note
             for p in self.changed
-            for note in diff_notes(self.used_changes(p), suggestions=suggestions)
+            for note in diff_notes(
+                self.used_changes(p), suggestions=suggestions, changelog=p.changelog, merge=merge
+            )
+        ]
+
+    def new_package_notes(self) -> list[Note]:
+        """One note (:func:`notes.new_package_note`, ``[metadata]``) for each dependency first
+        released after the cutoff that the project's code imports (:meth:`new_imported`)."""
+        return [
+            new_package_note(p.name, p.locked or "", p.first_released, p.summary, p.changelog)
+            for p in self.new_imported()
         ]
 
     def used_apis(self) -> list[UsedAPI]:
@@ -548,16 +572,19 @@ class ScanResult:
         suggestions: bool = False,
         per_package: int | None = None,
     ) -> list[Note]:
-        """The notes from the API diff that a block of ``scope`` holds: for the changed APIs
-        the code uses (SCOPE_USED, :meth:`diff_notes`), or, for each changed package the code
-        imports, for those and the next most likely to matter, up to ``per_package``
+        """The notes a block of ``scope`` holds: from the API diff, for the changed APIs
+        the code uses (SCOPE_USED, :meth:`diff_notes`, APIs that say the same merged), or, for
+        each changed package the code imports, for those and the next most likely to matter,
+        up to ``per_package``
         (:data:`IMPORTED_APIS` by default) APIs in all (SCOPE_IMPORTED, ``sync --scope
         imported``; :meth:`ranked`'s order for that scope, in which a subpackage's move counts
         once, however many modules moved: selection.package_moves). Of the APIs the code does
         not use, a params class's field that mirrors a callable's lost parameter and an
-        internal hook get no note (:func:`_not_worth_a_note`)."""
+        internal hook get no note (:func:`_not_worth_a_note`). With either scope, one note per
+        dependency first released after the cutoff that the code imports
+        (:meth:`new_package_notes`)."""
         if scope != SCOPE_IMPORTED:
-            return self.diff_notes(suggestions=suggestions)
+            return self.diff_notes(suggestions=suggestions, merge=True) + self.new_package_notes()
         budget = per_package or IMPORTED_APIS
         notes: list[Note] = []
         for p in self.changed:
@@ -578,9 +605,12 @@ class ScanResult:
                 if key in used or not all(_not_worth_a_note(c, lost) for c in changes):
                     chosen.append(key)
             notes += diff_notes(
-                [c for c in ranked if c.api_key in set(chosen)], suggestions=suggestions
+                [c for c in ranked if c.api_key in set(chosen)],
+                suggestions=suggestions,
+                changelog=p.changelog,
+                merge=True,
             )
-        return notes
+        return notes + self.new_package_notes()
 
     def notes_block(self, notes: list[Note], scope: str = SCOPE_USED) -> str | None:
         """The AGENTS.md block (format 2) for ``notes``, or None when there are none."""
@@ -1119,12 +1149,14 @@ class Engine:
             assert scan.locked is not None
             locked = self.pypi.release(dep.key, scan.locked)
             scan.locked_date = locked.uploaded.date().isoformat()
+            # From the metadata the release list came with (cached): no request of its own.
+            scan.changelog = changelog_url(self.pypi.project_urls(dep.key))
             at_cutoff = self.pypi.version_at(dep.key, cutoff)
             if at_cutoff is None:
                 scan.status, scan.reason = NEW, "first released after the cutoff"
-                # From the release list version_at just read (cached): no request of its own.
                 first = min((r.uploaded for r in self.pypi.releases(dep.key)), default=None)
                 scan.first_released = first.date().isoformat() if first else None
+                scan.summary = self.pypi.summary(dep.key)
                 return scan
             scan.cutoff_version = at_cutoff.version
             scan.cutoff_version_date = at_cutoff.uploaded.date().isoformat()
@@ -1723,7 +1755,8 @@ class Engine:
                 example_type_checks=True,
             )
         # No example that type-checks: the note from the diff, which says only what it shows.
-        note = diff_note([change], lambda c: self._new_api(c, scan))
+        changelog = next((p.changelog for p in scan.packages if p.name == change.package), None)
+        note = diff_note([change], lambda c: self._new_api(c, scan), changelog=changelog)
         note.example_type_checks = False if checked else None
         return note
 

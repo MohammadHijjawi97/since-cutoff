@@ -488,7 +488,7 @@ def _dropped(scan: ScanResult, p: PackageScan | None, name: str, scope: str) -> 
         why = f"did not change from {p.cutoff_version} to {p.locked}"
         return f"its API {why}", f"{name}'s API {why}"
     if p.status == NEW:
-        why = "first released after the cutoff"
+        why = "first released after the cutoff, and your code no longer imports it"
         return why, f"{name} was {why}"
     if p.status == SKIPPED:
         return f"could not be checked: {p.reason}", f"{name} could not be checked ({p.reason})"

@@ -93,7 +93,10 @@ log = logging.getLogger(__name__)
 # in quotes, or with alternatives ("Use 'proxy' or 'mounts' instead."), is a stated name
 # (``library_names``, and whether find_renamed runs); and a parameter in the place of a removed
 # one is no rename (``renamed``, ``suggestions``) when a version note in the new docstring says
-# the one was added or the other removed (_documented_apart: click 8.2's ``CliRunner``).
+# the one was added or the other removed (_documented_apart: click 8.2's ``CliRunner``). Also
+# ``call_form_only``: the parameters that only a deprecated ``@overload`` takes (mcp 2.2's
+# ``Server.__init__``), so that a note can name the deprecated call form instead of its signature
+# and a call site is in the old form only when it passes one of them.
 DIFF_SCHEMA = 21
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
@@ -216,6 +219,13 @@ class APIChange:
     # DEPRECATED: the one call form (an ``@overload``) that is deprecated, when the function's
     # other overloads are not: pydantic's ``with_config(*, config: ConfigDict)``.
     call_form: str | None = None
+    # DEPRECATED with ``call_form``: the parameters that only the deprecated overload takes,
+    # none of the other overloads having them (mcp 2.2's ``Server.__init__``:
+    # ``on_set_logging_level``, ``on_roots_list_changed`` and ``on_progress``), in the order of
+    # its signature. A call is in the deprecated form when it passes one of them (the notes name
+    # them; selection.form). [] when the overloads differ otherwise (by a type, or a positional
+    # parameter); None without ``call_form``, and in a diff made before DIFF_SCHEMA 21.
+    call_form_only: list[str] | None = None
     # Every public path that leads to the changed object, in either version: where it is
     # defined and where it is re-exported (``pkg.fetch`` for ``pkg.dl.fetch``); for a class
     # member, each path of its class with the member's name. ``path`` and ``also`` included,
@@ -1352,10 +1362,10 @@ class _Differ:
             old_marks = decorator_deprecations(old_obj)
             if pep702_message(old_obj) is not None or any(m[0] is None for m in old_marks):
                 continue  # already deprecated
-            form = None
+            form, only = None, None
             if message is not None:
                 marks = [(None, message, None)]
-                form = _deprecated_form(obj)
+                form, only = _deprecated_form(obj)
             old_params = _parameter_names(old_obj)
             for parameter, text, decorator in marks:
                 if parameter is not None and (
@@ -1372,6 +1382,7 @@ class _Differ:
                     deprecation_file=_file_of(obj) if text else None,
                     deprecated_by=decorator,
                     call_form=form,
+                    call_form_only=only,
                     old_signature=signature_of(old_obj),
                     new_signature=signature_of(obj),
                     old_doc=doc_summary(old_obj),
@@ -3752,18 +3763,32 @@ def _pep702_decorator(obj: Any) -> Any:
     return None
 
 
-def _deprecated_form(obj: Any) -> str | None:
+def _deprecated_form(obj: Any) -> tuple[str | None, list[str] | None]:
     """The signature of the ``@overload`` of ``obj`` that PEP 702 deprecates, when the function
     itself and its other overloads are not (pydantic's ``with_config(*, config=...)``,
-    cachetools' ``cached`` with a positional ``info``): only that call form is deprecated."""
+    cachetools' ``cached`` with a positional ``info``): only that call form is deprecated. With
+    it, the parameters that only the deprecated overloads take (APIChange.call_form_only): []
+    when the other overloads take every one of them too. ``(None, None)`` for a function that
+    is deprecated as a whole, or not at all."""
     overloads = list(getattr(obj, "overloads", None) or [])
     if obj not in overloads and _pep702_decorator(obj) is not None:
-        return None
+        return None, None
     marked = [o for o in overloads if _pep702_decorator(o) is not None]
     if not marked or len(marked) == len(overloads):
-        return None
+        return None, None
     signature = signature_of(marked[0]) or ""
-    return signature.split(" -> ")[0] or None
+    others = {name for o in overloads if o not in marked for name in _overload_parameters(o)}
+    only = [n for o in marked for n in _overload_parameters(o) if n not in others]
+    return signature.split(" -> ")[0] or None, list(dict.fromkeys(only))
+
+
+def _overload_parameters(fn: Any) -> list[str]:
+    """The names of ``fn``'s parameters, ``self`` and ``cls`` left out; [] when griffe has
+    none for it."""
+    try:
+        return [p.name for p in fn.parameters if p.name not in ("self", "cls")]
+    except Exception:
+        return []
 
 
 def _resolves_to_pep702(obj: Any, path: str) -> bool:

@@ -67,11 +67,11 @@ def test_httpx_0_28_removed_proxies_and_app() -> None:
         "`Client()` no longer accepts `proxies`; do not pass it. Use `proxy` or `mounts` "
         "instead of `proxies`. [diff + library]"
     )
-    # For `app` it gives advice ("Use the explicit style ..."), quoted, not a stated name.
+    # For `app` the sentence says more than the name ("Use the explicit style ..."): it is
+    # quoted, and `WSGITransport` is the replacement it states.
     assert diff_note([changes[(PARAM_REMOVED, client, "app")]]).line == (
         "`Client()` no longer accepts `app`; do not pass it. On `app`, httpx 0.27.2 said: "
-        "\"Use the explicit style 'transport=WSGITransport(app=...)' instead.\" since-cutoff "
-        "found no replacement in httpx's deprecation text. [diff]"
+        "\"Use the explicit style 'transport=WSGITransport(app=...)' instead.\" [diff + library]"
     )
 
 

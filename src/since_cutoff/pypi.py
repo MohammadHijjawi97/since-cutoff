@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -90,6 +91,41 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+# What of PyPI's ``info`` the cache keeps: the summary and the URLs are for the notes
+# (notes.new_package_note; changelog_url).
+_INFO_KEPT = ("name", "version", "summary", "project_urls", "home_page")
+# A project URL that documents the releases, by the label PyPI shows (lower case, spaces and
+# hyphens dropped), in the order tried.
+_CHANGELOG_LABELS = (
+    "changelog",
+    "changes",
+    "releasenotes",
+    "releases",
+    "history",
+    "whatsnew",
+    "news",
+)
+_GITHUB_REPO = re.compile(
+    r"^https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s#?]+?)(?:\.git)?(?:[/?#].*)?$"
+)
+
+
+def changelog_url(urls: Mapping[str, str]) -> str | None:
+    """Where a package documents its releases, from its project URLs (:meth:`PyPI.project_urls`):
+    the URL labelled Changelog, Changes, Release notes, Releases, History, What's new or News,
+    else the releases page of the GitHub repository another URL names
+    (``https://github.com/owner/repo/releases``). None when neither is there."""
+    by_label = {re.sub(r"[\s_-]+", "", k.lower()): v.strip() for k, v in urls.items()}
+    for label in _CHANGELOG_LABELS:
+        if by_label.get(label, "").startswith(("https://", "http://")):
+            return by_label[label]
+    for value in urls.values():
+        m = _GITHUB_REPO.match(value.strip())
+        if m and m.group(2).lower() not in ("issues", "discussions", "sponsors"):
+            return f"https://github.com/{m.group(1)}/{m.group(2)}/releases"
+    return None
+
+
 class PyPI:
     def __init__(self, cache: DiskCache, *, max_download_mb: float = 80.0) -> None:
         self.cache = cache
@@ -118,8 +154,13 @@ class PyPI:
 
     # ----------------------------------------------------------------- metadata
     def project(self, name: str) -> dict[str, Any]:
+        """The package's PyPI JSON, cut down to what the scan reads: ``info`` (name, version,
+        summary, project_urls, home_page) and ``releases``. Cached for METADATA_TTL; a cached
+        copy from before the info held the URLs is fetched again."""
         key = canonicalize_name(name)
         cached = self.cache.get("pypi", key, max_age=METADATA_TTL)
+        if cached is not None and "project_urls" not in (cached.get("info") or {}):
+            cached = None
         if cached is not None:
             if self._stale:  # another process may have reached PyPI meanwhile
                 with self._locks_guard:
@@ -132,7 +173,7 @@ class PyPI:
         try:
             data = net.get_json(PYPI_JSON.format(name=key))
             slim = {
-                "info": {k: data["info"].get(k) for k in ("name", "version", "summary")},
+                "info": {k: data["info"].get(k) for k in _INFO_KEPT},
                 "releases": dict(data.get("releases") or {}),
             }
         except net.HTTPError as exc:
@@ -163,6 +204,22 @@ class PyPI:
         with self._locks_guard:
             self._stale[key] = (entry, day, time.monotonic())
         return dict(entry)
+
+    def summary(self, name: str) -> str | None:
+        """PyPI's one-line summary of the package, from the cached metadata; None without."""
+        text = (self.project(name).get("info") or {}).get("summary")
+        return str(text).strip() or None if text else None
+
+    def project_urls(self, name: str) -> dict[str, str]:
+        """The package's project URLs on PyPI (``project_urls`` of its JSON; ``home_page`` as
+        "Homepage" when the URLs do not name one), from the cached metadata. {} for a cached
+        copy made before the metadata kept them, or a package that lists none."""
+        info = self.project(name).get("info") or {}
+        urls = {str(k): str(v) for k, v in (info.get("project_urls") or {}).items() if v}
+        home = info.get("home_page")
+        if home and not any(k.lower() == "homepage" for k in urls):
+            urls["Homepage"] = str(home)
+        return urls
 
     def releases(self, name: str) -> list[Release]:
         out: list[Release] = []

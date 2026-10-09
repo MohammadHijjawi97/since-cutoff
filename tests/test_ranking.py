@@ -559,8 +559,13 @@ def test_a_name_bound_to_a_method_and_the_method_are_one_api(tmp_path) -> None:
         assert [n.line for n in scan.scope_notes(SCOPE_USED)] == [note.line]
     scan = _scan(tmp_path, package, "import pkg\n")
     notes = scan.scope_notes(SCOPE_IMPORTED)
-    assert [n.api for n in notes] == ["pkg.duplicate_space", "pkg.upload", "pkg.other"]
+    # ``upload`` and ``other`` say the same (removed, no text): one bullet for both.
+    assert [n.api for n in notes] == ["pkg.duplicate_space", "pkg.other"]
     assert notes[0].line == note.line
+    assert notes[1].line == (
+        "`pkg.other` and `pkg.upload` were removed; do not use them. since-cutoff found no "
+        "replacement in pkg's deprecation text. [diff]"
+    )
 
 
 # ----------------------------------------------------------- 3. the ranking
@@ -794,15 +799,23 @@ def test_mcp_2_leads_with_the_package_move_and_the_renames(tmp_path) -> None:
         "[diff + move checked]",
         "`FastMCP` is now `MCPServer`: `mcp.server.FastMCP` moved to `mcp.server.MCPServer`; "
         "import it with `from mcp.server import MCPServer`. [diff + move checked]",
-        "`mcp.client.streamable_http.streamablehttp_client` was removed; do not use it. Use "
-        "`mcp.client.streamable_http.streamable_http_client` instead. [diff + library]",
+        # Its text, "Use :class:`X` for ..., or :class:`Y` for ... instead.", states both.
+        "`mcp.client.auth.extensions.client_credentials.RFC7523OAuthClientProvider` was removed; "
+        "do not use it. Use `mcp.client.auth.extensions.client_credentials."
+        "ClientCredentialsOAuthProvider` or `mcp.client.auth.extensions.client_credentials."
+        "PrivateKeyJWTOAuthProvider` instead. [diff + library]",
     ]
-    # With a bigger budget the next ones follow; the package's move still counts once.
+    # With a bigger budget the next ones follow; the package's move still counts once, and
+    # two APIs that say the same share one bullet (8 APIs, 7 notes).
     more = scan.scope_notes(SCOPE_IMPORTED, per_package=8)
-    assert more[:5] == scan.scope_notes(SCOPE_IMPORTED) and len(more) == 8
+    assert more[:5] == scan.scope_notes(SCOPE_IMPORTED) and len(more) == 7
     assert more[5].line == (
-        "`ClientSession.list_prompts()` no longer accepts `cursor`; do not pass it. Use `params` "
-        "instead of `cursor`. [diff + library]"
+        "`mcp.client.streamable_http.streamablehttp_client` was removed; do not use it. Use "
+        "`mcp.client.streamable_http.streamable_http_client` instead. [diff + library]"
+    )
+    assert more[6].line == (
+        "`ClientSession.list_prompts()` and `ClientSession.list_resource_templates()` no longer "
+        "accept `cursor`; do not pass it. Use `params` instead of `cursor`. [diff + library]"
     )
     assert sum(n.change.is_package_move for n in more) == 1
     # A server written for mcp 1 uses the package's move and the rename, in the old form.
