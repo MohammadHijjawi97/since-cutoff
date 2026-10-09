@@ -11,6 +11,11 @@
   reseller listings.
 - The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
   the existing read-only tools; listing them needs no network or API key.
+- `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
+  end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
+  set in many containers). argparse wrote them itself, past the check for a closed pipe:
+  Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
+  exited with 0.
 - PEP 702's `@deprecated` imported through a library's compatibility module (`from
   pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
   Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the

@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, TYPE_CHECKING, Any, cast
 
 from rich.console import Console
 from rich.markup import escape
@@ -90,6 +90,9 @@ from since_cutoff.sync import (
     written_text,
 )
 from since_cutoff.taskfile import read_tasks, tasks_document, write_tasks
+
+if TYPE_CHECKING:
+    from _typeshed import SupportsWrite
 
 COMMANDS = ("run", "scan", "sync", "status", "models", "cache", "unapply", "mcp")
 # ``scan --fail-on``: what makes it exit with code 3 (report.fail_reason).
@@ -182,6 +185,23 @@ class _Output:
 
 STDOUT = _Output("stdout")
 STDERR = _Output("stderr")
+
+
+class _Parser(argparse.ArgumentParser):
+    """An ArgumentParser whose help, usage, ``--version`` and errors go through STDOUT and
+    STDERR. argparse writes them itself, so with an unbuffered stream (PYTHONUNBUFFERED, common
+    in containers) a closed pipe shows up at its write, not at the last flush that :func:`main`
+    turns into OUTPUT_CLOSED: Python 3.11 and later ignore the error there and exit with 0,
+    3.10 lets it out as a traceback. Subcommands get the same class."""
+
+    def _print_message(self, message: str, file: SupportsWrite[str] | None = None) -> None:
+        if message:
+            out: SupportsWrite[str] = file if file is not None else STDERR
+            if out is sys.stdout:
+                out = STDOUT
+            elif out is sys.stderr:
+                out = STDERR
+            out.write(message)
 
 
 def _isatty(stream: Any) -> bool:
@@ -378,7 +398,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="since-cutoff",
         description="Find which dependency APIs your code uses changed after your coding model's "
         "training cutoff, and write short AGENTS.md notes from the API diff, each with its source.",
