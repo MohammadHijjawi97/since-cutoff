@@ -17,9 +17,10 @@ import shutil
 import tarfile
 import tempfile
 import threading
+import time
 import zipfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -34,6 +35,10 @@ from since_cutoff.errors import NoCodeError, PackageIndexError
 
 PYPI_JSON = "https://pypi.org/pypi/{name}/json"
 METADATA_TTL = 12 * 3600
+# When PyPI cannot be reached, how long an older cached release list is used without asking
+# PyPI again: long enough for one scan's many lookups of a package, short enough that a
+# long-running process (the MCP server) tries again.
+STALE_REUSE = 600
 # 3: the marker lists the compiled modules that have no source or stub (SourceTree.compiled).
 SOURCE_SCHEMA = 3
 _SOURCE_SUFFIXES = (".py", ".pyi")
@@ -92,6 +97,20 @@ class PyPI:
         self.max_download_bytes = int(max_download_mb * _MB)
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
+        # Release lists served from a cache entry older than METADATA_TTL because PyPI could
+        # not be reached: canonical name -> (the entry, the day it was fetched, when it was
+        # last tried). Reused for STALE_REUSE seconds, so that each later lookup in a scan does
+        # not wait for the retries again.
+        self._stale: dict[str, tuple[dict[str, Any], date, float]] = {}
+
+    @property
+    def stale(self) -> dict[str, date]:
+        """The packages whose release list is an older cached copy because PyPI could not be
+        reached, with the day each copy was fetched: releases published after it are unknown.
+        A package leaves it once PyPI answers for it again.
+        """
+        with self._locks_guard:
+            return {name: day for name, (_, day, _) in sorted(self._stale.items())}
 
     def _lock(self, key: str) -> threading.Lock:
         with self._locks_guard:
@@ -102,7 +121,14 @@ class PyPI:
         key = canonicalize_name(name)
         cached = self.cache.get("pypi", key, max_age=METADATA_TTL)
         if cached is not None:
+            if self._stale:  # another process may have reached PyPI meanwhile
+                with self._locks_guard:
+                    self._stale.pop(key, None)
             return dict(cached)
+        with self._locks_guard:
+            stale = self._stale.get(key)
+        if stale is not None and time.monotonic() - stale[2] < STALE_REUSE:
+            return dict(stale[0])
         try:
             data = net.get_json(PYPI_JSON.format(name=key))
             slim = {
@@ -112,11 +138,31 @@ class PyPI:
         except net.HTTPError as exc:
             if exc.status == 404:
                 raise PackageIndexError(f"'{name}' is not on PyPI") from exc
+            fallback = self._stale_copy(key) if exc.transient else None
+            if fallback is not None:
+                return fallback
             raise PackageIndexError(f"could not reach PyPI for '{name}': {exc.reason}") from exc
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise PackageIndexError(f"PyPI returned an unexpected response for '{name}'") from exc
         self.cache.set("pypi", key, slim)
+        with self._locks_guard:
+            self._stale.pop(key, None)
         return slim
+
+    def _stale_copy(self, key: str) -> dict[str, Any] | None:
+        """The cached release list of ``key``, however old, for when PyPI cannot be reached;
+        recorded in :attr:`stale`. None when there is none."""
+        entry = self.cache.get("pypi", key)
+        if not isinstance(entry, dict):
+            return None
+        try:
+            fetched = self.cache.path("pypi", key).stat().st_mtime
+        except OSError:
+            return None
+        day = datetime.fromtimestamp(fetched, tz=timezone.utc).date()
+        with self._locks_guard:
+            self._stale[key] = (entry, day, time.monotonic())
+        return dict(entry)
 
     def releases(self, name: str) -> list[Release]:
         out: list[Release] = []
@@ -147,6 +193,12 @@ class PyPI:
             for r in releases:
                 if r.parsed == public:
                     return r
+        day = self.stale.get(canonicalize_name(name))
+        if day is not None:  # it may well be on PyPI, published after the cached copy
+            raise PackageIndexError(
+                f"{name}=={version} is not in the cached PyPI metadata from {day.isoformat()}; "
+                "PyPI could not be reached"
+            )
         raise PackageIndexError(f"{name}=={version} is not on PyPI")
 
     def latest(self, name: str) -> Release:

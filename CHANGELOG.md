@@ -28,6 +28,11 @@
   library's own decorator, which `run` does not probe because type checkers do not report
   it, and was missed on an `@overload`. Diffs cached by earlier versions are recomputed once
   (diff schema 20).
+- When PyPI cannot be reached (no network, a timeout, 429 or 5xx after the retries), a
+  package's release list cached more than 12 hours ago is used instead of failing, and the
+  scan and the MCP tools warn from which day each such copy is: releases published after it
+  are unknown (#54). A version the older copy does not list is reported as missing from it,
+  not from PyPI. A 404, or any other answer from PyPI, is still an error.
 - A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
   (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
   stub), is no longer reported as removed, nor is what it defines or a name a readable

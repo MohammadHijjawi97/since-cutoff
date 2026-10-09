@@ -360,6 +360,19 @@ class UsedAPI:
         return list(dict.fromkeys(u.file for u in self.uses if u.file))
 
 
+def stale_warning(stale: dict[str, date]) -> str:
+    """The scan's warning when PyPI could not be reached and release lists came from older
+    cached copies (:attr:`PyPI.stale`: each package with the day its copy was fetched)."""
+    listed = [f"{name} (cached {day.isoformat()})" for name, day in stale.items()]
+    names = listed[0] if len(listed) == 1 else ", ".join(listed[:-1]) + " and " + listed[-1]
+    one = len(listed) == 1
+    return (
+        f"PyPI could not be reached: the release list{'' if one else 's'} of {names} "
+        f"{'is an older copy' if one else 'are older copies'} from the cache, so releases "
+        f"published after {'that day' if one else 'those days'} are unknown to this scan"
+    )
+
+
 def unread_warning(s: PackageScan) -> str:
     """The scan's warning for a package whose pinned release ships compiled modules that hid
     something the release at the cutoff had (:attr:`PackageScan.unread`)."""
@@ -379,6 +392,10 @@ class ScanResult:
     target: ModelTarget
     packages: list[PackageScan]
     warnings: list[str] = field(default_factory=list)
+    # The packages whose release list is an older cached copy because PyPI could not be
+    # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
+    # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
+    stale: dict[str, date] = field(default_factory=dict)
 
     @property
     def changed(self) -> list[PackageScan]:
@@ -1074,6 +1091,12 @@ class Engine:
             if s.unread:
                 warnings.append(unread_warning(s))
                 self.reporter.warn(warnings[-1])
+        # Only this scan's packages: a PyPI object outlives a scan in the MCP server.
+        names = {s.name for s in scans}
+        stale = {k: v for k, v in self.pypi.stale.items() if k in names}
+        if stale:
+            warnings.append(stale_warning(stale))
+            self.reporter.warn(warnings[-1])
         for s in scans:
             s.imported = project.imports(s.import_names) if s.import_names else None
         # Every report lists the packages in this order: those with changes first, of those
@@ -1081,7 +1104,7 @@ class Engine:
         scans.sort(
             key=lambda s: (s.status != CHANGED, not s.imported, *(-n for n in s.counts), s.name)
         )
-        return ScanResult(project, target, scans, warnings)
+        return ScanResult(project, target, scans, warnings, stale)
 
     def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
         scan = PackageScan(dep.key, dep.version, dep.source, dep.direct)

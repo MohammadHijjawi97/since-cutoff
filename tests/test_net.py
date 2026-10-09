@@ -152,6 +152,17 @@ def test_http_errors_read_as_one_short_line(status, body, reason) -> None:
     assert str(exc) == f"https://pypi.org/pypi/x/json: {reason}"
 
 
+@pytest.mark.parametrize(
+    ("status", "transient"),
+    [(None, True), (429, True), (503, True), (529, True), (404, False), (403, False)],
+)
+def test_a_failure_retrying_may_fix_is_transient(status, transient) -> None:
+    """What request() retries; PyPI falls back to an older cached copy on these."""
+    assert net.HTTPError("https://pypi.org/pypi/x/json", status).transient is transient
+    too_large = net.ResponseTooLarge("https://x", None, "response of 10 bytes or more")
+    assert too_large.transient is False  # the same answer again
+
+
 def test_json_helpers_send_and_parse_utf8_json(http_server) -> None:
     http_server.routes["/j"] = [Reply(body={"a": [1, "é"]})]
     assert net.get_json(f"{http_server.url}/j") == {"a": [1, "é"]}

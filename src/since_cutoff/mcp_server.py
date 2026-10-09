@@ -54,6 +54,7 @@ from since_cutoff.engine import (
     ScanResult,
     Settings,
     UsedAPI,
+    stale_warning,
     unread_warning,
 )
 from since_cutoff.errors import ModelLookupError, PackageIndexError, SinceCutoffError
@@ -307,6 +308,9 @@ class Tools:
         ]
         if target is not None and target.note:
             head.append(f"- {target.note}")
+        stale = {k: v for k, v in self.pypi.stale.items() if k == canonicalize_name(name)}
+        if stale:  # releases after the cached copy are unknown, so "to" may not be the latest
+            head.append(f"- Warning: {stale_warning(stale)}")
         if new.parsed <= old.parsed:
             head += ["", f"No changes: {new.version} is not newer than {old.version}."]
             return "\n".join(head) + "\n"
@@ -605,6 +609,8 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
         out.append(f"- {target.note}")
     out += [f"- Warning: {w}" for w in project.warnings]  # (`only` gets its own line below)
     out += [f"- Warning: {unread_warning(p)}" for p in scan.packages if p.unread]
+    if scan.stale:
+        out.append(f"- Warning: {stale_warning(scan.stale)}")
     out.append(
         f"- API changed after the cutoff: {len(changed)}; first released after it: {len(new)}; "
         f"unchanged or older: {len(quiet)}; not checked: {len(skipped)}"

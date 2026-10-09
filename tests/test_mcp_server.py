@@ -8,6 +8,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -146,6 +147,20 @@ def test_project_changes_says_when_a_compiled_module_was_not_compared(tmp_path, 
         str(make_app(tmp_path, "fastlib==2.0", "import fastlib\n")), cutoff="2025-07"
     )
     assert COMPILED_WARNING in out.splitlines()
+
+
+def test_the_tools_say_when_a_release_list_is_an_older_copy(tmp_path, tools, fake_pypi) -> None:
+    """Issue #54: when PyPI could not be reached, the tools say which release lists are older
+    cached copies, as the CLI's scan does; a newer release may be missing from them."""
+    fake_pypi._stale["toylib"] = ({}, date(2026, 9, 20), time.monotonic())
+    warning = (
+        "- Warning: PyPI could not be reached: the release list of toylib (cached 2026-09-20) "
+        "is an older copy from the cache, so releases published after that day are unknown to "
+        "this scan"
+    )
+    assert warning in tools.api_changes("toylib", cutoff="2025-07").splitlines()
+    out = tools.project_changes(str(make_app(tmp_path)), cutoff="2025-07")
+    assert warning in out.splitlines()
 
 
 def test_api_changes_lists_hard_breaks_first_with_replacements(tools: Tools) -> None:
