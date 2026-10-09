@@ -8,6 +8,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,20 @@ def test_unknown_models_fail_with_close_matches(tools: Tools) -> None:
 
 
 # ----------------------------------------------------------------- api_changes
+def test_the_tools_say_when_a_release_list_is_an_older_copy(tmp_path, tools, fake_pypi) -> None:
+    """Issue #54: when PyPI could not be reached, the tools say which release lists are older
+    cached copies, as the CLI's scan does; a newer release may be missing from them."""
+    fake_pypi._stale["toylib"] = ({}, date(2026, 9, 20), time.monotonic())
+    warning = (
+        "- Warning: PyPI could not be reached: the release list of toylib (cached 2026-09-20) "
+        "is an older copy from the cache, so releases published after that day are unknown to "
+        "this scan"
+    )
+    assert warning in tools.api_changes("toylib", cutoff="2025-07").splitlines()
+    out = tools.project_changes(str(make_app(tmp_path)), cutoff="2025-07")
+    assert warning in out.splitlines()
+
+
 def test_api_changes_lists_hard_breaks_first_with_replacements(tools: Tools) -> None:
     out = tools.api_changes("toylib", model="claude-sonnet-4-5")
     assert out.startswith("# toylib 1.0 -> 2.0\n")

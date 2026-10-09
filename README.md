@@ -762,7 +762,9 @@ meaning the same as `checks.example_type_checks`).
   inspection off; only `.py`/`.pyi` files are extracted, with path and size checks). The model's
   answers are only type-checked, locally, with basedpyright.
 - **Fetches** public package metadata and wheels from PyPI, and model cutoffs from models.dev (a
-  snapshot is bundled for offline use). Each downloaded wheel or sdist is checked against the
+  snapshot is bundled for offline use). Release lists are cached for 12 hours; when PyPI cannot
+  be reached, an older cached copy is used and the scan says from which day it is. Each
+  downloaded wheel or sdist is checked against the
   sha256 that PyPI lists before extraction. Git, path, workspace and private-index dependencies
   are never looked up on public PyPI by name. `status` fetches nothing.
 - **Sends** prompts only in `run`, and only to the model provider you choose: package names,

@@ -13,7 +13,7 @@ import tarfile
 import time
 import tracemalloc
 import zipfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +21,11 @@ import pytest
 
 from since_cutoff import pypi as pypi_module
 from since_cutoff.cache import DiskCache
+from since_cutoff.engine import Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
+from since_cutoff.project import load_project
 from since_cutoff.pypi import METADATA_TTL, PyPI, SourceTree, _safe_target, is_placeholder
-from tests.conftest import LocalServer, Reply, write_tree
+from tests.conftest import LocalServer, Reply, ScriptedModel, write_tree
 
 METADATA = "Metadata-Version: 2.1\nName: toy\nVersion: 1.0\n"
 
@@ -135,6 +137,132 @@ def test_metadata_is_fetched_once_kept_slim_and_refreshed_after_its_ttl(index, c
     os.utime(cache.path("pypi", "toy-lib"), (old, old))
     PyPI(cache).project("toy-lib")
     assert index.server.paths() == ["/pypi/toy-lib/json"] * 2
+
+
+# Issue #54: when PyPI cannot be reached, a release list cached days ago beats none at all.
+FETCHED = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+UNREACHABLE = {
+    "503": Reply(503, "Service Unavailable"),
+    "429": Reply(429, "Too Many Requests"),
+    "cut-off": Reply(body={"info": {}, "releases": {}}, cut=5),  # no status: a network error
+}
+
+
+def _cached_then(index: Index, cache: DiskCache, reply: Reply) -> None:
+    """toy 1.0's release list in the cache, fetched on FETCHED, and PyPI answering ``reply``."""
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    PyPI(cache).project("toy")
+    os.utime(cache.path("pypi", "toy"), (FETCHED.timestamp(), FETCHED.timestamp()))
+    index.server.routes["/pypi/toy/json"] = [reply]
+
+
+@pytest.mark.parametrize("reply", UNREACHABLE.values(), ids=UNREACHABLE.keys())
+def test_an_older_cached_release_list_is_used_when_pypi_cannot_be_reached(
+    index, cache, slept, reply
+) -> None:
+    _cached_then(index, cache, reply)
+    pypi = PyPI(cache)
+    assert [r.version for r in pypi.releases("toy")] == ["1.0"]
+    assert pypi.stale == {"toy": date(2026, 9, 20)}
+    assert len(slept) == 2  # it tried as hard as for any other request first
+    # The rest of the run uses that copy without asking PyPI again.
+    asked = len(index.server.paths("/pypi/"))
+    assert pypi.release("Toy", "1.0").version == "1.0"
+    assert pypi.version_at("toy", date(2026, 1, 1)).version == "1.0"
+    assert len(index.server.paths("/pypi/")) == asked
+    # A version the copy does not list may be newer than the copy, not missing from PyPI.
+    with pytest.raises(PackageIndexError) as err:
+        pypi.release("toy", "2.0")
+    assert str(err.value) == (
+        "toy==2.0 is not in the cached PyPI metadata from 2026-09-20; PyPI could not be reached"
+    )
+
+
+def test_a_long_running_process_asks_pypi_again(index, cache, slept, monkeypatch) -> None:
+    """The MCP server keeps one PyPI for its whole life: an older copy is reused for
+    STALE_REUSE seconds, then PyPI is asked again, and its answer replaces the copy."""
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    pypi = PyPI(cache)
+    pypi.project("toy")
+    asked = len(index.server.paths("/pypi/"))
+    pypi.project("toy")
+    assert len(index.server.paths("/pypi/")) == asked  # within STALE_REUSE: the copy
+    monkeypatch.setattr(pypi_module, "STALE_REUSE", 0)
+    index.add("toy", "2.0", "toy-2.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    assert pypi.release("toy", "2.0").version == "2.0"
+    assert len(index.server.paths("/pypi/")) == asked + 1
+    assert pypi.stale == {}
+
+
+def test_a_copy_another_process_refreshed_is_no_longer_stale(index, cache, slept) -> None:
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    pypi = PyPI(cache)
+    pypi.project("toy")
+    assert pypi.stale == {"toy": date(2026, 9, 20)}
+    os.utime(cache.path("pypi", "toy"))  # written just now, by another since-cutoff
+    pypi.project("toy")
+    assert pypi.stale == {}
+
+
+def test_without_a_cached_release_list_an_unreachable_pypi_is_an_error(index, cache, slept):
+    index.server.routes["/pypi/toy/json"] = [Reply(503, "Service Unavailable")]
+    pypi = PyPI(cache)
+    with pytest.raises(PackageIndexError, match="could not reach PyPI for 'toy': HTTP 503"):
+        pypi.project("toy")
+    assert pypi.stale == {}
+
+
+@pytest.mark.parametrize(
+    ("reply", "message"),
+    [
+        (Reply(404, "Not Found"), "'toy' is not on PyPI"),
+        # A proxy that refuses the request is an answer, not a network that went away.
+        (Reply(403, "Forbidden"), "could not reach PyPI for 'toy': HTTP 403: Forbidden"),
+    ],
+    ids=["404", "403"],
+)
+def test_an_answer_from_pypi_is_not_covered_by_an_older_copy(
+    index, cache, slept, reply, message
+) -> None:
+    _cached_then(index, cache, reply)
+    pypi = PyPI(cache)
+    with pytest.raises(PackageIndexError) as err:
+        pypi.project("toy")
+    assert str(err.value) == message
+    assert pypi.stale == {}
+
+
+def test_a_scan_says_which_release_lists_are_older_copies(index, cache, slept, tmp_path):
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    app = write_tree(
+        tmp_path / "app", {"requirements.txt": "toy==1.0\n", "main.py": "import toy\n"}
+    )
+    settings = Settings(model="scripted:scripted-1", cutoff=date(2025, 7, 31), jobs=2)
+    engine = Engine(
+        settings,
+        store=cache,
+        llm_cache=cache,
+        pypi=PyPI(cache),
+        provider_factory=lambda spec: ScriptedModel(),
+    )
+    scan = engine.scan(load_project(app), engine.resolve_target())
+    assert scan.package("toy").locked == "1.0"
+    assert scan.warnings == [
+        "PyPI could not be reached: the release list of toy (cached 2026-09-20) is an older "
+        "copy from the cache, so releases published after that day are unknown to this scan"
+    ]
+    # The same PyPI (as in the MCP server) scanning a project without toy says nothing of it.
+    index.add("other", "1.0", "other-1.0-py3-none-any.whl", wheel({"other/__init__.py": ""}))
+    other = write_tree(tmp_path / "other-app", {"requirements.txt": "other==1.0\n"})
+    assert engine.scan(load_project(other), engine.resolve_target()).warnings == []
+
+
+def test_the_warning_names_every_older_copy() -> None:
+    assert stale_warning({"anthropic": date(2026, 9, 20), "openai": date(2026, 9, 21)}) == (
+        "PyPI could not be reached: the release lists of anthropic (cached 2026-09-20) and "
+        "openai (cached 2026-09-21) are older copies from the cache, so releases published "
+        "after those days are unknown to this scan"
+    )
 
 
 @pytest.mark.parametrize(
