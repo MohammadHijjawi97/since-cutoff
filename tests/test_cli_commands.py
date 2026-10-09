@@ -9,9 +9,11 @@ import io
 import json
 import os
 import runpy
+import shutil
 import sys
 import textwrap
 import threading
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +113,75 @@ def test_cache_clear_says_what_it_removed(tmp_path, monkeypatch, capsys) -> None
     assert not root.exists()  # it held nothing else
     assert cli.main(["cache", "clear"]) == 0
     assert capsys.readouterr().out == f"cleared nothing in {root}\n"
+
+
+def test_cache_clear_can_remove_one_kind_and_keep_the_model_output(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "c"
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(root))
+    for namespace in ("pypi", "sources", "sources-meta", "diffs", "answers", "tasks"):
+        (root / namespace / "entry").mkdir(parents=True)
+    assert cli.main(["cache", "clear", "--sources"]) == 0
+    assert capsys.readouterr().out == f"cleared sources, sources-meta in {root}\n"
+    assert sorted(p.name for p in root.iterdir()) == ["answers", "diffs", "pypi", "tasks"]
+    assert cli.main(["cache", "clear", "--pypi", "--diffs"]) == 0
+    assert capsys.readouterr().out == f"cleared pypi, diffs in {root}\n"
+    assert sorted(p.name for p in root.iterdir()) == ["answers", "tasks"]  # what run paid for
+    assert cli.main(["cache", "clear", "--sources"]) == 0
+    assert capsys.readouterr().out == f"cleared nothing in {root}\n"
+
+
+def test_cache_kind_flags_go_with_clear_only(capsys) -> None:
+    assert cli.main(["cache", "info", "--sources", "--pypi"]) == 2
+    err = capsys.readouterr().err
+    assert "cache info takes no --sources, --pypi: the kinds go with clear" in err
+
+
+def test_cache_info_lists_each_kind_with_its_size(tmp_path, monkeypatch, capsys) -> None:
+    root = tmp_path / "c"
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(root))
+    monkeypatch.delenv("SINCE_CUTOFF_CACHE_MAX_MB", raising=False)
+    (root / "pypi").mkdir(parents=True)
+    (root / "pypi" / "toy.json").write_bytes(b"x" * (3 * 1024 * 1024 // 2))
+    (root / "answers").mkdir()
+    (root / "answers" / "k.json").write_text("{}")
+    tree = root / "sources" / "toy-1.0"
+    (tree / "toy").mkdir(parents=True)
+    (tree / "toy" / "__init__.py").write_bytes(b"y" * 1024)
+    (tree / ".since-cutoff.json").write_text("{}")
+    assert cli.main(["cache", "info"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == str(root)
+    assert lines[1].split() == ["kind", "size", "entries", "files", "oldest"]
+    rows = {line.split()[0]: line.split() for line in lines[2:-1]}
+    assert list(rows) == [*cli_cache_kinds(), "total"]
+    assert rows["pypi"][1:6] == ["1.5", "MB", "1", "1", date.today().isoformat()]
+    assert rows["sources"][1:6] == ["0.0", "MB", "1", "2", date.today().isoformat()]
+    assert rows["diffs"][1:5] == ["0.0", "MB", "0", "0"] and len(rows["diffs"]) == 5
+    assert rows["answers"][-7:] == ["model", "output:", "costs", "money", "to", "make", "again"]
+    assert rows["total"][1:6] == ["1.5", "MB", "3", "4", date.today().isoformat()]
+    assert lines[-1].startswith("sources cap: 2,048 MB (SINCE_CUTOFF_CACHE_MAX_MB)")
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "0")
+    assert cli.main(["cache", "info"]) == 0
+    assert (
+        capsys.readouterr().out.splitlines()[-1]
+        == "sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB=0)"
+    )
+
+
+def cli_cache_kinds() -> list[str]:
+    from since_cutoff.cache import NAMESPACES
+
+    return list(NAMESPACES)
+
+
+def test_cache_info_works_on_a_cache_that_does_not_exist(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(tmp_path / "none"))
+    assert cli.main(["cache", "info"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == str(tmp_path / "none")
+    assert lines[-2].split() == ["total", "0.0", "MB", "0", "0"]
 
 
 # ------------------------------------------------------------------ models
@@ -273,6 +344,25 @@ class _SolverDown(ScriptedModel):
         if system.startswith("You write evaluation tasks"):
             return super().complete(system, user)
         raise ProviderError("claude call failed: rate limited")
+
+
+def test_run_without_basedpyright_stops_before_the_scan_and_names_the_extra(
+    tmp_path, capsys, scripted_cli, monkeypatch
+) -> None:
+    """basedpyright is the ``since-cutoff[run]`` extra: without it, ``run`` says so at once,
+    before PyPI or the model is asked anything; ``scan`` does not need it."""
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setitem(sys.modules, "basedpyright", None)  # makes the import fail
+    root = make_project(tmp_path)
+    scripted_cli.append(ScriptedModel())
+    assert cli.main(run_argv(root, "--no-fix")) == 1
+    err = capsys.readouterr().err
+    assert "run checks the model's answers with the basedpyright type checker" in err
+    assert 'pip install "since-cutoff[run]"' in err
+    assert "uvx --with basedpyright since-cutoff run" in err
+    assert len(scripted_cli) == 1  # no engine was built, so no model was taken
+    assert not (root / ".since-cutoff").exists()  # and nothing was scanned
+    assert cli.main(["scan", str(root), *CUTOFF]) == 0
 
 
 def test_a_run_where_every_model_call_failed_is_an_error(tmp_path, capsys, scripted_cli) -> None:

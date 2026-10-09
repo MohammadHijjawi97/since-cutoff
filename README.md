@@ -130,12 +130,17 @@ uvx since-cutoff scan
 # write those notes into AGENTS.md (shows the diff and asks first); run it again after upgrades
 uvx since-cutoff sync
 
-# optional: measure which of the changes your model gets wrong, and test the notes (calls it)
-uvx since-cutoff run
+# optional: measure which of the changes your model gets wrong, and test the notes (calls it;
+# --with adds the basedpyright type checker, which only run needs)
+uvx --with basedpyright since-cutoff run
 ```
 
 Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) and run
-`since-cutoff`. Run it from your project root: it reads `uv.lock`, `poetry.lock`, `pdm.lock`,
+`since-cutoff`. `run` type-checks the model's answers with
+[basedpyright](https://github.com/DetachHead/basedpyright), an extra of 180 MB that the other
+commands never use: `pip install "since-cutoff[run]"` (or `pipx install "since-cutoff[run]"`)
+installs it; without it, `run` stops at once and says so.
+Run it from your project root: it reads `uv.lock`, `poetry.lock`, `pdm.lock`,
 `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` or a `.venv`
 (not `setup.py` or `setup.cfg`). Without `--model` it uses the model your coding agent is set
 up with, from the Claude Code, Codex, Gemini CLI, OpenCode or Aider settings; for any other
@@ -776,7 +781,11 @@ meaning the same as `checks.example_type_checks`).
   `--annotate github` put it in a CI job's summary and annotations, and the MCP tool
   `project_changes` gives it to the agent that asked, which passes tool results to its model.
 - **Stores** results in `.since-cutoff/` in your project (it ignores itself in git) and a local
-  cache (`since-cutoff cache path` shows it, `since-cutoff cache clear` removes it). `sync` (after
+  cache: `since-cutoff cache info` shows where it is and its size by kind, `since-cutoff cache
+  clear` removes it, or with `--sources`, `--diffs` or `--pypi` only that kind (the model's
+  answers to `run`, which cost money, are kept). The extracted package sources, the bulk of it,
+  are capped at 2 GB (`SINCE_CUTOFF_CACHE_MAX_MB`; 0 for no cap): after a new version is
+  extracted, the least recently used ones go, never one a running scan uses. `sync` (after
   you agree, or with `--yes`) and `run --apply` write one marked block into AGENTS.md or CLAUDE.md
   and leave the rest of the file byte-for-byte unchanged; `since-cutoff unapply` removes the
   block.

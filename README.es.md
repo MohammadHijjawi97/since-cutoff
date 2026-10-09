@@ -139,7 +139,7 @@ uvx since-cutoff scan
 uvx since-cutoff sync
 
 # opcional: mide en qué cambios se equivoca tu modelo y prueba las notas (llama al modelo)
-uvx since-cutoff run
+uvx --with basedpyright since-cutoff run
 ```
 
 También puedes instalarlo con `pipx install since-cutoff` (o `pip install since-cutoff`) y

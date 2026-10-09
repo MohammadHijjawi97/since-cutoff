@@ -130,7 +130,7 @@ class Checker:
         self.cache = cache
         self.python_version = python_version or f"{sys.version_info.major}.{sys.version_info.minor}"
         self.timeout = timeout
-        self._command = _pyright_command()
+        self._command = pyright_command()
 
     # ----------------------------------------------------------------- env
     def _isolated_python(self) -> Path:
@@ -225,14 +225,25 @@ class Checker:
         return results
 
 
-def _pyright_command() -> list[str]:
+# basedpyright (and the Node.js it brings) is an extra of the package, ``since-cutoff[run]``:
+# only ``run`` type-checks anything, and the two make up most of an installation.
+NOT_INSTALLED = (
+    "run checks the model's answers with the basedpyright type checker, which is not "
+    'installed: pip install "since-cutoff[run]", or uvx --with basedpyright since-cutoff run'
+)
+
+
+def pyright_command() -> list[str]:
+    """How to start basedpyright: the executable on PATH, else the installed module. Raises
+    :class:`CheckerError` naming the install when there is neither, so that ``run`` can fail
+    before it scans anything or calls a model."""
     exe = shutil.which("basedpyright")
     if exe:
         return [exe]
     try:
         import basedpyright  # noqa: F401
     except ImportError as exc:
-        raise CheckerError("basedpyright is not installed (pip install basedpyright)") from exc
+        raise CheckerError(NOT_INSTALLED) from exc
     return [sys.executable, "-m", "basedpyright"]
 
 

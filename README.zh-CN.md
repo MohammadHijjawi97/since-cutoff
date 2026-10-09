@@ -90,7 +90,7 @@ uvx since-cutoff scan
 uvx since-cutoff sync
 
 # 可选：测出你的模型会写错哪些变更，并测试这些说明（会调用模型）
-uvx since-cutoff run
+uvx --with basedpyright since-cutoff run
 ```
 
 也可以用 `pipx install since-cutoff`（或 `pip install since-cutoff`）安装，然后运行 `since-cutoff`。请在项目根目录运行：它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。

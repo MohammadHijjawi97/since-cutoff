@@ -37,7 +37,9 @@ welcome, and first-time contributors are very welcome.
 | `report.py` | Terminal, Markdown and JSON reports |
 | `mcp_server.py` | The `since-cutoff mcp` server and its tools (`Tools` diffs in-process; `Tools(processes=True)`, as the server uses, in worker processes) |
 | `providers/` | Model providers (Claude Code CLI, Anthropic, OpenAI-compatible APIs) |
-| `cli.py` | Command-line interface |
+| `cache.py` | The disk cache: JSON entries, the sizes `cache info` shows, and the cap on the extracted sources |
+| `cli.py` | Command-line interface; it imports the modules above only in the commands that use them, so that `--help` and `status --hook` start fast |
+| `progress.py` | The CLI's progress output with rich: stage lines, a live bar in a terminal, lines in a log |
 
 ## Development setup
 
@@ -45,8 +47,11 @@ welcome, and first-time contributors are very welcome.
 git clone https://github.com/MohammadHijjawi97/since-cutoff
 cd since-cutoff
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e . pytest pytest-cov hypothesis ruff mypy
+pip install -e ".[run]" pytest pytest-cov hypothesis ruff mypy
 ```
+
+`[run]` adds basedpyright, which `since-cutoff run` and the tests marked `pyright` need; the
+other commands do without it.
 
 ## Checks
 
