@@ -11,6 +11,11 @@
   reseller listings.
 - The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
   the existing read-only tools; listing them needs no network or API key.
+- `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
+  end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
+  set in many containers). argparse wrote them itself, past the check for a closed pipe:
+  Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
+  exited with 0.
 - A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
   (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
   stub), is no longer reported as removed, nor is what it defines or a name a readable
