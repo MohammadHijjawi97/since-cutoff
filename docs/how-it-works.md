@@ -85,7 +85,15 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    now" offers only names that are new in the same owner. A positional parameter renamed in
    place is one change, with the new name as a suggestion. A removed `*args` or `**kwargs` is
    reported as such (its parameter in results.json is `*args` or `**kwargs`), unless the new
-   signature names the parameters it took.
+   signature names the parameters it took. A `**kwargs` annotated `Unpack[SomeTypedDict]`
+   (PEP 692) takes the TypedDict's keys and no other keyword, so a keyword the release at the
+   cutoff took and the pinned release's TypedDict has not is a removed parameter (pandas 3.0's
+   `read_csv(delim_whitespace=...)`, whose overloads end in `**kwds: Unpack[_read_shared]`); a
+   key that moved to a base TypedDict is still a key, and a bare `**kwargs` takes anything. A
+   change to a method or attribute carries the paths of the public classes that inherit it
+   without overriding it (`pandas.DataFrame.fillna` for `NDFrame.fillna`), so that code
+   calling it on them is matched. Each change says whether its API is public or internal
+   (`tier` in results.json; see [What the numbers mean](#what-the-numbers-mean-and-do-not-mean)).
 
    Not reported, because code written for the old version still works or never used them:
    - a name still listed in `__all__` of a module that binds names the source does not spell
@@ -94,7 +102,13 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    - a member a class may still inherit: from a standard-library base, from a base the package
      vendors, or from a base in another package when the removed override called the base's
      method; and a module function the old version attached to a class that is now a method of
-     it;
+     it. An attribute the old class set itself and the new class may get from a base in another
+     package (fastapi 0.143's `APIRoute(starlette.routing.Route)` no longer assigns `path`,
+     `endpoint`, `name` and `methods`; starlette's `Route` does) is unknown, not removed, since
+     since-cutoff did not read that base: the scan warns once per package that the class's
+     attributes were not compared (the compiled-module warning says the same of its modules).
+     typing's constructs (`TypedDict`, `Generic`) set no attributes, so a key dropped from a
+     TypedDict is still removed;
    - a function the new version declares only with `@overload`, as most stubs do;
    - names bound only under `if __name__ == "__main__":` or on some `if`/`try` paths, loggers,
      type variables, `TYPE_CHECKING`, imports that `from x import *` copies, generated
@@ -146,7 +160,9 @@ the files that import the package, and statically (nothing is run):
   when the module lists the name in `__all__`);
 - a method or attribute where the file reads it on the class, or on what the file shows is an
   instance of the class (`client = anthropic.Anthropic(); client.messages.create(...)`), or on
-  `self` or `super()` in a subclass of it;
+  `self` or `super()` in a subclass of it; a method counts under every public class that
+  inherits it without overriding it (`df.fillna(method="ffill")` on a `DataFrame` for the
+  change to `NDFrame.fillna`);
 - a constructor where the class is called, under any name of the class;
 - a parameter only where it is passed by keyword to that very callable: `temperature=` passed to
   another library's `create` in the same file does not count. An SDK's beta mirror
@@ -609,9 +625,17 @@ meaning the same as `checks.example_type_checks`).
   [Where the code uses a changed API](#where-the-code-uses-a-changed-api)); nothing is run, and a
   file that only calls the API is "uses this API".
 - In `scan`, "**breaking**" and "**deprecated**" count each change once, however many import
-  paths reach it. "**Imported by your code**" means a file of the project imports the package
-  (by its import names); dependencies whose API changed come first, the imported ones first
-  among them.
+  paths reach it, and only the changes to **public** APIs: an API is public when the package's
+  top level exports it (`pkg.Thing`), a module it is reached through names it in `__all__`, or
+  it is documented (a docstring, at a path with no private part); a member counts with its
+  class, and a method a public class inherits is public. The rest are **internal** (fastapi
+  0.143's `dependencies.utils.get_flat_dependant`, uvicorn's `config.LOOP_SETUPS` and its
+  `loops.*` modules), counted once as "+N internal" next to the public counts; `scan --all
+  --internal` and the MCP tools' `include_internal` list them, report.md lists them after the
+  public ones, and results.json has every change with its `tier`. The notes are not affected:
+  they cover the APIs the code uses, whichever tier. "**Imported by your code**" means a file
+  of the project imports the package (by its import names); dependencies whose API changed
+  come first, the imported ones first among them.
 - "**Stale API use in X of Y probed dependencies**": Y is the number of dependencies with at
   least one scored probe; X is how many of them had at least one probe scored *stale*.
 - Probes cover a **sample** of the breaking changes (ranked as above), not all of them.

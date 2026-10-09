@@ -17,9 +17,13 @@ from since_cutoff.apidiff import (
     PARAM_REMOVED,
     PARAM_REQUIRED,
     REMOVED,
+    TIER_INTERNAL,
+    TIER_PUBLIC,
+    UNREAD_BASE,
     APIChange,
     diff_sources,
     diff_sources_with_unread,
+    unread_text,
 )
 from since_cutoff.selection import collapse
 from tests.conftest import write_tree
@@ -923,3 +927,351 @@ def test_placeholder_modules_for_missing_backends_are_not_api(tmp_path):
     }
     new = {"pkg/__init__.py": "", "pkg/utils/__init__.py": ""}
     assert diff(tmp_path, old, new) == []
+
+
+# ------------------------------------------------- **kwargs: Unpack[TypedDict] (issue #60)
+# pandas 2.3.1's read_csv: the implementation and its overloads name every keyword.
+READ_CSV_2 = '''
+from typing import Literal, overload
+
+
+@overload
+def read_csv(path, *, iterator: Literal[True], chunksize: int | None = ..., sep: str = ...,
+             delim_whitespace: bool = ..., date_parser=..., infer_datetime_format: bool = ...) -> int: ...
+@overload
+def read_csv(path, *, iterator: bool = ..., chunksize: None = ..., sep: str = ...,
+             delim_whitespace: bool = ..., date_parser=..., infer_datetime_format: bool = ...) -> str: ...
+def read_csv(path, *, iterator: bool = False, chunksize: int | None = None, sep: str = ",",
+             delim_whitespace: bool = False, date_parser=None, infer_datetime_format: bool = False):
+    """Read a csv.
+
+    delim_whitespace : bool, default False
+        .. deprecated:: 2.2.0
+            Use ``sep="\\\\s+"`` instead.
+    """
+'''
+# pandas 3.0.6's: they take the shared keywords through ``**kwds: Unpack[_read_shared[T]]``,
+# a TypedDict with a base (``sep`` is the base's key) and ``total=False``.
+READ_CSV_3 = '''
+from typing import Generic, Literal, TypedDict, TypeVar, overload
+from typing_extensions import Unpack
+
+T = TypeVar("T")
+
+
+class _base(TypedDict, total=False):
+    sep: str
+
+
+class _read_shared(_base, Generic[T], total=False):
+    header: int | None
+
+
+@overload
+def read_csv(path, *, iterator: Literal[True], chunksize: int | None = ..., **kwds: Unpack[_read_shared[T]]) -> int: ...
+@overload
+def read_csv(path, *, iterator: bool = ..., chunksize: None = ..., **kwds: Unpack[_read_shared[T]]) -> str: ...
+def read_csv(path, *, iterator: bool = False, chunksize: int | None = None, **kwds: Unpack[_read_shared[T]]):
+    """Read a csv."""
+'''
+
+
+def test_keywords_a_typed_kwargs_no_longer_takes_are_removed_parameters(tmp_path):
+    """pandas 2.3.1 -> 3.0.6 (issue #60): ``delim_whitespace``, ``date_parser`` and
+    ``infer_datetime_format`` are gone from ``read_csv``, whose signatures now end in
+    ``**kwds: Unpack[_read_shared]``. griffe takes a ``**kwargs`` for any keyword and reports
+    nothing; the TypedDict's keys say which keywords it takes."""
+    changes = diff(tmp_path, {"pkg/__init__.py": READ_CSV_2}, {"pkg/__init__.py": READ_CSV_3})
+    assert found(changes) == {
+        (PARAM_REMOVED, "pkg.read_csv", "date_parser"),
+        (PARAM_REMOVED, "pkg.read_csv", "delim_whitespace"),
+        (PARAM_REMOVED, "pkg.read_csv", "infer_datetime_format"),
+    }
+    whitespace = next(c for c in changes if c.parameter == "delim_whitespace")
+    assert whitespace.tier == TIER_PUBLIC
+    assert 'Use ``sep="\\s+"`` instead.' in (whitespace.hint or "")  # its docstring entry
+    assert (whitespace.new_signature or "").endswith("**kwds)")
+    assert whitespace.describe(versioned=False) == (
+        "`pkg.read_csv(delim_whitespace=...)`: parameter `delim_whitespace` was removed"
+    )
+
+
+def test_a_bare_kwargs_still_takes_every_keyword(tmp_path):
+    """Without a TypedDict nothing says what ``**kwargs`` takes, so nothing is removed: as
+    before, on the implementation and on overloads alike."""
+    new = READ_CSV_3.replace("**kwds: Unpack[_read_shared[T]]", "**kwds")
+    assert diff(tmp_path, {"pkg/__init__.py": READ_CSV_2}, {"pkg/__init__.py": new}) == []
+
+
+def test_a_typed_dict_key_that_moved_to_a_base_is_not_removed(tmp_path):
+    """A key both versions take through the TypedDict: moved to a base TypedDict, it is still
+    a key (``sep``); dropped from it, it is a removed parameter (``verbose``), although the
+    two signatures read the same."""
+    old = {
+        "pkg/__init__.py": "from typing import TypedDict\nfrom typing_extensions import Unpack\n\n"
+        "class _opts(TypedDict, total=False):\n    sep: str\n    verbose: bool\n\n"
+        "def read(path, **kwds: Unpack[_opts]):\n    pass\n"
+    }
+    new = {
+        "pkg/__init__.py": "from typing import TypedDict\nfrom typing_extensions import Unpack\n\n"
+        "class _base(TypedDict, total=False):\n    sep: str\n\n"
+        "class _opts(_base, total=False):\n    pass\n\n"
+        "def read(path, **kwds: Unpack[_opts]):\n    pass\n"
+    }
+    assert found(diff(tmp_path, old, new)) == {(PARAM_REMOVED, "pkg.read", "verbose")}
+    # A positional parameter that became a key of the TypedDict is still accepted.
+    old = {"pkg/__init__.py": "def read(path, sep=','):\n    pass\n"}
+    assert diff(tmp_path / "key", old, new) == []
+
+
+def test_a_typed_dict_from_outside_the_package_takes_any_keyword(tmp_path):
+    """The keys of a TypedDict of another package, or of one with a base there, cannot be read
+    (nothing is imported): such a ``**kwargs`` takes any keyword, as a bare one does."""
+    old = {"pkg/__init__.py": "def read(path, sep=',', verbose=False):\n    pass\n"}
+    new = {
+        "pkg/__init__.py": "from typing_extensions import Unpack\nfrom otherlib import Options\n\n"
+        "def read(path, **kwds: Unpack[Options]):\n    pass\n"
+    }
+    assert diff(tmp_path, old, new) == []
+    new = {
+        "pkg/__init__.py": "from typing_extensions import Unpack\nfrom otherlib import Options\n\n"
+        "class _opts(Options, total=False):\n    sep: str\n\n"
+        "def read(path, **kwds: Unpack[_opts]):\n    pass\n"
+    }
+    assert diff(tmp_path / "base", old, new) == []
+
+
+# ------------------------------------------------------ inherited methods (audit item 3b)
+# pandas 2.3.1 -> 3.0.6: NDFrame.fillna lost ``method``. DataFrame inherits fillna, Series
+# overrides it (and lost ``method`` too).
+INIT = 'from pkg.core.frame import DataFrame\nfrom pkg.core.series import Series\n__all__ = ["DataFrame", "Series"]\n'
+FRAMES = {
+    "pkg/__init__.py": INIT,
+    "pkg/core/__init__.py": "",
+    "pkg/core/frame.py": "from pkg.core.generic import NDFrame\n\nclass DataFrame(NDFrame):\n    pass\n",
+}
+FILLNA_OLD = {
+    **FRAMES,
+    "pkg/core/generic.py": "class NDFrame:\n    def fillna(self, value=None, method=None):\n        pass\n",
+    "pkg/core/series.py": "from pkg.core.generic import NDFrame\n\nclass Series(NDFrame):\n"
+    "    def fillna(self, value=None, method=None):\n        return super().fillna(value, method)\n",
+}
+FILLNA_NEW = {
+    **FRAMES,
+    "pkg/core/generic.py": "class NDFrame:\n    def fillna(self, value=None):\n        pass\n",
+    "pkg/core/series.py": "from pkg.core.generic import NDFrame\n\nclass Series(NDFrame):\n"
+    "    def fillna(self, value=None):\n        return super().fillna(value)\n",
+}
+
+
+def test_a_parameter_change_to_an_inherited_method_carries_the_subclass_paths(tmp_path):
+    """Code calls ``df.fillna(method=...)`` on a DataFrame, which inherits ``fillna`` from
+    NDFrame without overriding it: the change to ``NDFrame.fillna`` is reported under the
+    DataFrame's paths too (``import_paths``, which the scan matches the code against; ``also``
+    and ``occurrences`` show them). Series overrides it, so its change is its own."""
+    changes = diff(tmp_path, FILLNA_OLD, FILLNA_NEW)
+    assert found(changes) == {
+        (PARAM_REMOVED, "pkg.core.generic.NDFrame.fillna", "method"),
+        (PARAM_REMOVED, "pkg.core.series.Series.fillna", "method"),
+    }
+    fillna = next(c for c in changes if c.owner == "NDFrame")
+    assert fillna.import_paths == [
+        "pkg.DataFrame.fillna",
+        "pkg.core.frame.DataFrame.fillna",
+        "pkg.core.generic.NDFrame.fillna",
+    ]
+    assert fillna.also == ["pkg.DataFrame.fillna", "pkg.core.frame.DataFrame.fillna"]
+    assert fillna.occurrences == 2  # NDFrame, and the one subclass that inherits it
+    series = next(c for c in changes if c.owner == "Series")
+    assert series.import_paths == ["pkg.Series.fillna", "pkg.core.series.Series.fillna"]
+    assert series.occurrences == 1
+    # NDFrame itself is undocumented and not exported: the public DataFrame makes it public.
+    assert fillna.tier == TIER_PUBLIC
+
+
+def test_a_subclass_that_gets_the_method_from_another_base_is_not_a_path(tmp_path):
+    old = {
+        **FILLNA_OLD,
+        "pkg/core/series.py": "from pkg.core.generic import NDFrame\n\nclass Mixin:\n"
+        "    def fillna(self, value=None):\n        pass\n\n"
+        "class Series(Mixin, NDFrame):\n    pass\n",
+    }
+    new = {**FILLNA_NEW, "pkg/core/series.py": old["pkg/core/series.py"]}
+    (fillna,) = diff(tmp_path, old, new)
+    assert "pkg.Series.fillna" not in (fillna.import_paths or [])  # Series.fillna is Mixin's
+    assert fillna.occurrences == 2
+
+
+# ------------------------------------------ attributes of a base outside the package (item 7)
+def test_attributes_a_base_outside_the_package_may_set_are_unknown_not_removed(tmp_path):
+    """fastapi 0.116.1 -> 0.143.0: ``APIRoute(starlette.routing.Route)`` no longer assigns
+    ``path``, ``endpoint``, ``name`` and ``methods`` itself; starlette's ``Route`` does, which
+    since-cutoff did not read. They are not removed; the scan says the class's attributes
+    were not compared. A method the class dropped, with no ``super()`` call, is still
+    removed."""
+    old = {
+        "pkg/__init__.py": "",
+        "pkg/routing.py": "from starlette import routing\n\nclass APIRoute(routing.Route):\n"
+        "    def __init__(self, path, endpoint):\n        self.path = path\n"
+        "        self.endpoint = endpoint\n        self.methods = ['GET']\n"
+        "    def secure(self):\n        pass\n",
+    }
+    new = {
+        "pkg/__init__.py": "",
+        "pkg/routing.py": "from starlette import routing\n\nclass APIRoute(routing.Route):\n"
+        "    def __init__(self, path, endpoint):\n        super().__init__(path, endpoint)\n",
+    }
+    changes, hid = unread(tmp_path, old, new)
+    assert changes == {(REMOVED, "pkg.routing.APIRoute.secure", None)}
+    assert hid == [f"pkg.routing.APIRoute{UNREAD_BASE}starlette.routing.Route"]
+    assert unread_text("fastapi", "0.143.0", "0.116.1", hid) == (
+        "fastapi 0.143.0: pkg.routing.APIRoute inherits from starlette.routing.Route, which "
+        "since-cutoff did not read; the attributes it sets are not compared"
+    )
+    # What it reported before: four attributes removed.
+    assert (
+        len(diff(tmp_path / "before", old, new)) == 1
+        and len(found(diff(tmp_path / "b", old, {}))) == 1
+    )
+
+
+@pytest.mark.parametrize("module", ["typing", "typing_extensions"])
+def test_a_key_dropped_from_a_typed_dict_is_removed(tmp_path, module):
+    """anthropic 0.60 -> 1.8: ``MessageCreateParamsBase(TypedDict)`` lost ``top_k``. typing's
+    constructs are bases outside the package that set no attributes: the key is removed, and
+    the class is not an unread entry."""
+    old = {
+        "pkg/__init__.py": f"from {module} import TypedDict\n\n"
+        "class Params(TypedDict, total=False):\n    model: str\n    top_k: int\n"
+    }
+    new = {
+        "pkg/__init__.py": f"from {module} import TypedDict\n\n"
+        "class Params(TypedDict, total=False):\n    model: str\n"
+    }
+    assert unread(tmp_path, old, new) == ({(REMOVED, "pkg.Params.top_k", None)}, [])
+
+
+def test_a_removed_attribute_of_a_class_with_an_in_package_base_is_still_reported(tmp_path):
+    base = "class Base:\n    def __init__(self):\n        self.x = 1\n\n"
+    old = {
+        "pkg/__init__.py": base + "class Route(Base):\n    def __init__(self):\n"
+        "        super().__init__()\n        self.path = '/'\n"
+    }
+    new = {
+        "pkg/__init__.py": base + "class Route(Base):\n    def __init__(self):\n"
+        "        super().__init__()\n"
+    }
+    assert unread(tmp_path, old, new) == ({(REMOVED, "pkg.Route.path", None)}, [])
+
+
+def test_the_unread_warning_names_compiled_modules_and_unread_bases():
+    entries = [
+        "pkg._core",
+        f"pkg.routing.APIRoute{UNREAD_BASE}starlette.routing.Route",
+        f"pkg.routing.APIWebSocketRoute{UNREAD_BASE}starlette.routing.WebSocketRoute",
+        f"pkg.params.Body{UNREAD_BASE}pydantic.fields.FieldInfo",
+        f"pkg.params.Param{UNREAD_BASE}pydantic.fields.FieldInfo",
+    ]
+    assert unread_text("pkg", "2.0", "1.0", entries) == (
+        "pkg 2.0: pkg._core is a compiled module without a .py source or a .pyi stub, unlike "
+        "in 1.0; since-cutoff does not run code, so changes to it and to the names taken from "
+        "it are not reported. pkg.routing.APIRoute inherits from starlette.routing.Route, and "
+        "pkg.routing.APIWebSocketRoute inherits from starlette.routing.WebSocketRoute, and "
+        "pkg.params.Body and pkg.params.Param inherit from pydantic.fields.FieldInfo, which "
+        "since-cutoff did not read; the attributes they set are not compared"
+    )
+    # The compiled-module warning reads as before (test_engine.py asserts it in a scan).
+    assert unread_text("pkg", "2.0", "1.0", ["pkg.a", "pkg.b"]) == (
+        "pkg 2.0: pkg.a, pkg.b are compiled modules without a .py source or a .pyi stub, "
+        "unlike in 1.0; since-cutoff does not run code, so changes to them and to the names "
+        "taken from them are not reported"
+    )
+
+
+# ---------------------------------------------------------- public and internal (item 12)
+def tiers(changes: list[APIChange]) -> dict[str, str | None]:
+    return {f"{c.path}({c.parameter})" if c.parameter else c.path: c.tier for c in changes}
+
+
+def test_the_tier_says_whether_the_changed_api_is_public(tmp_path):
+    """fastapi 0.116.1 -> 0.143.0's "35 breaking changes" were mostly internal helpers
+    (``dependencies.utils.get_flat_dependant``), uvicorn's ``config.LOOP_SETUPS`` and
+    ``loops.*``. An API is public when the package's top level exports it, a module names it
+    in ``__all__``, or it is documented; a member takes its class's tier."""
+    old = {
+        "pkg/__init__.py": "from pkg.core import Client\n__all__ = ['Client']\n",
+        "pkg/core.py": "__all__ = ['Client', 'Listed']\n\nclass Client:\n    def gone(self):\n"
+        "        pass\n\nclass Listed:\n    pass\n",
+        "pkg/utils.py": 'def documented():\n    """Does a thing."""\n\ndef helper():\n'
+        "    pass\n\nLOOP_SETUPS = {}\n\nclass Quiet:\n    def gone(self):\n        pass\n",
+        "pkg/loops/__init__.py": "",
+        "pkg/loops/asyncio.py": "def asyncio_setup():\n    pass\n",
+    }
+    new = {
+        "pkg/__init__.py": "from pkg.core import Client\n__all__ = ['Client']\n",
+        "pkg/core.py": "__all__ = ['Client']\n\nclass Client:\n    pass\n",
+        "pkg/utils.py": "class Quiet:\n    pass\n",
+        "pkg/loops/__init__.py": "",
+    }
+    assert tiers(diff(tmp_path, old, new)) == {
+        "pkg.core.Client.gone": TIER_PUBLIC,  # its class is exported at the top level
+        "pkg.core.Listed": TIER_PUBLIC,  # in its module's __all__ (the old version's)
+        "pkg.utils.documented": TIER_PUBLIC,
+        "pkg.utils.helper": TIER_INTERNAL,
+        "pkg.utils.LOOP_SETUPS": TIER_INTERNAL,
+        "pkg.utils.Quiet.gone": TIER_INTERNAL,
+        "pkg.loops.asyncio": TIER_INTERNAL,  # a module below the top level, undocumented
+    }
+    # A top-level module is public, documented or not; so is a top-level import name.
+    old = {"pkg/__init__.py": "", "pkg/loops.py": "def setup():\n    pass\n"}
+    assert tiers(diff(tmp_path / "module", old, {"pkg/__init__.py": ""})) == {
+        "pkg.loops": TIER_PUBLIC
+    }
+    assert tiers(diff(tmp_path / "top", {"fastmod.py": "X = 1\n"}, {}, names=("fastmod",))) == {
+        "fastmod": TIER_PUBLIC
+    }
+
+
+def test_a_member_inherited_by_a_public_class_is_public(tmp_path):
+    """A removal folded over the classes that inherited it (one change) is public when one of
+    them is: fastapi's ``BaseModelWithConfig.Config``, removed under 34 paths, is internal
+    because none of the 34 models is exported or documented."""
+    old = {
+        "pkg/__init__.py": "from pkg.models import Contact\n__all__ = ['Contact']\n",
+        "pkg/models.py": "class Base:\n    class Config:\n        extra = 'allow'\n\n"
+        "class Contact(Base):\n    pass\n\nclass Tag(Base):\n    pass\n",
+    }
+    new = {
+        "pkg/__init__.py": old["pkg/__init__.py"],
+        "pkg/models.py": "class Base:\n    pass\n\nclass Contact(Base):\n    pass\n\n"
+        "class Tag(Base):\n    pass\n",
+    }
+    (config,) = diff(tmp_path, old, new)
+    assert (config.path, config.occurrences, config.tier) == (
+        "pkg.models.Base.Config",
+        3,
+        TIER_PUBLIC,
+    )
+    old["pkg/__init__.py"] = new["pkg/__init__.py"] = ""
+    (config,) = diff(tmp_path / "internal", old, new)
+    assert config.tier == TIER_INTERNAL
+    # Twins merged into one change: public when either is (``Client`` is documented,
+    # ``AsyncClient`` is not).
+    old = {
+        "pkg/__init__.py": "",
+        "pkg/clients.py": 'class Client:\n    """The client."""\n\n'
+        "    def send(self, x, temperature=1.0):\n        pass\n\n"
+        "class AsyncClient:\n    async def send(self, x, temperature=1.0):\n        pass\n",
+    }
+    new = {
+        **old,
+        "pkg/clients.py": 'class Client:\n    """The client."""\n\n    def send(self, x):\n'
+        "        pass\n\nclass AsyncClient:\n    async def send(self, x):\n        pass\n",
+    }
+    (send,) = diff(tmp_path / "twins", old, new)
+    assert (send.path, send.occurrences, send.tier) == ("pkg.clients.Client.send", 2, TIER_PUBLIC)
+    new["pkg/clients.py"] = old["pkg/clients.py"].replace(
+        "async def send(self, x, temperature=1.0)", "async def send(self, x)"
+    )
+    (send,) = diff(tmp_path / "async", old, new)
+    assert (send.path, send.tier) == ("pkg.clients.AsyncClient.send", TIER_INTERNAL)

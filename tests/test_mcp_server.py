@@ -439,6 +439,7 @@ def test_server_speaks_mcp_and_turns_failures_into_tool_errors(tools: Tools) -> 
                 "to_version",
                 "symbol",
                 "limit",
+                "include_internal",
             }
             assert (api.description or "").startswith("List the public API changes")
             # Every parameter is described, with an example, in the input schema.

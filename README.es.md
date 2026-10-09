@@ -91,11 +91,11 @@ están fijadas, la herramienta usa la versión más reciente):
 | anthropic | 0.60.0 | 1.8.0 | `messages.create(temperature=..., top_p=..., top_k=...)` ya no se acepta |
 | huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)`: parámetros que salieron de la firma en la 1.0 (la 2.0.0 aún los acepta en tiempo de ejecución, los ignora y emite un aviso) |
 | langchain-core | 0.3.72 | 1.6.5 | se eliminaron `retriever.get_relevant_documents()` y `llm.predict()` |
-| openai | 1.98.0 | 3.19.2 | 21 cambios incompatibles, 6 obsolescencias nuevas |
+| openai | 1.98.0 | 3.19.2 | 19 cambios incompatibles, 6 obsolescencias nuevas (+3 internal) |
 
 En ese proyecto, 7 de las 9 dependencias cambiaron su API pública después de la fecha de corte.
-El diff estático señala 310 cambios incompatibles y 23 obsolescencias nuevas; el código del
-proyecto usa 2 de las API modificadas.
+El diff estático señala 222 cambios incompatibles y 23 obsolescencias nuevas en API públicas, y
+77 cambios en API internas; el código del proyecto usa 2 de las API modificadas.
 
 No es cosa de un modelo ni de un proveedor. En 36 bibliotecas de IA de Python muy usadas y 21
 modelos de OpenAI, Anthropic, Google, xAI, DeepSeek, Qwen, Moonshot y Mistral, incluso el modelo
@@ -153,12 +153,13 @@ prompts al proveedor del modelo y consume tus créditos de API o tu cuota de uso
 
 Lo que muestra `scan` para el proyecto de ejemplo:
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 en el proyecto de ejemplo. Tu código usa 2 API que cambiaron después de la fecha de corte de entrenamiento de claude-sonnet-4-5 (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, usada en app/main.py, ya no tiene force_filename, local_dir_use_symlinks, resume_download ni proxies en su firma; su nota lleva la etiqueta [diff], y una línea Runtime dice que el código fuente de la 2.0.0 todavía los gestiona, así que las llamadas que los pasan pueden ejecutarse con un aviso. anthropic 0.60.0 -> 1.8.0: Messages.create, llamada en app/main.py, ya no acepta temperature, top_k ni top_p; su nota lleva la etiqueta [diff]. 2 notas listas para AGENTS.md; qué significan uses this API y [diff]; otros 323 cambios en 7 paquetes que el código no usa."></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 en el proyecto de ejemplo. Tu código usa 2 API que cambiaron después de la fecha de corte de entrenamiento de claude-sonnet-4-5 (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, usada en app/main.py, ya no tiene force_filename, local_dir_use_symlinks, resume_download ni proxies en su firma; su nota lleva la etiqueta [diff], y una línea Runtime dice que el código fuente de la 2.0.0 todavía los gestiona, así que las llamadas que los pasan pueden ejecutarse con un aviso. anthropic 0.60.0 -> 1.8.0: Messages.create, llamada en app/main.py, ya no acepta temperature, top_k ni top_p; su nota lleva la etiqueta [diff]. 2 notas listas para AGENTS.md; qué significan uses this API y [diff]; otros 238 cambios en 7 paquetes que el código no usa, y 77 cambios en API internas."></p>
 
 Las dos API aparecen como «uses this API»; un archivo que pasara `resume_download=True` o
 `temperature=0.2` las convertiría en «old form». `scan -v` lista todos los archivos que usan una
-API (se muestran 3), y `scan --all` añade todos los demás cambios, paquete por paquete.
-`scan --json` y `.since-cutoff/results.json` tienen lo mismo en `used_apis` (cada API, dónde se
+API (se muestran 3), y `scan --all` añade todos los demás cambios a una API pública, paquete por
+paquete (`--internal` añade los cambios a API internas, que cada recuento da aparte como
+«+N internal»). `scan --json` y `.since-cutoff/results.json` tienen lo mismo en `used_apis` (cada API, dónde se
 usa, sus cambios y su nota, con las etiquetas de la nota, las versiones a las que se aplica y lo
 que se comprobó), y `.since-cutoff/report.md` empieza por «Used by your code».
 
@@ -550,7 +551,8 @@ Lo que devuelve `api_changes("huggingface-hub", model="claude-haiku-4-5", to_ver
 
 - From 0.29.1 (2025-02-20): the newest release on or before 2025-02-28 (training cutoff of claude-haiku-4-5, from models.dev)
 - To 2.0.0 (2026-09-24): as requested
-- 109 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 56, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1)
+- Warning: huggingface-hub 2.0.0: huggingface_hub.hf_file_system.HfFileSystemFile inherits from fsspec.spec.AbstractBufferedFile, which since-cutoff did not read; the attributes it sets are not compared
+- 100 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 47, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1) (+8 internal)
 
 ## Dependencies switched
 
@@ -568,7 +570,7 @@ Lo que devuelve `api_changes("huggingface-hub", model="claude-haiku-4-5", to_ver
 - `huggingface_hub.snapshot_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
 ...
 
-Not listed: 69 breaking changes, 0 new deprecations (removed or moved 41, parameters removed 28). Narrow with symbol="..." or raise limit.
+Not listed: 60 breaking changes, 0 new deprecations (removed or moved 32, parameters removed 28). Narrow with symbol="..." or raise limit.
 ```
 
 Con `symbol="hf_hub_download"` solo lista los 8 cambios de esa función (`resume_download=`,

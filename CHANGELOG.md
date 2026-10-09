@@ -77,6 +77,36 @@
   PyPI, after a diff schema bump for example; `--check` only says which would change. Two new
   golden pairs, httpx 0.27.2 -> 0.28.1 and click 8.1.8 -> 8.2.0, pin what their changelogs
   document and the notes an agent gets for them (`tests/test_golden_diffs.py`).
+- A parameter removed behind `**kwargs: Unpack[SomeTypedDict]` (PEP 692) is reported (#60).
+  pandas 3.0's `read_csv` and `read_table` take their keywords through `**kwds:
+  Unpack[_read_shared]`, and griffe takes a `**kwargs` for any keyword, so the loss of
+  `delim_whitespace`, `date_parser`, `infer_datetime_format`, `keep_date_col` and `verbose`
+  was not reported. The TypedDict's keys (its bases' included) are now compared like the
+  signature's names; a bare `**kwargs` still takes anything (diff schema 21).
+- A change to a method is matched under the public classes that inherit it without overriding
+  it. pandas 2.3.1 -> 3.0.6's `NDFrame.fillna` lost `method`, and the change carried only
+  `pandas.core.generic.NDFrame.fillna`, a path no code calls, so `df.fillna(method="ffill")`
+  on a `DataFrame` was not a use and the change never reached the report. The change now lists
+  the inheriting classes' paths (`pandas.DataFrame.fillna`) in `import_paths` and `also`, and
+  the scan matches calls on them.
+- An attribute a class set itself at the cutoff and may get from a base in another package in
+  the pinned release is unknown, not removed. fastapi 0.143.0's `APIRoute(starlette.routing
+  .Route)` no longer assigns `path`, `endpoint`, `name` and `methods` (starlette's `Route`
+  does), and the scan reported them as removed. since-cutoff does not read other
+  distributions, so the scan, report.md and the MCP tools warn once per package that the
+  class's attributes were not compared, next to the compiled-module warning. A method the
+  class dropped is still removed; a key dropped from a `TypedDict` too.
+- The counts tell public APIs from internal ones. fastapi 0.116.1 -> 0.143.0 scanned as "35
+  breaking changes", 9 of them helpers such as `dependencies.utils.get_flat_dependant` and 34
+  paths to `BaseModelWithConfig.Config`; uvicorn's were `loops.*`, `config.LOOP_SETUPS` and
+  `main.HTTP_CHOICES`. Each change now has a `tier`: public when the package's top level
+  exports the API, a module names it in `__all__`, or it is documented (a member with its
+  class; a method a public class inherits is public), else internal. The headline counts, the
+  dependency table, `scan --all`, the Action summary and the MCP tools' totals count the
+  public changes and give the internal ones once as "(+N internal)"; `scan --all --internal`
+  and `include_internal` (MCP) list them; report.md lists them after the public ones;
+  results.json and `scan --json` keep every change (`internal_changes` next to
+  `breaking_changes`). The notes are not affected: they cover the APIs the code uses.
 
 ## 0.5.0 - 2026-09-28
 

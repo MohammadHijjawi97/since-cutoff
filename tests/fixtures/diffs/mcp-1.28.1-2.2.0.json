@@ -329,7 +329,8 @@
     ],
     "still_named_at": [],
     "still_named_count": 0
-   }
+   },
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -374,7 +375,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -413,7 +415,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -452,7 +455,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -494,7 +498,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -533,7 +538,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -572,7 +578,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -616,7 +623,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -656,7 +664,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -696,7 +705,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -735,7 +745,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -774,7 +785,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -813,7 +825,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -852,7 +865,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -891,7 +905,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -930,7 +945,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -969,7 +985,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1008,7 +1025,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1047,7 +1065,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1086,7 +1105,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1125,7 +1145,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1166,7 +1187,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1205,7 +1227,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1245,7 +1268,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1285,7 +1309,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1325,7 +1350,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1365,7 +1391,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1405,7 +1432,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1444,7 +1472,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1485,7 +1514,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1531,7 +1561,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1570,7 +1601,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1609,7 +1641,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1653,7 +1686,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1697,7 +1731,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1738,7 +1773,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1779,7 +1815,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1823,7 +1860,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1867,7 +1905,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1911,7 +1950,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1955,7 +1995,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1999,7 +2040,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2043,7 +2085,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2087,7 +2130,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2126,7 +2170,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2165,7 +2210,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2204,7 +2250,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2245,7 +2292,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2286,7 +2334,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2327,7 +2376,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2368,7 +2418,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2409,7 +2460,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2450,7 +2502,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2491,7 +2544,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2532,7 +2586,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2573,7 +2628,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2614,7 +2670,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2655,7 +2712,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2696,7 +2754,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2737,7 +2796,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2778,7 +2838,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2819,7 +2880,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2860,7 +2922,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2899,7 +2962,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2938,7 +3002,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2977,7 +3042,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3016,7 +3082,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3055,7 +3122,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3095,7 +3163,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3135,7 +3204,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3175,7 +3245,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3215,7 +3286,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3255,7 +3327,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3294,7 +3367,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3333,7 +3407,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3372,7 +3447,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3411,7 +3487,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3456,7 +3533,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3495,7 +3573,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3534,7 +3613,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3573,7 +3653,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3612,7 +3693,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3651,7 +3733,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3690,7 +3773,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3731,7 +3815,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3772,7 +3857,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3812,7 +3898,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3851,7 +3938,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3892,7 +3980,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3935,7 +4024,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3978,7 +4068,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4021,7 +4112,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4064,7 +4156,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4083,8 +4176,12 @@
    "deprecation": null,
    "hint": null,
    "suggestions": [],
-   "occurrences": 1,
-   "also": [],
+   "occurrences": 3,
+   "also": [
+    "mcp.ClientSession.send_notification",
+    "mcp.ServerSession.send_notification",
+    "mcp.server.session.ServerSession.send_notification"
+   ],
    "old_kind": null,
    "new_kind": null,
    "namesake": null,
@@ -4092,8 +4189,10 @@
    "call_form": null,
    "import_paths": [
     "mcp.ClientSession.send_notification",
+    "mcp.ServerSession.send_notification",
     "mcp.client.ClientSession.send_notification",
     "mcp.client.session.ClientSession.send_notification",
+    "mcp.server.session.ServerSession.send_notification",
     "mcp.shared.session.BaseSession.send_notification"
    ],
    "hint_source": null,
@@ -4106,7 +4205,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4146,7 +4246,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4185,7 +4286,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4224,7 +4326,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4263,7 +4366,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4302,7 +4406,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4341,7 +4446,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4380,7 +4486,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4420,7 +4527,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4461,7 +4569,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4501,7 +4610,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4541,7 +4651,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4581,7 +4692,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4621,7 +4733,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4663,7 +4776,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4705,7 +4819,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4744,7 +4859,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -4785,7 +4901,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4826,7 +4943,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4867,7 +4985,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4910,7 +5029,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4953,7 +5073,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4996,7 +5117,8 @@
    "deprecation_file": "mcp/server/lowlevel/server.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -5036,7 +5158,8 @@
    "deprecation_file": "mcp/server/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -5076,7 +5199,8 @@
    "deprecation_file": "mcp/server/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -5116,7 +5240,8 @@
    "deprecation_file": "mcp/server/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   }
  ]
 }

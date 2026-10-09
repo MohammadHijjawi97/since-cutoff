@@ -508,6 +508,12 @@ def build_parser() -> argparse.ArgumentParser:
         "summary, the dependency table and the top --limit changes of each changed dependency",
     )
     scan.add_argument(
+        "--internal",
+        action="store_true",
+        help="with --all, list the changes to internal APIs too (not reached from the "
+        "package's top level, named in an __all__ or documented); they are counted apart",
+    )
+    scan.add_argument(
         "--fail-on",
         choices=FAIL_ON,
         action="append",
@@ -880,7 +886,13 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         shown = reporter.warned
         if args.command == "scan":
             render_scan(
-                ui, scan, show_all=args.all, verbose=args.verbose, limit=args.limit, shown=shown
+                ui,
+                scan,
+                show_all=args.all,
+                verbose=args.verbose,
+                limit=args.limit,
+                shown=shown,
+                internal=args.internal,
             )
         else:
             render_console(ui, scan, run, verbose=args.verbose, shown=shown)

@@ -17,11 +17,15 @@ from pathlib import Path
 import pytest
 
 from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
     DEPRECATED,
     DIFF_SCHEMA,
+    MOVED,
     PARAM_REMOVED,
     PARAM_REQUIRED,
     REMOVED,
+    TIER_INTERNAL,
+    TIER_PUBLIC,
     APIChange,
 )
 from since_cutoff.notes import diff_note
@@ -43,6 +47,26 @@ def test_every_fixture_is_current_and_small(path: Path) -> None:
     assert data["schema"] == DIFF_SCHEMA, "re-record it: python scripts/record_diff_fixtures.py"
     assert path.stat().st_size <= MAX_FIXTURE_BYTES
     assert path.stem.startswith(f"{data['package']}-{data['from_version']}-{data['to_version']}")
+    # Every change says whether its API is public or internal (DIFF_SCHEMA 21).
+    assert {c["tier"] for c in data["changes"]} <= {TIER_PUBLIC, TIER_INTERNAL}
+
+
+def test_the_tier_of_real_changes() -> None:
+    """httpx 0.28's parameters all belong to its exported API; click 8.2 deprecated the
+    documented ``OptionParser`` (public) next to its ``parser`` module's helpers (internal);
+    mcp's ``FastMCP`` move is public, a constant of ``client.streamable_http`` is not."""
+    assert {c.tier for c in _changes("httpx-0.27.2-0.28.1").values()} == {TIER_PUBLIC}
+    switch = _changes("openai-2.44.0-3.19.2-switch")[(DEPENDENCY_SWITCHED, "openai", "")]
+    assert switch.tier == TIER_PUBLIC
+    click = _changes("click-8.1.8-8.2.0")
+    assert click[(DEPRECATED, "click.parser.OptionParser", "")].tier == TIER_PUBLIC
+    assert click[(DEPRECATED, "click.parser.split_opt", "")].tier == TIER_INTERNAL
+    # ``ParamType.get_metavar(ctx)``: the 13 types that inherit it are paths to it too.
+    metavar = click[(PARAM_REQUIRED, "click.types.ParamType.get_metavar", "ctx")]
+    assert metavar.occurrences == 14 and "click.Path.get_metavar" in (metavar.import_paths or [])
+    mcp = _changes("mcp-1.28.1-2.2.0")
+    assert mcp[(MOVED, "mcp.server.FastMCP", "")].tier == TIER_PUBLIC
+    assert mcp[(REMOVED, "mcp.client.streamable_http.ACCEPT", "")].tier == TIER_INTERNAL
 
 
 HTTPX_FUNCTIONS = ("request", "stream", "get", "options", "head", "post", "put", "patch", "delete")
