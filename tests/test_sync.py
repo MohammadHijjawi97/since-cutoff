@@ -546,6 +546,70 @@ def test_dry_run_and_check_write_nothing(sc, tmp_path) -> None:
     )
 
 
+def test_sync_json_written_then_current(sc, tmp_path) -> None:
+    root = make_app(tmp_path)
+    code, out = sc("sync", root, *SONNET, "--json", "--yes")
+    result = json.loads(out)
+    assert result["exit_code"] == code == EXIT_OK
+    [target] = result["targets"]
+    assert target["target"] == "AGENTS.md"
+    assert target["action"] == "created"
+    assert target["changed"] and target["written"] and not target["edited"]
+    assert target["model"] == "claude-sonnet-4-5"
+    assert target["cutoff"] == "2025-07-31" and target["scope"] == "used"
+    assert target["notes"] == 2 and target["retest"] == {}
+    assert target["diff_lines"][0] == "--- /dev/null"
+    assert all(set(c) == {"package", "done", "state"} for c in target["changes"])
+    before = agents(root)
+    code, out = sc("sync", root, "--json", "--check")
+    result = json.loads(out)
+    assert result["exit_code"] == code == EXIT_OK
+    [target] = result["targets"]
+    assert target["action"] is None
+    assert not target["changed"] and not target["written"] and target["diff_lines"] == []
+    assert agents(root) == before
+
+
+@pytest.mark.parametrize(
+    "flags, expected", [(("--check",), 3), (("--dry-run",), 0), (("--check", "--dry-run"), 3)]
+)
+def test_sync_json_preview_preserves_exit_codes(sc, tmp_path, flags, expected) -> None:
+    root = make_app(tmp_path)
+    code, out = sc("sync", root, *SONNET, "--json", *flags)
+    result = json.loads(out)
+    assert result["exit_code"] == code == expected
+    [target] = result["targets"]
+    assert target["changed"] and not target["written"]
+    assert target["diff_lines"] and not (root / "AGENTS.md").exists()
+
+
+def test_sync_json_edited_block_and_force(sc, tmp_path) -> None:
+    root = make_app(tmp_path)
+    assert sc("sync", root, *SONNET, "--yes")[0] == EXIT_OK
+    text = agents(root).replace("Client", "EditedClient")
+    write(root / "AGENTS.md", text)
+    code, out = sc("sync", root, "--json", "--yes")
+    result = json.loads(out)
+    assert result["exit_code"] == code == EXIT_EDITED
+    [target] = result["targets"]
+    assert target["edited"] and target["changed"] and not target["written"]
+    assert agents(root) == text
+    code, out = sc("sync", root, "--json", "--yes", "--force")
+    assert json.loads(out)["targets"][0]["written"] and code == EXIT_OK
+
+
+def test_sync_json_requires_noninteractive_mode(sc, tmp_path, capsys, monkeypatch) -> None:
+    def no_prompt(*args):
+        pytest.fail("JSON mode prompted")
+
+    monkeypatch.setattr(cli, "_confirm", no_prompt)
+    # The guard must reject even before reading a nonexistent project.
+    code = cli.main(["sync", str(tmp_path / "missing"), "--json"])
+    captured = capsys.readouterr()
+    assert code == 2 and captured.out == ""
+    assert "--yes" in captured.err and "--check" in captured.err and "--dry-run" in captured.err
+
+
 def test_sync_asks_before_writing(sc, tmp_path, monkeypatch) -> None:
     root = make_app(tmp_path)
     asked: list[str] = []
