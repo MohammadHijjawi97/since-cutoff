@@ -822,6 +822,32 @@ def hook_line(statuses: Sequence[TargetStatus]) -> str | None:
     )
 
 
+def sync_json(proposals: Sequence[Proposal], code: int, written: set[str]) -> dict[str, Any]:
+    """Describe proposals separately from writes, including check/dry-run refusals."""
+    return {
+        "exit_code": code,
+        "targets": [
+            {
+                "target": p.target.name,
+                "action": p.action,
+                "changed": p.changed,
+                "edited": p.edited,
+                "written": p.target.name in written,
+                "model": p.model,
+                "cutoff": p.cutoff.isoformat(),
+                "scope": p.scope,
+                "notes": p.notes,
+                "changes": [
+                    {"package": c.package, "done": c.done, "state": c.state} for c in p.changes
+                ],
+                "retest": p.retest,
+                "diff_lines": list(diff_lines(p)),
+            }
+            for p in proposals
+        ],
+    }
+
+
 def status_json(
     project: Project, statuses: Sequence[TargetStatus], detected: DetectedModel | None
 ) -> dict[str, Any]:

@@ -192,11 +192,22 @@ nothing, and the file keeps its bytes and modification time.
 | `since-cutoff sync --yes` | writes without asking | 0 |
 | `since-cutoff sync --dry-run` | shows the diff, writes nothing | 0 |
 | `since-cutoff sync --check` | writes nothing (for CI and pre-commit) | 0 up to date; 3 out of date |
+| `since-cutoff sync --json --yes` | writes without asking; prints JSON proposals and write results | same as `sync --yes` |
+| `since-cutoff sync --json --check` | prints JSON proposals; writes nothing | 0 up to date; 3 out of date |
+| `since-cutoff sync --json --dry-run` | prints JSON proposals; writes nothing | 0 |
 | `since-cutoff status` | compares the block with the lockfile, offline | 0 current, or no block; 3 out of date; 1 broken markers |
 
 When the block was edited by hand, `sync` and `sync --check` show the diff, write nothing and
 exit with code 4; `sync --force` replaces it. When a package the notes are about cannot be
 checked (PyPI unreachable), `sync` writes nothing and exits with code 1.
+
+`sync --json` requires `--yes`, `--check` or `--dry-run`; without one it exits with code 2
+without prompting. Stdout contains only JSON (and stays empty for usage errors); progress,
+diffs and errors go to stderr. The object contains `exit_code` and `targets`. Each target
+reports `target`, `action`, `changed`, `edited`, `written`, `model`, `cutoff`, `scope`,
+`notes`, `changes` (each package's `package`, `done` and `state`), `retest` and `diff_lines`.
+`written` distinguishes an applied proposal from a preview or a refused hand edit. The usual
+exit codes and `--force` behavior still apply.
 
 `since-cutoff status` reads no network and no code: per package, the version the notes are for
 and the version the lockfile has, whether other dependencies changed, and whether the model

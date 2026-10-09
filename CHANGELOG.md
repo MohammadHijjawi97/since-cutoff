@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `sync --json` reports proposals and write results for scripts, with progress on stderr.
+  It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
 - Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
   `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
