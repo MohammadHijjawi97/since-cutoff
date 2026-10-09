@@ -123,6 +123,8 @@ and to CI through a [GitHub Action and pre-commit hooks](https://github.com/Moha
 
 ## Quick start
 
+Problems with command output or an MCP client? See the [troubleshooting guide](docs/troubleshooting.md).
+
 ```bash
 # the changed APIs your code uses, with a note for each (no model calls, no API key)
 uvx since-cutoff scan
