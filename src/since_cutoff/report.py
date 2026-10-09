@@ -84,6 +84,8 @@ from since_cutoff.selection import (
     CATCHES,
     FORM_LABELS,
     NAME_MATCH,
+    NAME_MATCH_TAG,
+    NAME_ONLY,
     OLD_FORM,
     USE_CALL,
     USE_DEPENDENCY,
@@ -805,6 +807,11 @@ IMPORTED_HINT = (
     "No notes to write. For the changes most likely to matter in the packages your code imports:"
 )
 IMPORTED_COMMAND = "  since-cutoff sync --scope imported"
+# When every API the code uses is matched by a method's name alone (selection.NAME_ONLY).
+NAME_MATCHES_ONLY = (
+    "No notes to write: every use is a name match. `since-cutoff sync --include-name-matches` "
+    "writes them anyway."
+)
 
 
 def render_scan(
@@ -891,17 +898,22 @@ def scan_lines(
         for p in new:
             prose(_new_package_text(p))
     other = None if show_all else _others_text(scan, used)
+    # What `sync` writes: not the APIs matched by a method's name alone, unless asked.
+    ready = [u for u in used if u.match != NAME_ONLY or scan.name_matches]
     if used:
         out.append(Text(""))
-        prose(
-            NOTES_READY.format(
-                count=_plural(len(used), "note"),
-                them="it" if len(used) == 1 else "them",
-                target=_target_name(scan),
-                versions=scan.project.versions_word,
-            ),
-            at=width,
-        )
+        if ready:
+            prose(
+                NOTES_READY.format(
+                    count=_plural(len(ready), "note"),
+                    them="it" if len(ready) == 1 else "them",
+                    target=_target_name(scan),
+                    versions=scan.project.versions_word,
+                ),
+                at=width,
+            )
+        else:
+            prose(NAME_MATCHES_ONLY, at=width)
         # Issue #13 will choose the files for both AGENTS.md and CLAUDE.md; until then, say
         # what Claude Code needs to read notes written to AGENTS.md.
         tip = agents_import_tip(scan.project.root, block_targets(scan.project.root))
@@ -1047,6 +1059,8 @@ def use_text(uses: Sequence[Use], *, code: bool = False) -> str:
         text = f"reads {q(first.names[0])}"
     else:
         text = f"uses {q(first.names[0])}"
+    if first.how == NAME_ONLY:
+        return f"{text} {NAME_MATCH_TAG}"
     return text + (" (matched by name)" if first.how == NAME_MATCH else "")
 
 
@@ -1131,6 +1145,8 @@ def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[
     """One used API in the scan's first section: what changed and the label, where, the note,
     the runtime caveat and the names that merely look similar."""
     label = FORM_LABELS[u.form]
+    if u.match == NAME_ONLY:
+        label += f" {NAME_MATCH_TAG}"
     style = "bold red" if u.form == OLD_FORM else "yellow"
     head = _wrap(api_head(u), max(20, width - len(label) - 4), "  ", "  ")
     out = [Text(line) for line in head[:-1]]
@@ -1208,6 +1224,11 @@ def _form_legend(used: Sequence[UsedAPI]) -> list[str]:
         out.append(
             "uses this API: not in the old form, but an assistant editing this code may write "
             "the old form"
+        )
+    if any(u.match == NAME_ONLY for u in used):
+        out.append(
+            f"{NAME_MATCH_TAG}: matched by the method's name alone, on a value whose class the "
+            "code does not show; not written to the notes unless --include-name-matches is given"
         )
     return out
 
@@ -1888,7 +1909,7 @@ def _used_markdown(scan: ScanResult, env: Mapping[str, str] | None) -> list[str]
                 "<br>".join(wheres),
                 api,
                 change,
-                FORM_LABELS[u.form],
+                FORM_LABELS[u.form] + (f" {NAME_MATCH_TAG}" if u.match == NAME_ONLY else ""),
                 replacement or "none named",
             ]
             out.append("| " + " | ".join(_cell(c) for c in cells) + " |")

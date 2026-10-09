@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- A changed method is found when the code never names its class. Methods were matched only on
+  a class the file imports or on a value the file itself shows is an instance of one, so pandas
+  3.0.6's removal of `DataFrame.applymap`, `NDFrame.swapaxes` and `DataFrame.groupby(axis=)`
+  was in the diff while `df = pd.read_csv(...)`, `df.applymap(str)`, `df.swapaxes(0, 1)` and
+  `df.groupby("key", axis=0)` went unflagged; so did polars 2.0.0's `with_row_count`,
+  `LazyFrame.melt` and `GroupBy.count` on frames from `pl.read_csv` and `pl.scan_csv`, and
+  langchain-core 1.6's `BaseChatModel.predict` on `llm = ChatOpenAI(...)`, whose class lives in
+  langchain-openai. The receivers are now typed from the pinned releases' own annotations,
+  read statically with griffe and cached per release: a name assigned from a call gets the
+  class the return annotation names (`pd.read_csv` -> `DataFrame`, a class its own), a chain
+  types each step (`df.groupby(...).count()` is `DataFrameGroupBy.count`), annotated parameters
+  and the file's own functions' returns count (string annotations too), and a class is read
+  with its bases across the project's pinned packages, so `llm.predict(q)` is
+  `BaseChatModel.predict` although the file never imports langchain-core. A scratch project
+  pinning pandas 3.0.6 and polars 2.0.0 went from 4 APIs used to 10; one pinning langchain
+  1.4.4, langchain-core 1.6.9 and langchain-openai 1.7.0 from none to `BaseChatModel.predict`.
+  Where the receiver cannot be typed, a method whose name is exactly one changed API's across
+  the imported packages, and not a common Python name (`get`, `run`, `update`, `count`, ...),
+  counts by its name alone: the reports tag the use `[name match]`, and its note goes into the
+  block only with `--include-name-matches` (on `scan` and `sync`). The cache has a new
+  `receivers` folder (`since-cutoff cache clear` removes it).
+- A class that became a function, or the reverse, is no longer "old form" at a call site: with
+  pandas 3.0.6, `with pd.option_context("mode.copy_on_write", True):` was labelled old form
+  although `option_context` is called the same way as a class and as a function. The call is
+  "uses this API", and old form only when it passes a keyword the new signature does not
+  take; the note still says to check the new signature.
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.

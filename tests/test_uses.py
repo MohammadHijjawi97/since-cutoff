@@ -8,6 +8,7 @@ import re
 import textwrap
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 from rich.console import Console
@@ -16,6 +17,7 @@ from since_cutoff.apidiff import (
     DEPRECATED,
     HINT_PARAM_DOC,
     HINT_WARNING,
+    KIND_CHANGED,
     PARAM_REMOVED,
     REMOVED,
     APIChange,
@@ -36,10 +38,17 @@ from since_cutoff.report import (
 )
 from since_cutoff.selection import (
     NAME_MATCH,
+    NAME_ONLY,
+    OLD_FORM,
     PATH_MATCH,
+    USE_CALL,
+    USE_KEYWORD,
+    USES_API,
     collapse,
+    form,
     match,
     used_names,
+    uses,
     uses_text,
 )
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
@@ -645,3 +654,367 @@ def test_mcp_says_where_a_hint_comes_from() -> None:
     assert "the old version warned: `resume` is deprecated" in change_line(removed)
     removed.hint_source = HINT_PARAM_DOC
     assert "the old docs said: `resume` is deprecated" in change_line(removed)
+
+
+# ------------------------------------------------ receivers typed from the API (0.6)
+# ``frames`` 1.0 -> 2.0, a package whose own annotations say what its values are (pandas'
+# shape). 2.0 removes ``Frame.applymap``, ``NDFrame.swapaxes`` (``Frame`` inherits it),
+# ``Grouped.count``, ``Frame.groupby(axis=)`` and the ``melt`` of both ``Frame`` and ``Lazy``, and
+# turns the class ``option_context`` into a function.
+FRAMES_V1 = {
+    "frames/__init__.py": """
+        from frames.core import Frame, Grouped, Lazy, NDFrame, option_context, read_csv
+
+        __all__ = ["Frame", "Grouped", "Lazy", "NDFrame", "option_context", "read_csv"]
+    """,
+    "frames/core.py": """
+        from __future__ import annotations
+
+        from typing_extensions import Self
+
+
+        class Grouped:
+            def count(self) -> Frame:
+                return Frame()
+
+            def sum(self) -> Frame:
+                return Frame()
+
+
+        class NDFrame:
+            def head(self) -> Self:
+                return self
+
+            def swapaxes(self, a: int, b: int) -> Self:
+                return self
+
+
+        class Frame(NDFrame):
+            def applymap(self, func: object) -> Frame:
+                return self
+
+            def groupby(self, key: str, axis: int = 0) -> Grouped:
+                return Grouped()
+
+            def melt(self, id_vars: str) -> Frame:
+                return self
+
+            @property
+            def T(self) -> Frame:
+                return self
+
+
+        class Lazy:
+            def melt(self, id_vars: str) -> Lazy:
+                return self
+
+            def collect(self) -> Frame:
+                return Frame()
+
+
+        def read_csv(path: str) -> Frame:
+            return Frame()
+
+
+        class option_context:
+            def __init__(self, *args: object) -> None:
+                pass
+    """,
+}
+FRAMES_V2 = {
+    "frames/__init__.py": FRAMES_V1["frames/__init__.py"],
+    "frames/core.py": """
+        from __future__ import annotations
+
+        from typing_extensions import Self
+
+
+        class Grouped:
+            def sum(self) -> Frame:
+                return Frame()
+
+
+        class NDFrame:
+            def head(self) -> Self:
+                return self
+
+
+        class Frame(NDFrame):
+            def groupby(self, key: str) -> Grouped:
+                return Grouped()
+
+            @property
+            def T(self) -> Frame:
+                return self
+
+
+        class Lazy:
+            def collect(self) -> Frame:
+                return Frame()
+
+
+        def read_csv(path: str) -> Frame:
+            return Frame()
+
+
+        def option_context(*args: object) -> None:
+            pass
+    """,
+}
+# ``core`` 1.0 -> 2.0 loses ``predict`` on ``BaseLanguage`` and on ``BaseChat``, which overrides
+# it (langchain-core 1's shape); ``plugins``, another package, derives ``ChatX`` from ``BaseChat``
+# (langchain-openai's ``ChatOpenAI``) and did not change.
+CORE_V1 = {
+    "core/__init__.py": "",
+    "core/models.py": """
+        class BaseLanguage:
+            def predict(self, text: str) -> str:
+                return text
+
+            def invoke(self, text: str) -> str:
+                return text
+
+
+        class BaseChat(BaseLanguage):
+            def predict(self, text: str) -> str:
+                return text
+    """,
+}
+CORE_V2 = {
+    "core/__init__.py": "",
+    "core/models.py": """
+        class BaseLanguage:
+            def invoke(self, text: str) -> str:
+                return text
+
+
+        class BaseChat(BaseLanguage):
+            pass
+    """,
+}
+PLUGINS = {
+    "plugins/__init__.py": 'from plugins.chat import ChatX\n\n__all__ = ["ChatX"]\n',
+    "plugins/chat.py": """
+        from core.models import BaseChat
+
+
+        class ChatX(BaseChat):
+            pass
+    """,
+}
+
+
+def _typed_scan(
+    tmp_path: Path,
+    cache: DiskCache,
+    libs: dict[str, tuple[dict[str, str], dict[str, str]]],
+    files: dict[str, str],
+) -> ScanResult:
+    """A scan of an app with these files, pinning 2.0 of each lib (1.0 at the cutoff)."""
+    trees: dict[tuple[str, str], SourceTree] = {}
+    for name, (v1, v2) in libs.items():
+        trees.update({(name, v): t for v, t in _lib(name, v1, v2, tmp_path).items()})
+    releases = {name: [("1.0", "2025-01-10"), ("2.0", "2025-10-01")] for name in libs}
+    pins = "".join(f"{name}==2.0\n" for name in libs)
+    root = write_tree(tmp_path / "app", {"requirements.txt": pins, **files})
+    return _scan(root, FakePyPI(cache, releases, trees))
+
+
+def _found(scan: ScanResult) -> dict[str, tuple[str, str | None, list[tuple[Any, ...]]]]:
+    """Each used API: its form, how it matched, and its uses as (file, kind, names, how)."""
+    return {
+        u.note.api: (u.form, u.match, [(x.file, x.kind, x.names, x.how) for x in u.uses])
+        for u in scan.used_apis()
+    }
+
+
+def test_a_value_from_a_package_call_is_typed_from_the_packages_annotations(tmp_path, cache):
+    # The audit's biggest under-report: ``df = pd.read_csv(...)`` and ``df.applymap(str)``
+    # were not flagged, as the file never names ``DataFrame``.
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"frames": (FRAMES_V1, FRAMES_V2)},
+        {
+            "main.py": """
+                import json
+                import frames as fr
+
+                def load(path):
+                    df = fr.read_csv(path)
+                    df.applymap(str)
+                    df.swapaxes(0, 1)
+                    df.groupby("k", axis=0).count()
+                    wide = fr.Frame()
+                    wide.melt(id_vars="a")
+                    lazy = fr.Lazy()
+                    lazy.collect().T.applymap(str)
+                    with fr.option_context("mode", True):
+                        pass
+            """,
+            "other.py": """
+                import json
+                import frames
+
+                def shape(path):
+                    data = json.loads(path)
+                    data.applymap(str)
+                    data.swapaxes(0, 1)
+                    data.melt(id_vars="a")
+                    data.groupby("k", axis=0).count()
+            """,
+        },
+    )
+    main = "main.py"
+    assert _found(scan) == {
+        # Assigned from a call of a package function: its return annotation's class.
+        "Frame.applymap": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("applymap",), PATH_MATCH)]),
+        # Inherited: the diff lists ``Frame.swapaxes`` among the paths of ``NDFrame.swapaxes``.
+        "NDFrame.swapaxes": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("swapaxes",), PATH_MATCH)]),
+        # A chain: ``groupby`` returns a ``Grouped``; the keyword goes to ``Frame.groupby``.
+        "Frame.groupby": (
+            OLD_FORM,
+            PATH_MATCH,
+            [(main, USE_KEYWORD, ("groupby", "axis"), PATH_MATCH)],
+        ),
+        "Grouped.count": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("count",), PATH_MATCH)]),
+        # A constructor, through the module (``fr.Frame()``), and a property (``.T``).
+        "Frame.melt": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("melt",), PATH_MATCH)]),
+        # A class that became a function, called the same way: not the old form (item F).
+        "frames.option_context": (
+            USES_API,
+            PATH_MATCH,
+            [(main, USE_CALL, ("option_context",), PATH_MATCH)],
+        ),
+    }
+    # other.py imports frames, and its ``data`` is json's: none of its calls counts.
+    assert all(u.file == main for api in scan.used_apis() for u in api.uses)
+    assert len(scan.diff_notes()) == 6  # every one of them goes into the notes
+
+
+def test_an_annotation_types_a_parameter_and_self_types_a_subclass(tmp_path, cache):
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"frames": (FRAMES_V1, FRAMES_V2)},
+        {
+            "main.py": """
+                from frames import Frame, Lazy
+
+                def tidy(df: "Frame | None", lazy: Lazy):
+                    df.applymap(str)
+                    lazy.collect().swapaxes(0, 1)
+
+                class Mine(Frame):
+                    def go(self):
+                        self.groupby("k", axis=1)
+            """,
+        },
+    )
+    main = "main.py"
+    assert _found(scan) == {
+        # A string annotation (0.5 resolved only an annotation written as code).
+        "Frame.applymap": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("applymap",), PATH_MATCH)]),
+        "NDFrame.swapaxes": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("swapaxes",), PATH_MATCH)]),
+        "Frame.groupby": (
+            OLD_FORM,
+            PATH_MATCH,
+            [(main, USE_KEYWORD, ("groupby", "axis"), PATH_MATCH)],
+        ),
+    }
+
+
+def test_a_class_is_read_with_its_bases_across_packages(tmp_path, cache):
+    # langchain's shape: ``llm = ChatOpenAI(...)`` (langchain-openai) and ``llm.predict(q)``,
+    # where langchain-core removed ``BaseChatModel.predict``; the file never imports
+    # langchain-core. The base's own ``BaseLanguage.predict`` is not a second use: the diff
+    # reports it on its own, and ``BaseChat`` is the nearest class that lost ``predict``.
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"core": (CORE_V1, CORE_V2), "plugins": (PLUGINS, PLUGINS)},
+        {
+            "main.py": """
+                from plugins import ChatX
+
+                def ask(q):
+                    llm = ChatX()
+                    return llm.predict(q)
+
+                class Mine(ChatX):
+                    def go(self, q):
+                        return self.predict(q)
+            """,
+            "other.py": "from plugins import ChatX\n\nmodel = {}\nmodel.predict(1)\n",
+        },
+    )
+    assert _found(scan) == {
+        "BaseChat.predict": (
+            OLD_FORM,
+            PATH_MATCH,
+            [("main.py", USE_CALL, ("predict",), PATH_MATCH)],
+        )
+    }
+    core = scan.package("core")
+    assert core.imported is False  # no file imports it; main.py still uses its API
+    [main] = scan.uses(core)
+    assert (main.file, "core" in main.reaches, "core" in main.paths) == ("main.py", True, False)
+
+
+def test_a_name_alone_counts_when_it_is_one_changed_apis_and_not_common(tmp_path, cache):
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"frames": (FRAMES_V1, FRAMES_V2)},
+        {
+            "main.py": """
+                import frames
+
+                def tidy(df, rows, long):
+                    df.applymap(str)
+                    rows.count()
+                    long.melt(id_vars="a")
+            """,
+        },
+    )
+    # ``applymap``: one changed API's, and not a common name: a name match, tagged. ``count``
+    # (``Grouped.count``) is too common a name; ``melt`` is two changed APIs' (``Frame`` and
+    # ``Lazy``): neither counts.
+    assert _found(scan) == {
+        "Frame.applymap": (
+            OLD_FORM,
+            NAME_ONLY,
+            [("main.py", USE_CALL, ("applymap",), NAME_ONLY)],
+        )
+    }
+    frames = scan.package("frames")
+    applymap = next(c for c in frames.distinct if c.name == "applymap")
+    assert uses_text(applymap, scan.uses(frames)) == "`applymap` [name match]"
+    # Out of the notes (and the block) by default; in with --include-name-matches.
+    assert scan.diff_notes() == [] and scan.used_changes(frames) == []
+    assert scan.notes_block(scan.diff_notes()) is None
+    assert [n.api for n in scan.diff_notes(name_matches=True)] == ["Frame.applymap"]
+    scan.name_matches = True
+    assert [n.api for n in scan.diff_notes()] == ["Frame.applymap"]
+
+
+def test_a_class_that_became_a_function_is_the_old_form_only_with_a_refused_keyword(tmp_path):
+    # Item F: ``with pd.option_context("mode.copy_on_write", True):`` is the same code for
+    # pandas 2's class and pandas 3's function; the note still says to check the signature.
+    old = write_tree(tmp_path / "a", FRAMES_V1)
+    new = write_tree(tmp_path / "b", FRAMES_V2)
+    raw = diff_sources("frames", "1", old, "2", new, ["frames"])
+    (kind,) = [c for c in map(APIChange.from_dict, raw) if c.kind == KIND_CHANGED]
+    assert (kind.name, kind.old_kind, kind.new_kind) == ("option_context", "class", "function")
+    same = code("import frames as fr\nwith fr.option_context('mode', True):\n    pass\n")
+    [use] = uses(kind, same)
+    assert (use.kind, use.names, use.form) == (USE_CALL, ("option_context",), USES_API)
+    assert form(kind, ("option_context",)) == USES_API
+    # A keyword the function does not take (``option_context(*args)``) is the old form.
+    refused = code("from frames import option_context\noption_context(mode=True)\n")
+    [use] = uses(kind, refused)
+    assert (use.kind, use.names, use.form) == (USE_KEYWORD, ("option_context", "mode"), OLD_FORM)
+    # Any other kind change stays the old form.
+    kind.new_kind = "attribute"
+    [use] = uses(kind, same)
+    assert use.form == OLD_FORM

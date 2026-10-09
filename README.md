@@ -794,11 +794,16 @@ meaning the same as `checks.example_type_checks`).
   `__getattr__`, but `run` does not probe them.
 - The diff covers the public API: `_private` names, and test suites, benchmarks and examples
   shipped inside a package, are skipped.
-- "Your code uses" is a static name match, file by file: imports (re-exported names included),
-  calls, attribute reads and keyword arguments. It does not follow dynamic access such as
+- "Your code uses" is a static match, file by file: imports (re-exported names included),
+  calls, attribute reads and keyword arguments, with the receiver of a method call typed from
+  the package's own annotations (`df = pd.read_csv(...)` is a `DataFrame`; a class counts with
+  its base classes, across your pinned packages). It does not follow dynamic access such as
   `getattr`, and it names files, not lines, for now
-  ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). A parameter that became
-  required, keyword-only or positional-only is always "uses this API", never "old form", for now.
+  ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). A method read on a value
+  whose class the code does not show counts by its name alone, when that name is one changed
+  API's and not a common one: tagged `[name match]`, and left out of the notes unless
+  `--include-name-matches` is given. A parameter that became required, keyword-only or
+  positional-only is always "uses this API", never "old form", for now.
 - A note names a replacement only when the library's own deprecation text states it. Advice that
   is only in a migration guide (anthropic's
   [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md)

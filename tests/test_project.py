@@ -13,7 +13,15 @@ from packaging.version import InvalidVersion, Version
 
 from since_cutoff import project as project_module
 from since_cutoff.errors import ProjectError
-from since_cutoff.project import load_project, parse_lockfile, parse_requirements, scan_sources
+from since_cutoff.project import (
+    ApiTypes,
+    load_project,
+    parse_lockfile,
+    parse_requirements,
+    scan_file,
+    scan_sources,
+    typed,
+)
 
 
 def write(root: Path, name: str, text: str) -> Path:
@@ -477,3 +485,193 @@ def test_project_code_python_itself_cannot_parse_is_skipped(tmp_path):
     write(tmp_path, "app.py", "import requests\n")
     project = load_project(tmp_path)
     assert project.imported_modules == ({"attrs", "requests"} if readable else {"requests"})
+
+
+# ------------------------------------------------------- receiver typing (0.6)
+def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_path):
+    use = scan_file(
+        ast.parse(
+            textwrap.dedent(
+                """
+                import re
+                import pandas as pd
+                from frames import Frame as F
+
+                def load(path) -> pd.DataFrame:
+                    df = pd.read_csv(path, sep=";")
+                    df.groupby("k", axis=0).count()
+                    sub = df.head()
+                    sub.T.applymap(str)
+                    data = {}
+                    m = re.match("a", path)
+                    with F() as f:
+                        f.melt(id_vars="a")
+                    return df
+
+                class App:
+                    frame: "F | None" = None
+
+                    def make(self, df: F) -> F:
+                        self.frame = F()
+                        return self.frame.T
+                """
+            )
+        ),
+        "app.py",
+    )
+    assert dict(use.bound) == {"re": "re", "pd": "pandas", "F": "frames.Frame"}
+    assert use.accesses >= {
+        "pd.read_csv",
+        "df.groupby",
+        "df.groupby().count",
+        "df.head",
+        "sub.T",
+        "sub.T.applymap",
+        "f.melt",
+        "re.match",
+        "self.frame",
+        "self.frame.T",
+    }
+    # A value that is no chain (a literal) is ``?``: the name is known not to be a package's.
+    assert use.assigned == {
+        ("df", "pd.read_csv()"),
+        ("sub", "df.head()"),
+        ("data", "?"),
+        ("m", "re.match()"),
+        ("f", "F()"),
+        ("frame", "?"),
+        ("self.frame", "F()"),
+    }
+    # Annotations: parameters, variables (a string one parsed), the file's own functions'
+    # returns (``load()``) and methods' (``self.make()``).
+    assert use.annotated == {
+        ("load()", "pd.DataFrame"),
+        ("frame", "F"),
+        ("df", "F"),
+        ("make()", "F"),
+        ("self.make()", "F"),
+    }
+    assert use.chain_keywords >= {
+        ("pd.read_csv", "sep"),
+        ("df.groupby", "axis"),
+        ("f.melt", "id_vars"),
+    }
+    assert use.reaches == frozenset() and use.loose == frozenset()  # typed() sets them
+
+
+def test_typed_reads_the_values_from_the_packages_own_annotations():
+    api = ApiTypes(
+        [
+            {
+                "classes": {
+                    "pandas.DataFrame": "pandas.core.frame.DataFrame",
+                    "pandas.core.frame.DataFrame": "pandas.core.frame.DataFrame",
+                    "pandas.core.generic.NDFrame": "pandas.core.generic.NDFrame",
+                    "pandas.core.groupby.generic.DataFrameGroupBy": "pandas.core.groupby.generic.DataFrameGroupBy",
+                },
+                "bases": {"pandas.core.frame.DataFrame": ["pandas.core.generic.NDFrame"]},
+                "returns": {
+                    "pandas.read_csv": "pandas.core.frame.DataFrame|pandas.io.parsers.readers.TextFileReader",
+                    "pandas.core.frame.DataFrame.groupby": "pandas.core.groupby.generic.DataFrameGroupBy",
+                    "pandas.core.generic.NDFrame.head": "Self",
+                },
+                "attrs": {"pandas.core.frame.DataFrame.T": "pandas.core.frame.DataFrame"},
+            },
+            {
+                # langchain-openai's shape: ``ChatOpenAI`` derives from langchain-core's class,
+                # which the package names as it imports it (not canonically).
+                "classes": {"lc_openai.ChatOpenAI": "lc_openai.chat.ChatOpenAI"},
+                "bases": {"lc_openai.chat.ChatOpenAI": ["lc_core.language_models.BaseChatModel"]},
+                "returns": {},
+                "attrs": {},
+            },
+            {
+                "classes": {
+                    "lc_core.language_models.BaseChatModel": "lc_core.language_models.chat.BaseChatModel"
+                },
+                "bases": {
+                    "lc_core.language_models.chat.BaseChatModel": ["lc_core.base.BaseLanguageModel"]
+                },
+                "returns": {},
+                "attrs": {},
+            },
+        ]
+    )
+    assert api.canon("lc_openai.ChatOpenAI") == "lc_openai.chat.ChatOpenAI"
+    assert api.ancestors("lc_openai.chat.ChatOpenAI") == [
+        "lc_core.language_models.chat.BaseChatModel",
+        "lc_core.base.BaseLanguageModel",
+    ]
+    assert api.paths_of("lc_core.language_models.chat.BaseChatModel") == [
+        "lc_core.language_models.chat.BaseChatModel",
+        "lc_core.language_models.BaseChatModel",
+    ]
+    assert api.member("pandas.core.frame.DataFrame", "head", call=True) == {
+        "pandas.core.frame.DataFrame"
+    }
+    assert api.modules == {"pandas", "lc_openai", "lc_core"}
+    f = scan_file(
+        ast.parse(
+            textwrap.dedent(
+                """
+                import re
+                import pandas as pd
+                from lc_openai import ChatOpenAI
+
+                def f(path, other, data: "pd.DataFrame | None"):
+                    df = pd.read_csv(path)
+                    df.applymap(str)
+                    df.groupby("k", axis=0).count()
+                    df.head().T.swapaxes(0, 1)
+                    data.applymap(str)
+                    other.melt(id_vars="a")
+                    m = re.match("a", path)
+                    m.group(0)
+                    items = []
+                    items.count(1)
+                    llm = ChatOpenAI(model="x")
+                    llm.predict("q")
+
+                class Mine(ChatOpenAI):
+                    def go(self):
+                        self.predict("q", stop=["x"])
+                """
+            )
+        ),
+        "main.py",
+    )
+    owners = {"predict": {"lc_core.language_models.chat.BaseChatModel"}}
+    t = typed(f, api, keep={"melt", "group", "count", "applymap", "predict"}, owners=owners)
+    added = t.members - f.members
+    frame = {"pandas.DataFrame", "pandas.core.frame.DataFrame", "pandas.core.generic.NDFrame"}
+    # ``df``: a DataFrame (or pandas' TextFileReader, the other return of read_csv), with its
+    # base; a chain through ``groupby``; ``head()`` returns Self and ``T`` a DataFrame.
+    assert {c for c, a in added if a == "applymap"} == frame | {
+        "pandas.io.parsers.readers.TextFileReader"
+    }
+    assert ("pandas.core.groupby.generic.DataFrameGroupBy", "count") in added
+    assert {c for c, a in added if a == "swapaxes"} == frame
+    # ``llm``: a ChatOpenAI and, through another package, a BaseChatModel, but not the base
+    # of that (``owners`` says ``BaseChatModel`` lost ``predict``: the nearest class counts).
+    assert {c for c, a in t.members if a == "predict"} == {
+        "lc_openai.ChatOpenAI",
+        "lc_openai.chat.ChatOpenAI",
+        "lc_core.language_models.BaseChatModel",
+        "lc_core.language_models.chat.BaseChatModel",
+    }
+    assert ("lc_core.language_models.chat.BaseChatModel.predict", "stop") in t.keyword_paths
+    assert ("pandas.DataFrame.groupby", "axis") in t.keyword_paths
+    assert t.reaches == {
+        "lc_core",
+        "lc_core.language_models",
+        "lc_core.language_models.BaseChatModel",
+        "lc_core.language_models.chat",
+        "lc_core.language_models.chat.BaseChatModel",
+    }
+    # ``other.melt``: a bare name the file shows nothing of. ``m`` is re's and ``items`` a
+    # list; ``data`` and ``df`` are typed.
+    assert t.loose == {"melt"}
+    # Nothing to type from: the file as scanned, but for the names kept; ``df`` is pandas',
+    # a package no map covers, so it is not a value left untyped either.
+    assert typed(f, ApiTypes()) == f
+    assert typed(f, ApiTypes(), keep={"melt", "applymap"}).loose == {"melt"}

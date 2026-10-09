@@ -88,16 +88,18 @@ from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_
 from since_cutoff.pypi import SOURCE_SCHEMA, PyPI, Release, SourceTree, is_placeholder
 from since_cutoff.selection import (
     NAME_MATCH,
+    NAME_ONLY,
     OLD_FORM,
     PATH_MATCH,
     USES_API,
     Use,
     collapse,
     imported_rank,
+    match,
     ordered,
     project_rank,
     select,
-    used_names,
+    type_project,
     uses,
 )
 from since_cutoff.taskfile import TaskFile
@@ -251,6 +253,9 @@ class Settings:
     tasks_from: TaskFile | None = None
     # Baseline notes blocks tested next to the run's notes (``run --compare``).
     compare: list[str] = field(default_factory=list)
+    # ``--include-name-matches``: the notes block gets the APIs matched by a member's name
+    # alone too (selection.NAME_ONLY); the reports show them in any case, tagged.
+    include_name_matches: bool = False
 
 
 @dataclass
@@ -339,7 +344,7 @@ class UsedAPI:
     note: Note
     uses: list[Use]  # most specific first (selection.uses)
     forms: dict[str, str]  # change id -> OLD_FORM or USES_API (selection.form)
-    match: str | None  # PATH_MATCH, or NAME_MATCH when only a name matched
+    match: str | None  # PATH_MATCH; NAME_MATCH when only a name matched; NAME_ONLY (tagged)
     # A switched dependency (DEPENDENCY_SWITCHED): the project's own entry for the distribution
     # the package no longer requires, ``{"name", "version", "source", "direct"}`` as
     # Project.dependencies has it (a lockfile, the environment, a pin), or None when the
@@ -397,6 +402,9 @@ class ScanResult:
     # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
     # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
     stale: dict[str, date] = field(default_factory=dict)
+    # Whether the notes (diff_notes, the block) include the APIs matched by a member's name
+    # alone (selection.NAME_ONLY): Settings.include_name_matches.
+    name_matches: bool = False
 
     @property
     def changed(self) -> list[PackageScan]:
@@ -432,22 +440,35 @@ class ScanResult:
         key = imported_rank if scope == SCOPE_IMPORTED else project_rank
         return sorted(package.distinct, key=lambda c: key(c, files))
 
-    def used_changes(self, package: PackageScan) -> list[APIChange]:
+    def used_changes(
+        self, package: PackageScan, *, name_matches: bool | None = None
+    ) -> list[APIChange]:
         """The package's distinct changes that the project's code uses
-        (:func:`selection.used_names`), in the order of :meth:`ranked`."""
+        (:func:`selection.used_names`), in the order of :meth:`ranked`; those matched by a
+        member's name alone (selection.NAME_ONLY) only with ``name_matches`` (by default,
+        :attr:`name_matches`)."""
         files = self.uses(package)
         if not files:
             return []
-        return [c for c in self.ranked(package) if used_names(c, files)]
+        loose = self.name_matches if name_matches is None else name_matches
+        return [
+            c
+            for c in self.ranked(package)
+            if (how := match(c, files)) is not None and (loose or how != NAME_ONLY)
+        ]
 
-    def diff_notes(self, *, suggestions: bool = False) -> list[Note]:
+    def diff_notes(
+        self, *, suggestions: bool = False, name_matches: bool | None = None
+    ) -> list[Note]:
         """A note from the API diff (:func:`notes.diff_note`) for each changed API the project's
         code uses, package by package in the order of the reports. No model is called, and
-        nothing of the libraries is run."""
+        nothing of the libraries is run. ``name_matches``: as for :meth:`used_changes`."""
         return [
             note
             for p in self.changed
-            for note in diff_notes(self.used_changes(p), suggestions=suggestions)
+            for note in diff_notes(
+                self.used_changes(p, name_matches=name_matches), suggestions=suggestions
+            )
         ]
 
     def used_apis(self) -> list[UsedAPI]:
@@ -462,7 +483,7 @@ class ScanResult:
         if cached is not None and cached[0] == key:
             return list(cached[1])
         by_package: dict[str, list[UsedAPI]] = {}
-        for note in self.diff_notes():
+        for note in self.diff_notes(name_matches=True):
             p = self.package(note.change.package)
             files = self.uses(p)
             per_change = {c.id: uses(c, files) for c in note.covered}
@@ -472,15 +493,19 @@ class ScanResult:
             }
             found = ordered(u for its in per_change.values() for u in its)
             how = {u.how for u in found}
-            match = PATH_MATCH if PATH_MATCH in how else NAME_MATCH if how else None
+            matched = next((m for m in (PATH_MATCH, NAME_MATCH, NAME_ONLY) if m in how), None)
             installed = self.installed(note.change)
             by_package.setdefault(p.name, []).append(
-                UsedAPI(p, note, found, forms, match, installed)
+                UsedAPI(p, note, found, forms, matched, installed)
             )
         order = [p.name for p in self.packages if p.name in by_package]
         order.sort(key=lambda name: all(u.form != OLD_FORM for u in by_package[name]))
         used = [
-            u for name in order for u in sorted(by_package[name], key=lambda u: u.form != OLD_FORM)
+            u
+            for name in order
+            for u in sorted(
+                by_package[name], key=lambda u: (u.match == NAME_ONLY, u.form != OLD_FORM)
+            )
         ]
         self.__dict__["_used"] = (key, used)
         return list(used)
@@ -1100,12 +1125,17 @@ class Engine:
             self.reporter.warn(warnings[-1])
         for s in scans:
             s.imported = project.imports(s.import_names) if s.import_names else None
+        # The receivers of the project's code, typed from the pinned releases' annotations
+        # (selection.type_project): a copy of the project, so that another scan starts afresh.
+        project = type_project(project, scans, self.pypi, self.store)
         # Every report lists the packages in this order: those with changes first, of those
         # the ones the code imports, then by breaking changes and deprecations.
         scans.sort(
             key=lambda s: (s.status != CHANGED, not s.imported, *(-n for n in s.counts), s.name)
         )
-        return ScanResult(project, target, scans, warnings, stale)
+        return ScanResult(
+            project, target, scans, warnings, stale, self.settings.include_name_matches
+        )
 
     def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
         scan = PackageScan(dep.key, dep.version, dep.source, dep.direct)

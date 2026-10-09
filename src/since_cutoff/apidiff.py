@@ -3111,6 +3111,168 @@ def _ordered(paths: Iterable[str]) -> list[str]:
     return sorted(set(paths), key=lambda p: (p.count("."), p))
 
 
+# ------------------------------------------------- receiver types (selection.type_project)
+# What receiver_map records of a pinned release; bumped when that changes, so that the copies
+# the scan caches per release (Engine.store, "receivers") are made again. Not part of a diff.
+RECEIVERS_SCHEMA = 1
+# Where an annotation that names no package of the project leads: the standard library and the
+# typing helpers (``typing_extensions.Self``). Not recorded.
+_STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", ())) | {
+    "builtins",
+    "typing_extensions",
+}
+# A method annotated to return its own class (PEP 673): the receiver's class, whatever it is.
+SELF_TYPE = "Self"
+
+
+def receiver_map(root: Any) -> dict[str, dict[str, Any]]:
+    """What a package's own annotations say about the values the project's code holds, for
+    :func:`since_cutoff.selection.type_project` (read statically; nothing is run).
+
+    ``classes`` maps each public path of a class to its canonical path (``pandas.DataFrame`` ->
+    ``pandas.core.frame.DataFrame``), and a class the package re-exports from another package
+    (``langchain.chat_models.BaseChatModel``) to the path it imports it from. ``bases`` maps
+    each class (canonical path) to its base classes: the package's own by canonical path,
+    another package's as imported; the standard library's are left out. ``returns`` maps a
+    public function, under each of its public paths, and a method, as ``<class>.<name>`` with
+    the class's canonical path, to the classes its return annotation names (``X``; ``X |
+    None``; ``X | Y`` and the returns of its ``@overload`` forms as ``X|Y``, in the order
+    written: pandas' ``read_csv`` gives a ``DataFrame`` or a ``TextFileReader``), or to
+    :data:`SELF_TYPE`; a return of a container (``list[X]``), of a type variable or of a type
+    outside every package is not recorded. ``attrs`` is the same for properties and annotated
+    attributes, which are read without a call.
+    """
+    import griffe
+
+    scope = _Scope(root)
+    index = path_index(root)
+    classes: dict[str, str] = {}
+    bases: dict[str, list[str]] = {}
+    returns: dict[str, str] = {}
+    attrs: dict[str, str] = {}
+
+    def class_set(expr: Any) -> list[str]:
+        """The canonical paths of the classes an annotation names (its top, or the members of
+        its union), or ``[SELF_TYPE]``; nothing for a container or an unresolvable name."""
+        if expr is None or isinstance(expr, str):
+            return []
+        found: list[str] = []
+        for leaf, top in _annotation_names(expr):
+            name = str(getattr(leaf, "name", ""))
+            if not top or name in _NOT_A_TYPE:
+                continue
+            if name == SELF_TYPE:
+                return [SELF_TYPE]
+            try:
+                path = _class_path(scope, str(leaf.canonical_path))
+            except Exception:
+                return []
+            if path is None:
+                return []  # ``list[X]``, a type variable, a type alias: not a class
+            if path not in found:
+                found.append(path)
+        return found
+
+    def returned(fn: Any) -> str | None:
+        """What a function's return annotation, and those of its ``@overload`` forms, name."""
+        found = class_set(getattr(fn, "returns", None))
+        for overload in getattr(fn, "overloads", None) or ():
+            found += [c for c in class_set(getattr(overload, "returns", None)) if c not in found]
+        if SELF_TYPE in found:
+            return SELF_TYPE
+        return "|".join(found[:4]) if found else None
+
+    def one_base(base: Any) -> str | None:
+        inner = base.left if isinstance(base, griffe.ExprSubscript) else base
+        leaves = [leaf for leaf, top in _annotation_names(inner) if top]
+        if len(leaves) != 1:
+            return None
+        try:
+            return _class_path(scope, str(leaves[0].canonical_path))
+        except Exception:
+            return None
+
+    for module in _walk_modules(root):
+        if _non_api_path(str(module.path), module=True):
+            continue
+        try:
+            members = list(module.members.items())
+        except Exception:
+            continue
+        module_paths = index.get(str(module.path), [])
+        for name, member in members:
+            if _private(name) or _skipped_segment(name):
+                continue
+            if getattr(member, "is_alias", False):
+                # A class another package defines, re-exported here (``from langchain_core
+                # .language_models import BaseChatModel`` in ``langchain.chat_models``).
+                if not _exported(member):
+                    continue
+                target = str(getattr(member, "target_path", "") or "")
+                if not target or _under(target, str(root.path)) or _stdlib(target):
+                    continue
+                for module_path in module_paths:
+                    classes[f"{module_path}.{name}"] = target
+                continue
+            if getattr(member, "is_function", False):
+                found = returned(member)
+                if found is not None:
+                    for public in index.get(str(member.path), ()):
+                        returns[public] = found
+                continue
+            if not getattr(member, "is_class", False):
+                continue
+            canonical = str(member.path)
+            for public in index.get(canonical, ()):
+                classes[public] = canonical
+            found_bases = [one_base(b) for b in getattr(member, "bases", None) or ()]
+            kept = [b for b in found_bases if b is not None and b != canonical]
+            if kept:
+                bases[canonical] = list(dict.fromkeys(kept))
+            try:
+                items = list(member.members.items())
+            except Exception:
+                continue
+            for attr_name, attr in items:
+                if _private(attr_name) or getattr(attr, "is_alias", False):
+                    continue
+                if getattr(attr, "is_function", False):
+                    found = returned(attr)
+                    where = (
+                        attrs if "property" in (getattr(attr, "labels", None) or ()) else returns
+                    )
+                elif getattr(attr, "is_attribute", False):
+                    found = "|".join(class_set(getattr(attr, "annotation", None))) or None
+                    where = attrs
+                else:
+                    continue
+                if found is not None:
+                    where[f"{canonical}.{attr_name}"] = found
+    return {"classes": classes, "bases": bases, "returns": returns, "attrs": attrs}
+
+
+# Names in an annotation that are not the class it names: the forms of a union and the way of
+# writing "no value".
+_NOT_A_TYPE = frozenset({"None", "Optional", "Union"})
+
+
+def _class_path(scope: _Scope, path: str) -> str | None:
+    """The canonical path of the class an annotation's name leads to (:meth:`_Scope.chase`):
+    inside the package, only a class counts (not a type alias); outside it, any path but the
+    standard library's, as written (the other package's map canonicalises it)."""
+    final = scope.chase(path)
+    if scope.inside(final):
+        obj = scope.lookup(final)
+        return final if obj is not None and getattr(obj, "is_class", False) else None
+    if "." not in final or _stdlib(final):
+        return None
+    return final
+
+
+def _stdlib(path: str) -> bool:
+    return path.split(".", 1)[0] in _STDLIB_MODULES
+
+
 def _reads_key(tree: ast.AST | None, name: str) -> int | None:
     """The first line of ``tree`` that reads ``name`` as a key: ``.pop("name"``,
     ``.get("name"`` or ``"name" in ...``; None if none does."""

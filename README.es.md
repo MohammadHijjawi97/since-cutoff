@@ -828,12 +828,17 @@ reservadas; `verified` se mantiene y significa lo mismo que `checks.example_type
   `__getattr__`, pero `run` no los sondea.
 - El diff cubre la API pública: se omiten los nombres `_private`, así como los conjuntos de pruebas,
   los benchmarks y los ejemplos que se distribuyen dentro de un paquete.
-- «Your code uses» (tu código usa) es una coincidencia estática de nombres, archivo por archivo:
+- «Your code uses» (tu código usa) es una coincidencia estática, archivo por archivo:
   importaciones (incluidos los nombres reexportados), llamadas, lecturas de atributos y argumentos
-  por nombre. No sigue accesos dinámicos como `getattr`, y por ahora indica archivos, no líneas
-  ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Un parámetro que pasó a ser
-  obligatorio, solo por nombre o solo posicional aparece siempre como «uses this API», nunca como
-  «old form», por ahora.
+  por nombre; el receptor de una llamada a un método se tipa a partir de las anotaciones del propio
+  paquete (`df = pd.read_csv(...)` es un `DataFrame`; una clase cuenta con sus clases base, a
+  través de tus paquetes fijados). No sigue accesos dinámicos como `getattr`, y por ahora indica
+  archivos, no líneas ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Un
+  método leído sobre un valor cuya clase el código no muestra cuenta solo por su nombre, cuando
+  ese nombre pertenece a una única API con cambios y no es un nombre común: se etiqueta
+  `[name match]` y queda fuera de las notas salvo que se indique `--include-name-matches`. Un
+  parámetro que pasó a ser obligatorio, solo por nombre o solo posicional aparece siempre como
+  «uses this API», nunca como «old form», por ahora.
 - Una nota solo nombra un sustituto cuando el propio texto de obsolescencia de la biblioteca lo
   indica. Los consejos que solo están en una guía de migración (el
   [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md) de

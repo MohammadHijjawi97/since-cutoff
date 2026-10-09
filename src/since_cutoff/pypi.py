@@ -255,6 +255,13 @@ class PyPI:
         with self._lock(key):
             return self._source(name, version, key)
 
+    def is_cached(self, name: str, version: str) -> bool:
+        """Whether :meth:`source` has these sources already, so needs no download."""
+        return (
+            _read_marker(self.cache.root / "sources" / f"{canonicalize_name(name)}-{version}")
+            is not None
+        )
+
     def _source(self, name: str, version: str, key: str) -> SourceTree:
         sources = self.cache.root / "sources"
         root = sources / key
