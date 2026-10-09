@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
+  environment for every other setting (#94). The variable overrode the flag; the order is now
+  the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
 - `sync --json` reports proposals and write results for scripts, with progress on stderr.
   It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.

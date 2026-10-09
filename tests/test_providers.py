@@ -214,7 +214,6 @@ def anthropic(http_server, monkeypatch) -> AnthropicProvider:
 @pytest.fixture
 def openai(http_server, monkeypatch) -> OpenAICompatibleProvider:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     return OpenAICompatibleProvider(
         "openai", "gpt-x", base_url=http_server.url, key_env="OPENAI_API_KEY"
     )
@@ -341,6 +340,27 @@ def test_base_urls_come_from_the_flag_then_the_environment(monkeypatch) -> None:
     assert make_provider("anthropic:claude-x").base_url == "https://gateway.example"
     flag = make_provider("anthropic:claude-x", base_url="http://127.0.0.1:1/")
     assert flag.base_url == "http://127.0.0.1:1"
+
+
+@pytest.mark.parametrize(
+    ("flag", "env", "expected"),
+    [
+        # --base-url wins also when OPENAI_BASE_URL is set (#94: the variable used to win).
+        ("http://127.0.0.1:1/", "https://proxy.example/v1", "http://127.0.0.1:1"),
+        (None, "https://proxy.example/v1/", "https://proxy.example/v1"),
+        (None, None, "https://api.openai.com/v1"),
+    ],
+    ids=["flag", "environment", "default"],
+)
+def test_openai_base_url_is_the_flag_then_the_environment_then_the_default(
+    monkeypatch, flag, env, expected
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    if env is None:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("OPENAI_BASE_URL", env)
+    assert make_provider("openai:gpt-x", base_url=flag).base_url == expected
 
 
 @pytest.mark.parametrize(
