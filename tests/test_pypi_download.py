@@ -24,7 +24,14 @@ from since_cutoff.cache import DiskCache
 from since_cutoff.engine import Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
 from since_cutoff.project import load_project
-from since_cutoff.pypi import METADATA_TTL, PyPI, SourceTree, _safe_target, is_placeholder
+from since_cutoff.pypi import (
+    METADATA_TTL,
+    SOURCE_SCHEMA,
+    PyPI,
+    SourceTree,
+    _safe_target,
+    is_placeholder,
+)
 from tests.conftest import LocalServer, Reply, ScriptedModel, write_tree
 
 METADATA = "Metadata-Version: 2.1\nName: toy\nVersion: 1.0\n"
@@ -379,8 +386,9 @@ def test_a_wheel_is_downloaded_once_and_only_its_sources_kept(index, cache) -> N
     }
     # Another process (a new PyPI) finds the tree without asking PyPI anything.
     requests = len(index.server.seen)
+    assert tree.compiled == ("toy._speedups",)  # no _speedups.py or .pyi next to it
     assert PyPI(cache).source("Toy", "1.0") == SourceTree(
-        "Toy", "1.0", tree.root, ("toy",), tree.requires
+        "Toy", "1.0", tree.root, ("toy",), tree.requires, ("toy._speedups",)
     )
     assert len(index.server.seen) == requests
     assert index.downloads == ["/files/toy-1.0-py3-none-any.whl"] and leftovers(cache) == []
@@ -420,6 +428,75 @@ def test_a_flat_sdist_names_its_modules_but_not_its_build_scripts(index, cache) 
     index.add("toy", "1.0", "toy-1.0.tar.gz", make_tar(sdist))
     tree = PyPI(cache).source("toy", "1.0")
     assert (tree.import_names, tree.requires) == (("toy_mod", "toy_stubs"), ())
+
+
+def test_a_wheel_records_its_compiled_modules_and_still_extracts_only_sources(index, cache) -> None:
+    """Issue #52: a module that became an extension module, or lost its stub, looked
+    removed. The tree names the compiled modules a static reading cannot see."""
+    elf, pe = b"\x7fELF", b"MZ\x90\x00"
+    blob = wheel(
+        {
+            "toy/__init__.py": "",
+            "toy/fast.cpython-312-x86_64-linux-gnu.so": elf,
+            "toy/limited.abi3.so": elf,
+            "toy/win.cp313-win_amd64.pyd": pe,
+            "toy/plain.pyd": pe,
+            "toy/sub/__init__.py": "",
+            "toy/sub/inner.cpython-312-darwin.so": elf,
+            "toy/compiled_pkg/__init__.cpython-312-x86_64-linux-gnu.so": elf,
+            # Readable: a stub, or the Python source next to a compiled copy (mypyc, black).
+            "toy/stubbed.cpython-312-x86_64-linux-gnu.so": elf,
+            "toy/stubbed.pyi": "def f() -> None: ...\n",
+            "toy/both.py": "def f() -> None: ...\n",
+            "toy/both.cpython-312-x86_64-linux-gnu.so": elf,
+            # Not modules: a vendored shared library, mypyc's hashed helper (its hash may start
+            # with a letter or a digit).
+            "toy.libs/libgfortran-040039e1.so.5.0.0": elf,
+            "toy.libs/libz.so": elf,
+            "a3f2b9e1d0c4__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+            "30fcd23745efe32ce681__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+        }
+    )
+    index.add("toy", "1.0", "toy-1.0-cp312-cp312-manylinux_2_17_x86_64.whl", blob)
+    tree = PyPI(cache).source("toy", "1.0")
+    assert tree.compiled == (
+        "toy.compiled_pkg.__init__",  # its submodules have files of their own
+        "toy.fast",
+        "toy.limited",
+        "toy.plain",
+        "toy.sub.inner",
+        "toy.win",
+    )
+    assert files_in(tree.root) == {
+        ".since-cutoff.json",
+        "toy/__init__.py",
+        "toy/both.py",
+        "toy/stubbed.pyi",
+        "toy/sub/__init__.py",
+    }
+    assert PyPI(cache).source("toy", "1.0").compiled == tree.compiled  # from the marker
+
+
+@pytest.mark.parametrize(
+    ("filename", "archive"),
+    [("toy-1.0.tar.gz", make_tar), ("toy-1.0.zip", make_zip)],
+    ids=["tar.gz", "zip"],
+)
+def test_an_sdist_records_cython_modules_without_a_python_source(
+    index, cache, filename, archive
+) -> None:
+    sdist = {
+        **SDIST,
+        "toy-1.0/src/toy/fast.pyx": "def speedy(int x): return x\n",
+        "toy-1.0/src/toy/fast.pxd": "cdef int helper(int x)\n",
+        "toy-1.0/src/toy/fallback.pyx": "def f(): pass\n",
+        "toy-1.0/src/toy/fallback.py": "def f() -> None: ...\n",
+        "toy-1.0/benchmarks/bench.pyx": "",  # outside the package root
+    }
+    index.add("toy", "1.0", filename, archive(sdist))
+    tree = PyPI(cache).source("toy", "1.0")
+    assert tree.compiled == ("toy.fast",)
+    assert "toy/fast.pyx" not in files_in(tree.root)
 
 
 TOKEN = "sc7f3a"  # in the name of every file a hostile archive tries to write
@@ -687,10 +764,12 @@ def test_a_broken_tree_in_the_cache_is_replaced(index, cache) -> None:
     "marker",
     [
         {"schema": 1, "import_names": ["toy"], "requires": []},
-        {"schema": 2, "import_names": ["win32\\lib\\toy"], "requires": []},
+        # Before SOURCE_SCHEMA 3 the compiled modules were not recorded (issue #52).
+        {"schema": 2, "import_names": ["toy"], "requires": []},
+        {"schema": SOURCE_SCHEMA, "import_names": ["win32\\lib\\toy"], "requires": []},
         "not json",
     ],
-    ids=["old-schema", "backslash-names", "unreadable"],
+    ids=["schema-1", "schema-2", "backslash-names", "unreadable"],
 )
 def test_a_tree_from_an_earlier_version_is_extracted_again(index, cache, marker) -> None:
     old = cache.root / "sources" / "toy-1.0"
@@ -704,7 +783,11 @@ def test_a_tree_from_an_earlier_version_is_extracted_again(index, cache, marker)
 
 def _publish_as_another_process(root: Path) -> None:
     write_tree(root, {"toy/__init__.py": ""})
-    marker = {"schema": 2, "import_names": ["toy"], "requires": ["from-the-other-process"]}
+    marker = {
+        "schema": SOURCE_SCHEMA,
+        "import_names": ["toy"],
+        "requires": ["from-the-other-process"],
+    }
     (root / ".since-cutoff.json").write_text(json.dumps(marker), encoding="utf-8")
 
 

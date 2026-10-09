@@ -39,8 +39,13 @@ METADATA_TTL = 12 * 3600
 # PyPI again: long enough for one scan's many lookups of a package, short enough that a
 # long-running process (the MCP server) tries again.
 STALE_REUSE = 600
-SOURCE_SCHEMA = 2
+# 3: the marker lists the compiled modules that have no source or stub (SourceTree.compiled).
+SOURCE_SCHEMA = 3
 _SOURCE_SUFFIXES = (".py", ".pyi")
+# Extension modules in a wheel: ``fast.cpython-312-x86_64-linux-gnu.so``, ``fast.abi3.so``,
+# ``fast.cp312-win_amd64.pyd``, ``fast.pyd``. In an sdist, the Cython source (``fast.pyx``).
+_EXTENSION_SUFFIXES = (".so", ".pyd")
+_CYTHON_SUFFIXES = (".pyx",)
 _NON_PACKAGE_DIRS = {"test", "tests", "docs", "doc", "examples", "example", "benchmarks", "scripts"}
 _MAX_MEMBER_BYTES = 8 * 1024 * 1024
 _MAX_TOTAL_BYTES = 512 * 1024 * 1024
@@ -75,6 +80,10 @@ class SourceTree:
     root: Path
     import_names: tuple[str, ...]
     requires: tuple[str, ...] = ()
+    # Dotted names of the modules the distribution ships compiled, with no ``.py`` source and
+    # no ``.pyi`` stub of the same name: a static reading sees nothing of them. A package whose
+    # own ``__init__`` is compiled is ``pkg.__init__``.
+    compiled: tuple[str, ...] = ()
 
 
 def _parse_time(value: str) -> datetime:
@@ -251,7 +260,7 @@ class PyPI:
         root = sources / key
         cached = _read_marker(root)
         if cached is not None:
-            return SourceTree(name, version, root, cached[0], cached[1])
+            return SourceTree(name, version, root, *cached)
 
         rel = self.release(name, version)
         artifact = _pick_artifact(rel.files, allow_yanked=True)
@@ -295,16 +304,26 @@ class PyPI:
                     lifted = _lift(tmp, dirs)
                     import_names = _wheel_import_names(blob, files, tmp, dirs, lifted)
                     requires = _requires_from_zip(blob, r"[^/]+\.dist-info/METADATA")
+                    compiled = _compiled_modules(
+                        [_on_path(f, dirs) for f in files], _EXTENSION_SUFFIXES
+                    )
                 else:
                     if filename.endswith(".zip"):
-                        _extract_zip(blob, tmp / "_x", strip_first=True)
+                        members = _extract_zip(blob, tmp / "_x", strip_first=True)
                         requires = _requires_from_zip(blob, r"[^/]+/PKG-INFO")
                     else:
-                        _extract_tar(blob, tmp / "_x")
+                        members = _extract_tar(blob, tmp / "_x")
                         requires = _requires_from_tar(blob)
                     package_root = _sdist_package_root(tmp / "_x")
                     import_names = _refine_namespaces(
                         package_root, _import_names_from_tree(package_root)
+                    )
+                    # Members are named from the sdist's top directory; modules from its
+                    # package root (``src/`` or the top directory itself).
+                    prefix = package_root.relative_to(tmp / "_x").as_posix()
+                    compiled = _compiled_modules(
+                        [_under(m.split("/", 1)[-1], prefix) for m in members if "/" in m],
+                        _CYTHON_SUFFIXES,
                     )
             except (
                 zipfile.BadZipFile,
@@ -323,7 +342,12 @@ class PyPI:
                 raise NoCodeError(f"could not find importable modules in {filename}")
             (package_root / _MARKER).write_text(
                 json.dumps(
-                    {"schema": SOURCE_SCHEMA, "import_names": import_names, "requires": requires}
+                    {
+                        "schema": SOURCE_SCHEMA,
+                        "import_names": import_names,
+                        "requires": requires,
+                        "compiled": compiled,
+                    }
                 ),
                 encoding="utf-8",
             )
@@ -341,7 +365,7 @@ class PyPI:
         cached = _read_marker(root)
         if cached is None:
             raise PackageIndexError(f"could not publish the sources of {name}=={version}")
-        return SourceTree(name, version, root, cached[0], cached[1])
+        return SourceTree(name, version, root, *cached)
 
 
 # --------------------------------------------------------------------- helpers
@@ -416,7 +440,12 @@ def _metapackage(name: str, version: str, requires: list[str]) -> str | None:
     )
 
 
-def _read_marker(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+def _read_marker(
+    root: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None:
+    """``(import_names, requires, compiled)`` of an extracted tree, or None when it must be
+    extracted again (no marker, an earlier SOURCE_SCHEMA, or names an earlier version got
+    wrong)."""
     try:
         data = json.loads((root / _MARKER).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -427,7 +456,8 @@ def _read_marker(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
     if any("\\" in n for n in names):
         return None  # pywin32's paths, extracted before its .pth directories were followed
     names = _refine_namespaces(root, names) or names  # trees extracted by earlier versions
-    return _stub_names(names), tuple(data.get("requires") or ())
+    compiled = tuple(str(n) for n in data.get("compiled") or ())
+    return _stub_names(names), tuple(data.get("requires") or ()), compiled
 
 
 def _stub_names(names: list[str]) -> tuple[str, ...]:
@@ -483,6 +513,41 @@ def _safe_target(dest: Path, member: str, resolved: dict[Path, Path] | None = No
 
 def _wanted(member: str) -> bool:
     return member.endswith(_SOURCE_SUFFIXES) or member.endswith("py.typed")
+
+
+def _compiled_modules(members: list[str], suffixes: tuple[str, ...]) -> list[str]:
+    """Dotted names of the compiled modules among an archive's ``members`` (paths from where
+    they are imported) that have no ``.py`` source and no ``.pyi`` stub of the same name.
+
+    Only sources are extracted, so without this list a public module that became compiled
+    (``pkg/fast.py`` -> ``pkg/fast.cpython-312-x86_64-linux-gnu.so``) looked removed.
+    ``suffixes`` are the compiled forms: extension modules in a wheel, Cython sources in an
+    sdist. A package whose ``__init__`` is compiled is ``pkg.__init__``: its submodules still
+    have files of their own. A file whose path does not spell a module
+    (``numpy.libs/libopenblas.so``, a shared library a wheel vendors) is none, nor is mypyc's
+    helper module (``<hash>__mypyc.cpython-312-x86_64-linux-gnu.so``), which no code imports.
+    """
+    readable: set[str] = set()
+    compiled: dict[str, str] = {}
+    for member in members:
+        path = PurePosixPath(member.replace("\\", "/"))
+        parts = [*path.parent.parts, path.name.split(".", 1)[0]]
+        if not all(p.isidentifier() for p in parts) or parts[-1].endswith("__mypyc"):
+            continue
+        key = "/".join(parts)
+        if path.suffix in _SOURCE_SUFFIXES:
+            readable.add(key)
+        elif path.suffix in suffixes:
+            compiled[key] = ".".join(parts)
+    return sorted(name for key, name in compiled.items() if key not in readable)
+
+
+def _under(member: str, prefix: str) -> str:
+    """``member`` relative to ``prefix`` (a directory, or "" for the top), or "" when it is
+    outside it."""
+    if prefix in ("", "."):
+        return member
+    return member[len(prefix) + 1 :] if member.startswith(prefix + "/") else ""
 
 
 class _Budget:
