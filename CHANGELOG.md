@@ -16,6 +16,10 @@
   set in many containers). argparse wrote them itself, past the check for a closed pipe:
   Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
   exited with 0.
+- With griffe 2.3.1 or later, a parameter dropped from a function that still takes `**kwargs`
+  (`f(x, verbose=False)` becoming `f(x, **kwargs)`) was reported as removed, a breaking change,
+  although calls that pass it still work. griffe 2.3.1 changed how a parameter's kind prints,
+  and the check for `**kwargs` read that text instead of the kind's name.
 - When PyPI cannot be reached (no network, a timeout, 429 or 5xx after the retries), a
   package's release list cached more than 12 hours ago is used instead of failing, and the
   scan and the MCP tools warn from which day each such copy is: releases published after it
