@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -20,7 +21,7 @@ from typing import Any
 import pytest
 
 from since_cutoff import pypi as pypi_module
-from since_cutoff.cache import DiskCache
+from since_cutoff.cache import MB, DiskCache
 from since_cutoff.engine import Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
 from since_cutoff.project import load_project
@@ -885,3 +886,72 @@ def test_a_release_with_many_files_is_not_a_placeholder(tmp_path) -> None:
     tree = SourceTree("zen", "0.0.0", write_tree(tmp_path, files), ("zen",))
     assert is_placeholder(tree, max_files=4) is True
     assert is_placeholder(tree, max_files=3) is False
+
+
+# ------------------------------------------------------------ the sources cap
+def earlier_tree(cache: DiskCache, key: str, *, megabytes: float, used_ago: float) -> Path:
+    """A tree an earlier run extracted, as its marker records it: ``megabytes`` in size, last
+    used ``used_ago`` seconds ago."""
+    root = cache.root / "sources" / key
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("x = 1\n")
+    marker = root / ".since-cutoff.json"
+    data = {"schema": 2, "import_names": ["pkg"], "requires": [], "bytes": int(megabytes * MB)}
+    marker.write_text(json.dumps(data), encoding="utf-8")
+    stamp = time.time() - used_ago
+    os.utime(marker, (stamp, stamp))
+    return root
+
+
+def test_a_new_extraction_evicts_the_least_recently_used_trees_over_the_cap(
+    index, cache, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "2.5")
+    oldest = earlier_tree(cache, "oldest-1.0", megabytes=1, used_ago=3 * 86400)
+    older = earlier_tree(cache, "older-1.0", megabytes=1, used_ago=2 * 86400)
+    recent = earlier_tree(cache, "recent-1.0", megabytes=1, used_ago=600)  # may be in use
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": "x = 1\n"}))
+    with caplog.at_level(logging.INFO, logger="since_cutoff.pypi"):
+        tree = PyPI(cache).source("toy", "1.0")
+    # 3 MB and the new tree, 2.5 allowed: the least recently used tree goes, and that is
+    # enough. The recent one would be next, but a tree used in the last hour never goes.
+    assert not oldest.exists() and older.exists() and recent.exists() and tree.root.exists()
+    assert "evicted the sources oldest-1.0 (1.0 MB)" in caplog.text
+    assert leftovers(cache) == []
+    # The new tree's marker records its size, for the next time: the files, not the marker.
+    marker = json.loads((tree.root / ".since-cutoff.json").read_text(encoding="utf-8"))
+    assert marker["bytes"] == sum(
+        p.stat().st_size for p in tree.root.rglob("*") if p.is_file() and not p.name.startswith(".")
+    )
+
+
+def test_the_trees_this_process_served_are_never_evicted(index, cache, monkeypatch) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "0.000001")  # one byte: everything is over
+    stale = earlier_tree(cache, "stale-1.0", megabytes=1, used_ago=3 * 86400)
+    for version in ("1.0", "2.0"):
+        blob = wheel({"toy/__init__.py": f"x = {version}\n"})
+        index.add("toy", version, f"toy-{version}-py3-none-any.whl", blob)
+    pypi = PyPI(cache)
+    one = pypi.source("toy", "1.0")
+    assert not stale.exists() and one.root.exists()
+    two = pypi.source("toy", "2.0")  # a second extraction: toy-1.0 is still what this scan reads
+    assert one.root.exists() and two.root.exists()
+    assert pypi.source("toy", "1.0").root == one.root
+
+
+def test_a_cache_hit_marks_the_tree_as_used(index, cache) -> None:
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    tree = PyPI(cache).source("toy", "1.0")
+    marker = tree.root / ".since-cutoff.json"
+    long_ago = time.time() - 3 * 86400
+    os.utime(marker, (long_ago, long_ago))
+    assert PyPI(cache).source("toy", "1.0") == tree  # another process, from the cache
+    assert marker.stat().st_mtime > time.time() - 60
+
+
+def test_no_cap_when_the_variable_is_zero(index, cache, monkeypatch) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "0")
+    stale = earlier_tree(cache, "stale-1.0", megabytes=4096, used_ago=30 * 86400)
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    PyPI(cache).source("toy", "1.0")
+    assert stale.exists()

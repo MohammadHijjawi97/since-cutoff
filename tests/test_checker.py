@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import shutil
+import sys
+
 import pytest
 
-from since_cutoff.checker import Checker, extract_code
+from since_cutoff.checker import Checker, extract_code, pyright_command
 from since_cutoff.engine import DEPRECATED, INVALID, OFFTASK, PASS, STALE, WRONG, classify
+from since_cutoff.errors import CheckerError
 
 pytestmark = pytest.mark.pyright
 
@@ -109,3 +113,18 @@ def test_many_snippets_in_one_run(checker, toylib):
 )
 def test_extract_code(answer, expected):
     assert extract_code(answer) == expected
+
+
+def test_without_basedpyright_the_error_names_the_extra(monkeypatch, cache) -> None:
+    """basedpyright is the ``since-cutoff[run]`` extra, not a dependency: scan, sync, status
+    and the MCP server never run it."""
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setitem(sys.modules, "basedpyright", None)  # makes the import fail
+    with pytest.raises(CheckerError) as info:
+        pyright_command()
+    message = str(info.value)
+    assert message.startswith("run checks the model's answers with the basedpyright type checker")
+    assert 'pip install "since-cutoff[run]"' in message
+    assert message.endswith("or uvx --with basedpyright since-cutoff run")
+    with pytest.raises(CheckerError, match="since-cutoff\\[run\\]"):
+        Checker(cache)  # the engine builds one at the first probe: the same message there

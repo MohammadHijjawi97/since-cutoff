@@ -5,6 +5,27 @@
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
+- basedpyright, which only `run` uses, is an extra: `pip install "since-cutoff[run]"`, or
+  `uvx --with basedpyright since-cutoff run`. With the Node.js it brings it was 180 of the
+  196 MB an installation took, paid as well by `scan`, `sync`, `status`, the MCP server, the
+  Action, the pre-commit hooks and the plugin, none of which run it. Without it, `run` stops
+  before the scan and the model calls with the install line; it used to fail at the first
+  probe, after the scan. The `dev` dependency group installs it.
+- `since-cutoff --help`, `--version` and `cache` start in about 150 ms instead of 400 (Python
+  3.13; 140 instead of 340 on 3.10): the CLI imports the engine, the API diff, the reports and
+  rich only in the commands that use them. `status --hook`, which the Claude Code plugin runs
+  at every session start, no longer loads rich or the reports either; what it still pays for
+  is the project's imports, which the hash of the dependencies is made of.
+- `since-cutoff cache info` prints where the cache is and, for each kind (PyPI metadata,
+  sources, diffs, model output, ...), its size, its entries and files, and when its least
+  recently used entry was last used. `cache clear --sources`, `--diffs` and `--pypi` clear
+  one kind and leave the model's answers to `run`, which cost money, alone (#30).
+- The extracted package sources, the bulk of the cache (4 GB on a machine that scanned many
+  projects), are capped: `SINCE_CUTOFF_CACHE_MAX_MB` (default 2048; 0 for no cap). After a new
+  version is extracted, the least recently used trees are removed until the sources fit,
+  never a tree the running scan uses or one used in the last hour, which another process may
+  be reading. Trees extracted by earlier versions are measured once, at the first extraction
+  after upgrading.
 - `sync --json` reports proposals and write results for scripts, with progress on stderr.
   It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.

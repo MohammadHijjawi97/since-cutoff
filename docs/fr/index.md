@@ -33,7 +33,7 @@ uvx since-cutoff scan
 uvx since-cutoff sync
 
 # mesurer le modèle, rédiger des notes, les ajouter à AGENTS.md
-uvx since-cutoff run --apply
+uvx --with basedpyright since-cutoff run --apply
 ```
 
 [Documentation en français et code source sur GitHub](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md) ·
@@ -185,7 +185,7 @@ uvx since-cutoff scan
 uvx since-cutoff sync
 
 # mesurer, rédiger des notes, les appliquer à AGENTS.md
-uvx since-cutoff run --apply
+uvx --with basedpyright since-cutoff run --apply
 ```
 
 since-cutoff fonctionne avec Claude Code (sous forme de plugin), Anthropic, OpenAI, OpenRouter,
