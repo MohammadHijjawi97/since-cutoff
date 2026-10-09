@@ -49,7 +49,7 @@ from since_cutoff.apidiff import (
     PARAM_REMOVED,
     PARAM_REQUIRED,
     APIChange,
-    diff_sources,
+    diff_sources_with_unread,
     griffe_version,
     load_api,
 )
@@ -85,7 +85,7 @@ from since_cutoff.notes import (
 )
 from since_cutoff.project import Dependency, FileUse, Project
 from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
-from since_cutoff.pypi import PyPI, Release, SourceTree, is_placeholder
+from since_cutoff.pypi import SOURCE_SCHEMA, PyPI, Release, SourceTree, is_placeholder
 from since_cutoff.selection import (
     NAME_MATCH,
     OLD_FORM,
@@ -288,6 +288,10 @@ class PackageScan:
     # NEW (no release by the cutoff): the day of its first release, from the release list the
     # scan read anyway.
     first_released: str | None = None
+    # CHANGED: modules the pinned release ships compiled, without a source or a stub, that hid
+    # something the release at the cutoff had: the diff did not report its removal, and could
+    # not compare it (issue #52; diff_sources_with_unread).
+    unread: list[str] = field(default_factory=list)
 
     @property
     def breaking(self) -> list[APIChange]:
@@ -357,12 +361,42 @@ class UsedAPI:
         return list(dict.fromkeys(u.file for u in self.uses if u.file))
 
 
+def stale_warning(stale: dict[str, date]) -> str:
+    """The scan's warning when PyPI could not be reached and release lists came from older
+    cached copies (:attr:`PyPI.stale`: each package with the day its copy was fetched)."""
+    listed = [f"{name} (cached {day.isoformat()})" for name, day in stale.items()]
+    names = listed[0] if len(listed) == 1 else ", ".join(listed[:-1]) + " and " + listed[-1]
+    one = len(listed) == 1
+    return (
+        f"PyPI could not be reached: the release list{'' if one else 's'} of {names} "
+        f"{'is an older copy' if one else 'are older copies'} from the cache, so releases "
+        f"published after {'that day' if one else 'those days'} are unknown to this scan"
+    )
+
+
+def unread_warning(s: PackageScan) -> str:
+    """The scan's warning for a package whose pinned release ships compiled modules that hid
+    something the release at the cutoff had (:attr:`PackageScan.unread`)."""
+    one = len(s.unread) == 1
+    what = "is a compiled module" if one else "are compiled modules"
+    it = "it" if one else "them"
+    return (
+        f"{s.name} {s.locked}: {', '.join(s.unread)} {what} without a .py source or a .pyi "
+        f"stub, unlike in {s.cutoff_version}; since-cutoff does not run code, so changes to "
+        f"{it} and to the names taken from {it} are not reported"
+    )
+
+
 @dataclass
 class ScanResult:
     project: Project
     target: ModelTarget
     packages: list[PackageScan]
     warnings: list[str] = field(default_factory=list)
+    # The packages whose release list is an older cached copy because PyPI could not be
+    # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
+    # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
+    stale: dict[str, date] = field(default_factory=dict)
 
     @property
     def changed(self) -> list[PackageScan]:
@@ -1054,6 +1088,16 @@ class Engine:
             self.reporter.stage(f"Diffing the API of {what} cutoff version", len(to_diff))
             self._diff_all(to_diff)
         self.reporter.done()
+        for s in to_diff:
+            if s.unread:
+                warnings.append(unread_warning(s))
+                self.reporter.warn(warnings[-1])
+        # Only this scan's packages: a PyPI object outlives a scan in the MCP server.
+        names = {s.name for s in scans}
+        stale = {k: v for k, v in self.pypi.stale.items() if k in names}
+        if stale:
+            warnings.append(stale_warning(stale))
+            self.reporter.warn(warnings[-1])
         for s in scans:
             s.imported = project.imports(s.import_names) if s.import_names else None
         # Every report lists the packages in this order: those with changes first, of those
@@ -1061,7 +1105,7 @@ class Engine:
         scans.sort(
             key=lambda s: (s.status != CHANGED, not s.imported, *(-n for n in s.counts), s.name)
         )
-        return ScanResult(project, target, scans, warnings)
+        return ScanResult(project, target, scans, warnings, stale)
 
     def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
         scan = PackageScan(dep.key, dep.version, dep.source, dep.direct)
@@ -1149,14 +1193,15 @@ class Engine:
                 continue
             s.import_names = list(new.import_names)
             if id(s) in cached:
-                self._finish(s, cached[id(s)], self._diff_key(s), store=False)
+                unread = self.store.get("diffs", self._unread_key(s)) or []
+                self._finish(s, (cached[id(s)], unread), self._diff_key(s), store=False)
                 continue
             names = sorted(set(old.import_names) | set(new.import_names))
             pending.append((s, old, new, names))
 
         if len(pending) <= 1 or not self.processes or os.environ.get("SINCE_CUTOFF_NO_PROCESSES"):
             for s, old, new, names in pending:
-                result = diff_sources(
+                result = diff_sources_with_unread(
                     s.name,
                     old.version,
                     old.root,
@@ -1165,6 +1210,7 @@ class Engine:
                     names,
                     old_requires=old.requires,
                     new_requires=new.requires,
+                    new_compiled=list(new.compiled),
                 )
                 self._finish(s, result, self._diff_key(s))
             return
@@ -1173,7 +1219,7 @@ class Engine:
         try:
             futs = {
                 pool.submit(
-                    diff_sources,
+                    diff_sources_with_unread,
                     s.name,
                     old.version,
                     old.root,
@@ -1182,6 +1228,7 @@ class Engine:
                     names,
                     old_requires=old.requires,
                     new_requires=new.requires,
+                    new_compiled=list(new.compiled),
                 ): s
                 for s, old, new, names in pending
             }
@@ -1229,12 +1276,30 @@ class Engine:
             "diff", DIFF_SCHEMA, griffe_version(), s.name, s.cutoff_version, s.locked
         )
 
+    @staticmethod
+    def _unread_key(s: PackageScan) -> str:
+        """Where a diff's :attr:`PackageScan.unread` is kept next to it. It also depends on
+        what the source trees record as compiled (SOURCE_SCHEMA)."""
+        return stable_hash("unread", DIFF_SCHEMA, SOURCE_SCHEMA, s.name, s.cutoff_version, s.locked)
+
     def _finish(
-        self, s: PackageScan, result: list[dict[str, Any]], key: str, *, store: bool = True
+        self,
+        s: PackageScan,
+        result: tuple[list[dict[str, Any]], list[str]],
+        key: str,
+        *,
+        store: bool = True,
     ) -> None:
+        """Take a diff (its changes, and the compiled modules that hid something), computed or
+        from the cache; only a finished diff sets :attr:`PackageScan.unread`, so a failed one
+        warns of nothing."""
+        changes, unread = result
         if store:
-            self.store.set("diffs", key, result)
-        s.changes = [APIChange.from_dict(c) for c in result]
+            self.store.set("diffs", key, changes)
+            if unread:
+                self.store.set("diffs", self._unread_key(s), unread)
+        s.unread = list(unread)
+        s.changes = [APIChange.from_dict(c) for c in changes]
         # Module metadata alone (``__version__``) is not an API change worth flagging.
         s.status = CHANGED if s.distinct else UNCHANGED
         # A diff taken from the cache is instant: in a log, only a diff that was computed says

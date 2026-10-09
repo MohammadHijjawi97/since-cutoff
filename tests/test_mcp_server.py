@@ -8,6 +8,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from since_cutoff.models import ModelRegistry, load_snapshot
 from since_cutoff.project import load_project
 from since_cutoff.pypi import SourceTree
 from since_cutoff.report import render_scan_markdown
-from tests.conftest import FakePyPI, write_tree
+from tests.conftest import FakePyPI, compiled_fastlib, write_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_URL = "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
@@ -118,6 +119,50 @@ def test_unknown_models_fail_with_close_matches(tools: Tools) -> None:
 
 
 # ----------------------------------------------------------------- api_changes
+COMPILED_WARNING = (
+    "- Warning: fastlib 2.0: fastlib.fast is a compiled module without a .py source or a .pyi "
+    "stub, unlike in 1.0; since-cutoff does not run code, so changes to it and to the names "
+    "taken from it are not reported"
+)
+
+
+@pytest.mark.parametrize("drop", [True, False], ids=["with-changes", "nothing-else"])
+def test_api_changes_says_when_a_compiled_module_was_not_compared(tmp_path, cache, drop) -> None:
+    """Issue #52: "No breaking changes" for a package whose module became compiled is not the
+    whole answer; the agent is told what was not compared."""
+    registry = ModelRegistry(cache, offline=True)
+    pypi = compiled_fastlib(tmp_path, cache, drop=drop)
+    tools = Tools(cache, registry=registry, pypi=pypi, today=date(2026, 9, 1))
+    out = tools.api_changes("fastlib", cutoff="2025-07")
+    assert COMPILED_WARNING in out.splitlines()
+    assert ("fastlib.gone" in out) is drop
+    assert ("No breaking changes or new deprecations found." in out) is not drop
+
+
+def test_project_changes_says_when_a_compiled_module_was_not_compared(tmp_path, cache) -> None:
+    registry = ModelRegistry(cache, offline=True)
+    pypi = compiled_fastlib(tmp_path / "lib", cache)
+    tools = Tools(cache, registry=registry, pypi=pypi, today=date(2026, 9, 1))
+    out = tools.project_changes(
+        str(make_app(tmp_path, "fastlib==2.0", "import fastlib\n")), cutoff="2025-07"
+    )
+    assert COMPILED_WARNING in out.splitlines()
+
+
+def test_the_tools_say_when_a_release_list_is_an_older_copy(tmp_path, tools, fake_pypi) -> None:
+    """Issue #54: when PyPI could not be reached, the tools say which release lists are older
+    cached copies, as the CLI's scan does; a newer release may be missing from them."""
+    fake_pypi._stale["toylib"] = ({}, date(2026, 9, 20), time.monotonic())
+    warning = (
+        "- Warning: PyPI could not be reached: the release list of toylib (cached 2026-09-20) "
+        "is an older copy from the cache, so releases published after that day are unknown to "
+        "this scan"
+    )
+    assert warning in tools.api_changes("toylib", cutoff="2025-07").splitlines()
+    out = tools.project_changes(str(make_app(tmp_path)), cutoff="2025-07")
+    assert warning in out.splitlines()
+
+
 def test_api_changes_lists_hard_breaks_first_with_replacements(tools: Tools) -> None:
     out = tools.api_changes("toylib", model="claude-sonnet-4-5")
     assert out.startswith("# toylib 1.0 -> 2.0\n")

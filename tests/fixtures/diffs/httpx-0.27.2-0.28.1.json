@@ -1,5 +1,5 @@
 {
- "schema": 20,
+ "schema": 21,
  "package": "httpx",
  "from_version": "0.27.2",
  "to_version": "0.28.1",

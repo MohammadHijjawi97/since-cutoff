@@ -52,6 +52,7 @@ def record(pypi: Any, fixture: dict[str, Any]) -> dict[str, Any]:
         names,
         old_requires=old.requires,
         new_requires=new.requires,
+        new_compiled=list(new.compiled),
     )
     data: dict[str, Any] = {
         "schema": DIFF_SCHEMA,

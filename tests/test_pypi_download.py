@@ -13,7 +13,7 @@ import tarfile
 import time
 import tracemalloc
 import zipfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +21,18 @@ import pytest
 
 from since_cutoff import pypi as pypi_module
 from since_cutoff.cache import DiskCache
+from since_cutoff.engine import Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
-from since_cutoff.pypi import METADATA_TTL, PyPI, SourceTree, _safe_target, is_placeholder
-from tests.conftest import LocalServer, Reply, write_tree
+from since_cutoff.project import load_project
+from since_cutoff.pypi import (
+    METADATA_TTL,
+    SOURCE_SCHEMA,
+    PyPI,
+    SourceTree,
+    _safe_target,
+    is_placeholder,
+)
+from tests.conftest import LocalServer, Reply, ScriptedModel, write_tree
 
 METADATA = "Metadata-Version: 2.1\nName: toy\nVersion: 1.0\n"
 
@@ -135,6 +144,132 @@ def test_metadata_is_fetched_once_kept_slim_and_refreshed_after_its_ttl(index, c
     os.utime(cache.path("pypi", "toy-lib"), (old, old))
     PyPI(cache).project("toy-lib")
     assert index.server.paths() == ["/pypi/toy-lib/json"] * 2
+
+
+# Issue #54: when PyPI cannot be reached, a release list cached days ago beats none at all.
+FETCHED = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+UNREACHABLE = {
+    "503": Reply(503, "Service Unavailable"),
+    "429": Reply(429, "Too Many Requests"),
+    "cut-off": Reply(body={"info": {}, "releases": {}}, cut=5),  # no status: a network error
+}
+
+
+def _cached_then(index: Index, cache: DiskCache, reply: Reply) -> None:
+    """toy 1.0's release list in the cache, fetched on FETCHED, and PyPI answering ``reply``."""
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    PyPI(cache).project("toy")
+    os.utime(cache.path("pypi", "toy"), (FETCHED.timestamp(), FETCHED.timestamp()))
+    index.server.routes["/pypi/toy/json"] = [reply]
+
+
+@pytest.mark.parametrize("reply", UNREACHABLE.values(), ids=UNREACHABLE.keys())
+def test_an_older_cached_release_list_is_used_when_pypi_cannot_be_reached(
+    index, cache, slept, reply
+) -> None:
+    _cached_then(index, cache, reply)
+    pypi = PyPI(cache)
+    assert [r.version for r in pypi.releases("toy")] == ["1.0"]
+    assert pypi.stale == {"toy": date(2026, 9, 20)}
+    assert len(slept) == 2  # it tried as hard as for any other request first
+    # The rest of the run uses that copy without asking PyPI again.
+    asked = len(index.server.paths("/pypi/"))
+    assert pypi.release("Toy", "1.0").version == "1.0"
+    assert pypi.version_at("toy", date(2026, 1, 1)).version == "1.0"
+    assert len(index.server.paths("/pypi/")) == asked
+    # A version the copy does not list may be newer than the copy, not missing from PyPI.
+    with pytest.raises(PackageIndexError) as err:
+        pypi.release("toy", "2.0")
+    assert str(err.value) == (
+        "toy==2.0 is not in the cached PyPI metadata from 2026-09-20; PyPI could not be reached"
+    )
+
+
+def test_a_long_running_process_asks_pypi_again(index, cache, slept, monkeypatch) -> None:
+    """The MCP server keeps one PyPI for its whole life: an older copy is reused for
+    STALE_REUSE seconds, then PyPI is asked again, and its answer replaces the copy."""
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    pypi = PyPI(cache)
+    pypi.project("toy")
+    asked = len(index.server.paths("/pypi/"))
+    pypi.project("toy")
+    assert len(index.server.paths("/pypi/")) == asked  # within STALE_REUSE: the copy
+    monkeypatch.setattr(pypi_module, "STALE_REUSE", 0)
+    index.add("toy", "2.0", "toy-2.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    assert pypi.release("toy", "2.0").version == "2.0"
+    assert len(index.server.paths("/pypi/")) == asked + 1
+    assert pypi.stale == {}
+
+
+def test_a_copy_another_process_refreshed_is_no_longer_stale(index, cache, slept) -> None:
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    pypi = PyPI(cache)
+    pypi.project("toy")
+    assert pypi.stale == {"toy": date(2026, 9, 20)}
+    os.utime(cache.path("pypi", "toy"))  # written just now, by another since-cutoff
+    pypi.project("toy")
+    assert pypi.stale == {}
+
+
+def test_without_a_cached_release_list_an_unreachable_pypi_is_an_error(index, cache, slept):
+    index.server.routes["/pypi/toy/json"] = [Reply(503, "Service Unavailable")]
+    pypi = PyPI(cache)
+    with pytest.raises(PackageIndexError, match="could not reach PyPI for 'toy': HTTP 503"):
+        pypi.project("toy")
+    assert pypi.stale == {}
+
+
+@pytest.mark.parametrize(
+    ("reply", "message"),
+    [
+        (Reply(404, "Not Found"), "'toy' is not on PyPI"),
+        # A proxy that refuses the request is an answer, not a network that went away.
+        (Reply(403, "Forbidden"), "could not reach PyPI for 'toy': HTTP 403: Forbidden"),
+    ],
+    ids=["404", "403"],
+)
+def test_an_answer_from_pypi_is_not_covered_by_an_older_copy(
+    index, cache, slept, reply, message
+) -> None:
+    _cached_then(index, cache, reply)
+    pypi = PyPI(cache)
+    with pytest.raises(PackageIndexError) as err:
+        pypi.project("toy")
+    assert str(err.value) == message
+    assert pypi.stale == {}
+
+
+def test_a_scan_says_which_release_lists_are_older_copies(index, cache, slept, tmp_path):
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    app = write_tree(
+        tmp_path / "app", {"requirements.txt": "toy==1.0\n", "main.py": "import toy\n"}
+    )
+    settings = Settings(model="scripted:scripted-1", cutoff=date(2025, 7, 31), jobs=2)
+    engine = Engine(
+        settings,
+        store=cache,
+        llm_cache=cache,
+        pypi=PyPI(cache),
+        provider_factory=lambda spec: ScriptedModel(),
+    )
+    scan = engine.scan(load_project(app), engine.resolve_target())
+    assert scan.package("toy").locked == "1.0"
+    assert scan.warnings == [
+        "PyPI could not be reached: the release list of toy (cached 2026-09-20) is an older "
+        "copy from the cache, so releases published after that day are unknown to this scan"
+    ]
+    # The same PyPI (as in the MCP server) scanning a project without toy says nothing of it.
+    index.add("other", "1.0", "other-1.0-py3-none-any.whl", wheel({"other/__init__.py": ""}))
+    other = write_tree(tmp_path / "other-app", {"requirements.txt": "other==1.0\n"})
+    assert engine.scan(load_project(other), engine.resolve_target()).warnings == []
+
+
+def test_the_warning_names_every_older_copy() -> None:
+    assert stale_warning({"anthropic": date(2026, 9, 20), "openai": date(2026, 9, 21)}) == (
+        "PyPI could not be reached: the release lists of anthropic (cached 2026-09-20) and "
+        "openai (cached 2026-09-21) are older copies from the cache, so releases published "
+        "after those days are unknown to this scan"
+    )
 
 
 @pytest.mark.parametrize(
@@ -251,8 +386,9 @@ def test_a_wheel_is_downloaded_once_and_only_its_sources_kept(index, cache) -> N
     }
     # Another process (a new PyPI) finds the tree without asking PyPI anything.
     requests = len(index.server.seen)
+    assert tree.compiled == ("toy._speedups",)  # no _speedups.py or .pyi next to it
     assert PyPI(cache).source("Toy", "1.0") == SourceTree(
-        "Toy", "1.0", tree.root, ("toy",), tree.requires
+        "Toy", "1.0", tree.root, ("toy",), tree.requires, ("toy._speedups",)
     )
     assert len(index.server.seen) == requests
     assert index.downloads == ["/files/toy-1.0-py3-none-any.whl"] and leftovers(cache) == []
@@ -292,6 +428,75 @@ def test_a_flat_sdist_names_its_modules_but_not_its_build_scripts(index, cache) 
     index.add("toy", "1.0", "toy-1.0.tar.gz", make_tar(sdist))
     tree = PyPI(cache).source("toy", "1.0")
     assert (tree.import_names, tree.requires) == (("toy_mod", "toy_stubs"), ())
+
+
+def test_a_wheel_records_its_compiled_modules_and_still_extracts_only_sources(index, cache) -> None:
+    """Issue #52: a module that became an extension module, or lost its stub, looked
+    removed. The tree names the compiled modules a static reading cannot see."""
+    elf, pe = b"\x7fELF", b"MZ\x90\x00"
+    blob = wheel(
+        {
+            "toy/__init__.py": "",
+            "toy/fast.cpython-312-x86_64-linux-gnu.so": elf,
+            "toy/limited.abi3.so": elf,
+            "toy/win.cp313-win_amd64.pyd": pe,
+            "toy/plain.pyd": pe,
+            "toy/sub/__init__.py": "",
+            "toy/sub/inner.cpython-312-darwin.so": elf,
+            "toy/compiled_pkg/__init__.cpython-312-x86_64-linux-gnu.so": elf,
+            # Readable: a stub, or the Python source next to a compiled copy (mypyc, black).
+            "toy/stubbed.cpython-312-x86_64-linux-gnu.so": elf,
+            "toy/stubbed.pyi": "def f() -> None: ...\n",
+            "toy/both.py": "def f() -> None: ...\n",
+            "toy/both.cpython-312-x86_64-linux-gnu.so": elf,
+            # Not modules: a vendored shared library, mypyc's hashed helper (its hash may start
+            # with a letter or a digit).
+            "toy.libs/libgfortran-040039e1.so.5.0.0": elf,
+            "toy.libs/libz.so": elf,
+            "a3f2b9e1d0c4__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+            "30fcd23745efe32ce681__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+        }
+    )
+    index.add("toy", "1.0", "toy-1.0-cp312-cp312-manylinux_2_17_x86_64.whl", blob)
+    tree = PyPI(cache).source("toy", "1.0")
+    assert tree.compiled == (
+        "toy.compiled_pkg.__init__",  # its submodules have files of their own
+        "toy.fast",
+        "toy.limited",
+        "toy.plain",
+        "toy.sub.inner",
+        "toy.win",
+    )
+    assert files_in(tree.root) == {
+        ".since-cutoff.json",
+        "toy/__init__.py",
+        "toy/both.py",
+        "toy/stubbed.pyi",
+        "toy/sub/__init__.py",
+    }
+    assert PyPI(cache).source("toy", "1.0").compiled == tree.compiled  # from the marker
+
+
+@pytest.mark.parametrize(
+    ("filename", "archive"),
+    [("toy-1.0.tar.gz", make_tar), ("toy-1.0.zip", make_zip)],
+    ids=["tar.gz", "zip"],
+)
+def test_an_sdist_records_cython_modules_without_a_python_source(
+    index, cache, filename, archive
+) -> None:
+    sdist = {
+        **SDIST,
+        "toy-1.0/src/toy/fast.pyx": "def speedy(int x): return x\n",
+        "toy-1.0/src/toy/fast.pxd": "cdef int helper(int x)\n",
+        "toy-1.0/src/toy/fallback.pyx": "def f(): pass\n",
+        "toy-1.0/src/toy/fallback.py": "def f() -> None: ...\n",
+        "toy-1.0/benchmarks/bench.pyx": "",  # outside the package root
+    }
+    index.add("toy", "1.0", filename, archive(sdist))
+    tree = PyPI(cache).source("toy", "1.0")
+    assert tree.compiled == ("toy.fast",)
+    assert "toy/fast.pyx" not in files_in(tree.root)
 
 
 TOKEN = "sc7f3a"  # in the name of every file a hostile archive tries to write
@@ -559,10 +764,12 @@ def test_a_broken_tree_in_the_cache_is_replaced(index, cache) -> None:
     "marker",
     [
         {"schema": 1, "import_names": ["toy"], "requires": []},
-        {"schema": 2, "import_names": ["win32\\lib\\toy"], "requires": []},
+        # Before SOURCE_SCHEMA 3 the compiled modules were not recorded (issue #52).
+        {"schema": 2, "import_names": ["toy"], "requires": []},
+        {"schema": SOURCE_SCHEMA, "import_names": ["win32\\lib\\toy"], "requires": []},
         "not json",
     ],
-    ids=["old-schema", "backslash-names", "unreadable"],
+    ids=["schema-1", "schema-2", "backslash-names", "unreadable"],
 )
 def test_a_tree_from_an_earlier_version_is_extracted_again(index, cache, marker) -> None:
     old = cache.root / "sources" / "toy-1.0"
@@ -576,7 +783,11 @@ def test_a_tree_from_an_earlier_version_is_extracted_again(index, cache, marker)
 
 def _publish_as_another_process(root: Path) -> None:
     write_tree(root, {"toy/__init__.py": ""})
-    marker = {"schema": 2, "import_names": ["toy"], "requires": ["from-the-other-process"]}
+    marker = {
+        "schema": SOURCE_SCHEMA,
+        "import_names": ["toy"],
+        "requires": ["from-the-other-process"],
+    }
     (root / ".since-cutoff.json").write_text(json.dumps(marker), encoding="utf-8")
 
 

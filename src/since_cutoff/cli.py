@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, TYPE_CHECKING, Any, cast
 
 from rich.console import Console
 from rich.markup import escape
@@ -85,11 +85,15 @@ from since_cutoff.sync import (
     status_json,
     status_lines,
     sticky_target,
+    sync_json,
     target_status,
     up_to_date_text,
     written_text,
 )
 from since_cutoff.taskfile import read_tasks, tasks_document, write_tasks
+
+if TYPE_CHECKING:
+    from _typeshed import SupportsWrite
 
 COMMANDS = ("run", "scan", "sync", "status", "models", "cache", "unapply", "mcp")
 # ``scan --fail-on``: what makes it exit with code 3 (report.fail_reason).
@@ -182,6 +186,23 @@ class _Output:
 
 STDOUT = _Output("stdout")
 STDERR = _Output("stderr")
+
+
+class _Parser(argparse.ArgumentParser):
+    """An ArgumentParser whose help, usage, ``--version`` and errors go through STDOUT and
+    STDERR. argparse writes them itself, so with an unbuffered stream (PYTHONUNBUFFERED, common
+    in containers) a closed pipe shows up at its write, not at the last flush that :func:`main`
+    turns into OUTPUT_CLOSED: Python 3.11 and later ignore the error there and exit with 0,
+    3.10 lets it out as a traceback. Subcommands get the same class."""
+
+    def _print_message(self, message: str, file: SupportsWrite[str] | None = None) -> None:
+        if message:
+            out: SupportsWrite[str] = file if file is not None else STDERR
+            if out is sys.stdout:
+                out = STDOUT
+            elif out is sys.stderr:
+                out = STDERR
+            out.write(message)
 
 
 def _isatty(stream: Any) -> bool:
@@ -378,7 +399,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="since-cutoff",
         description="Find which dependency APIs your code uses changed after your coding model's "
         "training cutoff, and write short AGENTS.md notes from the API diff, each with its source.",
@@ -549,6 +570,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync.add_argument("-y", "--yes", action="store_true", help="write without asking")
     sync.add_argument(
+        "--json", action="store_true", help="print proposals and write results as JSON"
+    )
+    sync.add_argument(
         "--force",
         action="store_true",
         help="replace a block that was edited by hand (otherwise sync exits with code 4)",
@@ -710,6 +734,9 @@ def _main(argv: list[str] | None) -> int:
     if getattr(args, "debug", False):
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
     json_mode = getattr(args, "json", False)
+    if args.command == "sync" and json_mode and not (args.yes or args.check or args.dry_run):
+        err.print("[red]error:[/red] sync --json requires --yes, --check or --dry-run")
+        return 2
     markdown = getattr(args, "markdown", None)
     to_stdout = [
         flag
@@ -740,7 +767,7 @@ def _main(argv: list[str] | None) -> int:
         if args.command == "mcp":
             return _cmd_mcp(args)
         if args.command == "sync":
-            return _cmd_sync(args, out)
+            return _cmd_sync(args, ui)
         if args.command == "status":
             return _cmd_status(args, out)
         return _cmd_run(args, ui, json_mode)
@@ -1083,6 +1110,13 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         for t, basis, scope, suggestions, per_package in plans
     ]
     changed = [p for p in proposals if p.changed]
+    written: set[str] = set()
+
+    def finish(code: int) -> int:
+        if args.json:
+            STDOUT.write(json.dumps(sync_json(proposals, code, written), indent=2) + "\n")
+        return code
+
     for p in changed:
         out.print()
         for line in diff_lines(p):
@@ -1097,19 +1131,19 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
     if edited:
         for p in edited:
             out.print(f"[yellow]![/yellow] {escape(edited_text(p))}")
-        return EXIT_OK if args.dry_run and not args.check else EXIT_EDITED
+        return finish(EXIT_OK if args.dry_run and not args.check else EXIT_EDITED)
     for p in proposals:
         if not p.changed:
             out.print(escape(up_to_date_text(p, scans[(p.model, p.cutoff)])))
     if not changed:
-        return EXIT_OK
+        return finish(EXIT_OK)
     if args.check:
         for p in changed:
             out.print(escape(out_of_date_text(p)))
-        return EXIT_OUT_OF_DATE
+        return finish(EXIT_OUT_OF_DATE)
     if args.dry_run:
         out.print("Nothing written (--dry-run).")
-        return EXIT_OK
+        return finish(EXIT_OK)
     if not args.yes:
         names = " and ".join(p.target.name for p in changed)
         answer = _confirm(f"Write {'this' if len(changed) == 1 else 'these'} to {names}?", out)
@@ -1127,10 +1161,11 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
             remove_block(p.target.path)
         else:
             apply_block(p.target.path, p.block)
+        written.add(p.target.name)
         out.print(f"[green]✓[/green] {escape(written_text(p))}")
     if any(p.target.text for p in changed):
         out.print("[dim]Text outside the since-cutoff markers is unchanged.[/dim]")
-    return EXIT_OK
+    return finish(EXIT_OK)
 
 
 def _sync_scans(

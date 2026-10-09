@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `sync --json` reports proposals and write results for scripts, with progress on stderr.
+  It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
 - Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
   `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
@@ -11,18 +13,50 @@
   reseller listings.
 - The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
   the existing read-only tools; listing them needs no network or API key.
+- `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
+  end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
+  set in many containers). argparse wrote them itself, past the check for a closed pipe:
+  Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
+  exited with 0.
+- With griffe 2.3.1 or later, a parameter dropped from a function that still takes `**kwargs`
+  (`f(x, verbose=False)` becoming `f(x, **kwargs)`) was reported as removed, a breaking change,
+  although calls that pass it still work. griffe 2.3.1 changed how a parameter's kind prints,
+  and the check for `**kwargs` read that text instead of the kind's name.
+- PEP 702's `@deprecated` imported through a library's compatibility module (`from
+  pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
+  Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the
+  library's own decorator, which `run` does not probe because type checkers do not report
+  it, and was missed on an `@overload`. Diffs cached by earlier versions are recomputed once
+  (diff schema 20).
+- When PyPI cannot be reached (no network, a timeout, 429 or 5xx after the retries), a
+  package's release list cached more than 12 hours ago is used instead of failing, and the
+  scan and the MCP tools warn from which day each such copy is: releases published after it
+  are unknown (#54). A version the older copy does not list is reported as missing from it,
+  not from PyPI. A 404, or any other answer from PyPI, is still an error.
+- A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
+  (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
+  stub), is no longer reported as removed, nor is what it defines or a name a readable
+  module still imports from it (#52). Since only sources are extracted, the diff could not
+  tell it from a removal. A name a readable module stopped importing from it is still
+  removed, and a package whose `__init__` is compiled hides only its own names, not its
+  readable submodules. The source tree now records the compiled modules (extension modules
+  in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
+  and the scan, the report and the MCP tools warn that changes to such a module, private
+  ones included, and to the names taken from it are not reported. After upgrading, cached
+  sources are downloaded and extracted again once (source schema 3) and cached diffs are
+  recomputed (diff schema 21).
 - The API diff is the same on every machine: griffe read a package's sibling modules in the
   order the file system lists them, so an object that several of them import from a private
   module took its public path from that order. mcp 1.28.1 -> 2.2.0's switch to `httpx2` had 20
   places instead of 23 where `mcp.client.streamable_http` came before `mcp.client.sse`: only
   `sse` still imports `McpHttpClientFactory`, so its `__call__` (`timeout`, `auth` and its
   return) did not match between the releases. Modules are now read in the order of their names
-  (DIFF_SCHEMA 20, with the notes' evidence below).
+  (diff schema 21, with the notes' evidence below).
 - Cached API diffs are keyed on the installed griffe's version too: griffe reads the sources and
   is a range dependency, so after an upgrade the diffs the old one made are made again instead
   of served from the cache. `results.json`, `scan --json` (`settings.griffe_version`,
   `report_schema` 3) and report.md record which griffe it was. Diffs cached by an earlier
-  since-cutoff are made once more (and DIFF_SCHEMA 20 would make them again anyway), so the mcp
+  since-cutoff are made once more (and diff schema 21 would make them again anyway), so the mcp
   switch above shows its 23 places there too.
 - Notes name the replacement a library's warning gives in more cases. A message built before its
   `warnings.warn` call (`message = (...)`, then `warnings.warn(message)`) is read, a replacement
