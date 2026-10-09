@@ -71,7 +71,7 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    | positional-only | `f(a=a)` must now be `f(a)` |
    | changed kind | `pkg.Grammar` was a class and is now an attribute |
    | dependency switched | openai 3.19.2 requires `httpx2` instead of `httpx`, and `OpenAI(http_client=...)` takes an `httpx2.Client` ([below](#a-dependency-the-pinned-release-switched)) |
-   | deprecated | `@deprecated` (PEP 702) added since the cutoff, a library's own decorator whose name contains "deprecat", or a removed name the module still serves with a warning through `__getattr__`, a table of deprecated aliases or a metaclass property (`scan` lists all of them, with the library's message; `run` probes only the PEP 702 ones). A deprecation on some overloads only is a deprecated call form (`call_form` in results.json) |
+   | deprecated | `@deprecated` (PEP 702, also when the library imports it through a compatibility module of its own) added since the cutoff, a library's own decorator whose name contains "deprecat", or a removed name the module still serves with a warning through `__getattr__`, a table of deprecated aliases or a metaclass property (`scan` lists all of them, with the library's message; `run` probes only the PEP 702 ones). A deprecation on some overloads only is a deprecated call form (`call_form` in results.json) |
 
    Default values, attribute values and return annotations are ignored. Objects are reported
    under their shortest public path (`cryptography.hazmat.primitives.ciphers.aead.AESGCM`, not

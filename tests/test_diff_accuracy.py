@@ -510,6 +510,97 @@ def test_a_deprecated_overload_is_a_deprecated_call_form(tmp_path):
     )
 
 
+# A library that supports Pythons older than 3.13 imports PEP 702's decorator once, in a compat
+# module, and uses it from there. Issue #44: it was taken for the library's own decorator
+# (``deprecated_by="deprecated"``, so ``run`` never probed it), and missed on an overload.
+PEP702_SHIMS = {
+    "re-export": "from typing_extensions import deprecated\n",
+    "conditional": "import sys\n\n"
+    "if sys.version_info >= (3, 13):\n"
+    "    from warnings import deprecated\n"
+    "else:\n"
+    "    from typing_extensions import deprecated\n",
+}
+SHIM_IMPORTS = {
+    "absolute": "from pkg._compat import deprecated",
+    "relative": "from ._compat import deprecated",
+}
+
+
+@pytest.mark.parametrize("shim", PEP702_SHIMS.values(), ids=PEP702_SHIMS.keys())
+@pytest.mark.parametrize("imported", SHIM_IMPORTS.values(), ids=SHIM_IMPORTS.keys())
+def test_pep702_deprecated_through_a_compat_module_is_pep702(tmp_path, shim, imported):
+    old = {"pkg/__init__.py": "def f():\n    pass\n\ndef g():\n    pass\n"}
+    new = {
+        "pkg/_compat.py": shim,
+        "pkg/__init__.py": f"{imported}\n\n"
+        "@deprecated('use g instead')\ndef f():\n    pass\n\ndef g():\n    pass\n",
+    }
+    (change,) = diff(tmp_path, old, new)
+    assert (change.kind, change.path, change.deprecated_by, change.call_form) == (
+        DEPRECATED,
+        "pkg.f",
+        None,
+        None,
+    )
+    assert change.deprecation == "use g instead"
+
+
+@pytest.mark.parametrize("shim", PEP702_SHIMS.values(), ids=PEP702_SHIMS.keys())
+@pytest.mark.parametrize("imported", SHIM_IMPORTS.values(), ids=SHIM_IMPORTS.keys())
+def test_pep702_deprecated_overload_through_a_compat_module_is_a_call_form(
+    tmp_path, shim, imported
+):
+    old = {"pkg/__init__.py": "def h(x):\n    pass\n"}
+    new = {
+        "pkg/_compat.py": shim,
+        "pkg/__init__.py": f"from typing import overload\n{imported}\n\n"
+        "@overload\ndef h(x: int) -> None: ...\n"
+        "@overload\n@deprecated('Passing a str is deprecated.')\ndef h(x: str) -> None: ...\n"
+        "def h(x):\n    pass\n",
+    }
+    (change,) = diff(tmp_path, old, new)
+    assert (change.kind, change.path, change.deprecated_by, change.call_form) == (
+        DEPRECATED,
+        "pkg.h",
+        None,
+        "h(x: str)",
+    )
+    assert change.deprecation == "Passing a str is deprecated."
+
+
+def test_a_library_decorator_named_deprecated_is_still_the_librarys(tmp_path):
+    # Not every ``deprecated`` is PEP 702's: a compat module that defines its own decorator
+    # (it warns at run time; type checkers do not see it) stays ``deprecated_by`` it.
+    old = {"pkg/__init__.py": "def f():\n    pass\n"}
+    new = {
+        "pkg/_compat.py": "def deprecated(message):\n"
+        "    def wrap(fn):\n        return fn\n    return wrap\n",
+        "pkg/__init__.py": "from pkg._compat import deprecated\n\n"
+        "@deprecated('use g instead')\ndef f():\n    pass\n",
+    }
+    (change,) = diff(tmp_path, old, new)
+    assert (change.kind, change.path, change.deprecated_by) == (DEPRECATED, "pkg.f", "deprecated")
+
+
+def test_pep702_deprecated_through_a_chain_of_compat_modules_is_pep702(tmp_path):
+    # One private module imports it under another name, the next one renames it back.
+    old = {"pkg/__init__.py": "def f():\n    pass\n"}
+    new = {
+        "pkg/_typing.py": "from typing_extensions import deprecated as _deprecated\n",
+        "pkg/_compat.py": "from pkg._typing import _deprecated as deprecated\n",
+        "pkg/__init__.py": "from pkg._compat import deprecated\n\n"
+        "@deprecated('use g instead')\ndef f():\n    pass\n",
+    }
+    (change,) = diff(tmp_path, old, new)
+    assert (change.kind, change.path, change.deprecated_by, change.deprecation) == (
+        DEPRECATED,
+        "pkg.f",
+        None,
+        "use g instead",
+    )
+
+
 def test_overloads_declared_in_a_stub_next_to_the_module_are_kept(tmp_path):
     # pytest-django 4.10 -> 4.14: asserts.py builds the functions, asserts.pyi overloads them
     old = {"pkg/__init__.py": "", "pkg/asserts.py": "def assertNumQueries(num):\n    pass\n"}

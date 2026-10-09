@@ -20,6 +20,12 @@
   (`f(x, verbose=False)` becoming `f(x, **kwargs)`) was reported as removed, a breaking change,
   although calls that pass it still work. griffe 2.3.1 changed how a parameter's kind prints,
   and the check for `**kwargs` read that text instead of the kind's name.
+- PEP 702's `@deprecated` imported through a library's compatibility module (`from
+  pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
+  Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the
+  library's own decorator, which `run` does not probe because type checkers do not report
+  it, and was missed on an `@overload`. Diffs cached by earlier versions are recomputed once
+  (diff schema 20).
 - A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
   (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
   stub), is no longer reported as removed, nor is what it defines or a name a readable
@@ -31,7 +37,7 @@
   and the scan, the report and the MCP tools warn that changes to such a module, private
   ones included, and to the names taken from it are not reported. After upgrading, cached
   sources are downloaded and extracted again once (source schema 3) and cached diffs are
-  recomputed (diff schema 20).
+  recomputed (diff schema 21).
 
 ## 0.5.0 - 2026-09-28
 
