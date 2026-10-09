@@ -19,6 +19,7 @@ import pytest
 
 from since_cutoff.apidiff import PARAM_REMOVED, APIChange
 from since_cutoff.cli import build_parser
+from since_cutoff.hosts import ENV_VARS
 from since_cutoff.notes import (
     TAG_DIFF,
     TAG_LIBRARY,
@@ -30,6 +31,7 @@ from since_cutoff.notes import (
     diff_note,
     tag_text,
 )
+from since_cutoff.providers import OPENAI_COMPATIBLE
 from since_cutoff.report import NOTES_READY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +40,7 @@ READMES = ("README.md", "README.zh-CN.md", "README.es.md", "README.fr.md")
 PAGES = (
     *READMES,
     "docs/how-it-works.md",
+    "docs/reference.md",
     "docs/index.md",
     "docs/es/index.md",
     "docs/fr/index.md",
@@ -48,6 +51,7 @@ PAGES = (
 )
 ENGLISH = (
     "README.md",
+    "docs/reference.md",
     "docs/how-it-works.md",
     "docs/index.md",
     "docs/ai-stack.md",
@@ -62,6 +66,18 @@ def _text(name: str) -> str:
     if not path.exists():
         pytest.skip(f"{name} is not part of this checkout")
     return path.read_text(encoding="utf-8")
+
+
+def test_reference_lists_environment_variables_read_by_the_code() -> None:
+    text = _text("docs/reference.md")
+    names = set(ENV_VARS)
+    # Provider keys are selected indirectly, so literal environ reads alone miss them.
+    names.update(key for _, key in OPENAI_COMPATIBLE.values() if key)
+    pattern = re.compile(r"""(?:\.get\(\s*|environ\[\s*)["']([A-Z][A-Z0-9_]+)["']""")
+    for path in (ROOT / "src" / "since_cutoff").rglob("*.py"):
+        names.update(pattern.findall(path.read_text(encoding="utf-8")))
+    documented = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", text))
+    assert not names - documented, sorted(names - documented)
 
 
 def _options() -> dict[str, set[str]]:
