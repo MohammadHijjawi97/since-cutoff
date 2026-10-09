@@ -90,6 +90,35 @@ def test_parameter_absorbed_by_kwargs_is_not_breaking(tmp_path: Path):
     assert diff_sources("pkg", "1", old, "2", new, ["pkg"]) == []
 
 
+def test_kwargs_is_recognised_by_its_kinds_name_whatever_its_str():
+    # griffe 2.3.1 made ParameterKind a StrEnum: str(ParameterKind.var_keyword) became its value,
+    # "variadic keyword", where earlier versions gave "ParameterKind.var_keyword", and the check
+    # for **kwargs read that text. Modelled here so the test fails with every griffe: Python 3.10
+    # cannot install 2.3.1 or later, which need 3.11.
+    from enum import Enum
+    from types import SimpleNamespace
+
+    import griffe
+
+    from since_cutoff.apidiff import _accepts_var_keyword
+
+    class Kind(str, Enum):  # what StrEnum does, on every supported Python
+        positional_or_keyword = "positional or keyword"
+        var_keyword = "variadic keyword"
+
+        def __str__(self) -> str:
+            return self.value
+
+    def fn(*kinds: Kind) -> SimpleNamespace:
+        params = [SimpleNamespace(name=f"p{i}", kind=kind) for i, kind in enumerate(kinds)]
+        return SimpleNamespace(parameters=params)
+
+    assert _accepts_var_keyword(fn(Kind.positional_or_keyword, Kind.var_keyword))
+    assert not _accepts_var_keyword(fn(Kind.positional_or_keyword))
+    kwargs = griffe.Parameter("kwargs", kind=griffe.ParameterKind.var_keyword)
+    assert _accepts_var_keyword(griffe.Function("f", parameters=griffe.Parameters(kwargs)))
+
+
 def test_private_and_test_modules_are_ignored(tmp_path: Path):
     old = write_tree(
         tmp_path / "a",
