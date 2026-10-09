@@ -7,7 +7,7 @@ import difflib
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from importlib import resources
 from typing import Any
 
@@ -71,6 +71,29 @@ def parse_cutoff(value: str) -> date:
     if m.group(3):
         return date(year, month, int(m.group(3)))
     return date(year, month, calendar.monthrange(year, month)[1])
+
+
+# How many days before the training cutoff the comparison release must have been published
+# (``--cutoff-margin``). A model's training data lags its stated cutoff, so it knows the last
+# weeks before the cutoff least: llama-index-core 0.13.0, which removed ``ReActAgent.from_tools``
+# and ``FunctionCallingAgent``, was uploaded on 2025-07-30, the day before claude-sonnet-4-5's
+# cutoff, and a scan without a margin compared from it and reported none of that.
+DEFAULT_CUTOFF_MARGIN = 30
+CUTOFF_MARGIN_VAR = "SINCE_CUTOFF_CUTOFF_MARGIN"
+
+
+def parse_margin(value: str) -> int:
+    """``--cutoff-margin`` / ``SINCE_CUTOFF_CUTOFF_MARGIN``: a whole number of days, 0 or more."""
+    text = value.strip()
+    if not re.fullmatch(r"\d+", text):
+        raise ValueError(f"not a number of days: {value!r} (expected 0 or a positive whole number)")
+    return int(text)
+
+
+def compare_date(cutoff: date, margin: int = DEFAULT_CUTOFF_MARGIN) -> date:
+    """The day the comparison release must have been published by: ``margin`` days before the
+    training cutoff (the cutoff itself with a margin of 0)."""
+    return cutoff - timedelta(days=max(0, margin))
 
 
 def _maybe_date(value: Any) -> date | None:

@@ -68,6 +68,7 @@ from since_cutoff.apidiff import (
     stated_alternatives,
 )
 from since_cutoff.errors import SinceCutoffError
+from since_cutoff.models import DEFAULT_CUTOFF_MARGIN, compare_date
 
 BLOCK_START = "<!-- since-cutoff:start -->"
 BLOCK_END = "<!-- since-cutoff:end -->"
@@ -1367,11 +1368,15 @@ def render_block(
     tool: str = __version__,
     suggestions: bool = False,
     per_package: int | None = None,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     """The notes block (format 2) for AGENTS.md / CLAUDE.md.
 
     ``deps`` is :func:`deps_hash` of every dependency scanned (by default, of the packages and
-    versions the notes are about); ``scope`` what the notes cover (SCOPE_*). The first line is
+    versions the notes are about); ``scope`` what the notes cover (SCOPE_*); ``margin`` how many
+    days before the cutoff the comparison releases were published by (``--cutoff-margin``; the
+    header says the day, and the meta line keeps the number, so that ``status`` sees a block
+    compared from another day). The first line is
     0.3's marker, so 0.3's ``unapply`` still finds and removes a block written by 0.4.
     ``suggestions`` (``sync --suggestions``: the notes name similar names, ``[not confirmed]``)
     is recorded in the meta line, only when set, so that the next ``sync`` keeps it; so is
@@ -1389,7 +1394,7 @@ def render_block(
     for n in notes:
         by_pkg.setdefault((n.change.package, n.change.to_version), []).append(n)
     used_tags = {t for n in notes for t in n.tag_list}
-    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags)]
+    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags, margin)]
     checked: list[str] = []
     for (pkg, version), items in sorted(by_pkg.items()):
         olds = _unique(n.change.from_version for n in items if n.change.from_version)
@@ -1413,6 +1418,7 @@ def render_block(
         "tool": tool,
         "model": model or None,
         "cutoff": cutoff.isoformat(),
+        "margin": margin,
         "versions_from": version_source,
         "deps": deps,
         "body": body_hash(text),
@@ -1440,16 +1446,31 @@ def model_names(model: str | None) -> list[str]:
 
 
 def _header(
-    model: str, cutoff: date, version_source: str, scope: str, tool: str, tags: set[str]
+    model: str,
+    cutoff: date,
+    version_source: str,
+    scope: str,
+    tool: str,
+    tags: set[str],
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     # The model's name comes from the user or a settings file: it must not end the block either.
     name = _one_line(_code(model))
     names = model_names(name)
     day = cutoff.isoformat()
+    # As the model line of ``scan`` says it: "training cutoff 2025-07-31, comparing from
+    # releases up to 2025-07-01" (--cutoff-margin 30).
+    from_day = (
+        f", comparing from releases up to {compare_date(cutoff, margin).isoformat()}"
+        if margin > 0
+        else ""
+    )
     if len(names) > 1:
-        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day})"
+        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day}{from_day})"
+    elif name:
+        who = f"the training cutoff of `{name}` ({day}{from_day})"
     else:
-        who = f"the training cutoff of `{name}` ({day})" if name else f"{day}"
+        who = f"{day} ({from_day[2:]})" if from_day else day
     source = _one_line(_code(version_source))
     versions = (
         "the latest versions on PyPI"

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- The comparison release is the latest release published at least 30 days before the model's
+  training cutoff, not at the cutoff itself. A model's training data lags its stated cutoff, so
+  it knows the last weeks before the cutoff least: llama-index-core 0.13.0, which removed
+  `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on 2025-07-30, the day before
+  claude-sonnet-4-5's cutoff, and a scan of a project pinning 0.14.25 said the code used none
+  of the APIs that changed; it now reports both removals. `--cutoff-margin DAYS`,
+  `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and the action's `cutoff-margin`
+  input set the margin; 0 compares from the cutoff itself, as before. The model line says both
+  days ("training cutoff 2025-07-31, comparing from releases up to 2025-07-01"), and so do the
+  reports, `results.json` (`compare_from`, `settings.cutoff_margin`) and the notes block's header
+  and meta line, so `status` and `sync --check` report a block compared from another day as out
+  of date.
+- A module that takes its names from another distribution with `from x import *` is compared
+  with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
+  mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under
+  `mcp.types` while mcp-types had renamed every field to snake_case, so
+  `types.Tool(name=..., inputSchema=...)` broke unreported. The sibling distribution is
+  downloaded at the version the project locks (or the newest its requirement allows on the
+  comparison date, for the release at the cutoff), under the usual download limit and cache, and
+  its names are compared under the paths that re-export them (`mcp.types.Tool.inputSchema`
+  removed). An object a release only re-exports from elsewhere is now compared inside too:
+  griffe stops at the alias. When the sibling cannot be downloaded, the scan, the report and the
+  MCP tools warn that changes to those modules are not reported. Cached diffs are keyed on the
+  siblings read, and on the source schema, with the diff schema.
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
@@ -41,8 +65,10 @@
   stub), is no longer reported as removed, nor is what it defines or a name a readable
   module still imports from it (#52). Since only sources are extracted, the diff could not
   tell it from a removal. A name a readable module stopped importing from it is still
-  removed, and a package whose `__init__` is compiled hides only its own names, not its
-  readable submodules. The source tree now records the compiled modules (extension modules
+  removed. A top-level package whose `__init__` is compiled hides only the names it defines; a
+  compiled subpackage `__init__` hides that subpackage, since griffe cannot enter a directory
+  without an `__init__.py` inside a regular package, and the scan warns. The source tree now
+  records the compiled modules (extension modules
   in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
   and the scan, the report and the MCP tools warn that changes to such a module, private
   ones included, and to the names taken from it are not reported. After upgrading, cached

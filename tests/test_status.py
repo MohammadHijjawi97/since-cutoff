@@ -255,3 +255,27 @@ def test_status_reads_the_block_where_it_is(status, sc, tmp_path) -> None:
     assert code == EXIT_OK and out.startswith("CLAUDE.md: notes for claude-sonnet-4-5")
     code, out = status(root, "--target", "AGENTS.md")
     assert code == EXIT_OK and out.startswith("AGENTS.md: no since-cutoff notes.")
+
+
+def test_a_block_compared_from_another_day_is_out_of_date(status, sc, tmp_path) -> None:
+    """A block written with ``--cutoff-margin 0``, or by a since-cutoff from before there was a
+    margin (no ``margin`` in its meta line), compared from the cutoff itself; the scan now
+    compares from 30 days before it, so the notes may miss changes: out of date, unless status
+    is told the same margin."""
+    root = make_app(tmp_path)
+    assert sc("sync", root, *SONNET, "--yes", "--cutoff-margin", "0")[0] == EXIT_OK
+    block = parse_block(agents(root))
+    assert block is not None and block.meta["margin"] == 0
+    code, out = status(root)
+    assert code == EXIT_OUT_OF_DATE
+    assert (
+        "the notes compare from the cutoff itself; the scan now compares from 30 days before "
+        "the cutoff (--cutoff-margin 30)"
+    ) in out
+    code, out = status(root, "--cutoff-margin", "0")
+    assert code == EXIT_OK and "compare from" not in out
+    assert json.loads(status(root, "--json")[1])["targets"][0]["margin"] == 0
+    # The same block as an earlier since-cutoff wrote it: no `margin` in the meta line.
+    write(root / "AGENTS.md", agents(root).replace(',"margin":0', ""))
+    code, out = status(root)
+    assert code == EXIT_OUT_OF_DATE and "the notes compare from the cutoff itself" in out

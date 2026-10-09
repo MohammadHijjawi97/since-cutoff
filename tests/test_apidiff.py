@@ -530,3 +530,29 @@ def test_a_diff_cached_before_import_paths_is_recomputed(cache: DiskCache, toyli
     scan = engine.diff_package(PackageScan("toylib", "2.0", "test", True, cutoff_version="1.0"))
     assert "stale" not in {c.name for c in scan.changes}
     assert scan.changes and all(c.import_paths for c in scan.changes)
+
+
+def test_an_object_the_new_release_only_re_exports_is_compared_inside(tmp_path: Path):
+    """griffe compares an object with an alias to it by resolving the alias, then stops: the
+    old object's path is already among the paths it has seen. A field the target renamed went
+    unreported (mcp 2.2's ``RegistrationRequest = OAuthClientMetadata`` lost ``root``; mcp 2.3's
+    ``mcp.types.Tool``, from ``from mcp_types import *``, spells ``inputSchema``
+    ``input_schema``). Such a pair is compared on its own, under the re-exporting path."""
+    old = write_tree(
+        tmp_path / "a",
+        {
+            "pkg/__init__.py": "",
+            "pkg/types.py": "class Tool:\n    name: str\n    inputSchema: dict\n",
+        },
+    )
+    new = write_tree(
+        tmp_path / "b",
+        {
+            "pkg/__init__.py": "",
+            "pkg/_impl.py": "class Tool:\n    name: str\n    input_schema: dict\n",
+            "pkg/types.py": "from pkg._impl import Tool\n",
+        },
+    )
+    raw = diff_sources("pkg", "1.0", old, "2.0", new, ["pkg"])
+    changes = [APIChange.from_dict(c) for c in raw]
+    assert {(c.kind, c.path) for c in changes} == {(REMOVED, "pkg.types.Tool.inputSchema")}

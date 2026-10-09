@@ -29,6 +29,12 @@ inputs:
     description: Override the model's training cutoff (YYYY-MM or YYYY-MM-DD).
     required: false
     default: ""
+  cutoff-margin:
+    description: >-
+      Compare from the latest release published this many days before the cutoff (the
+      since-cutoff default is 30; 0 compares from the latest release at the cutoff itself).
+    required: false
+    default: ""
   fail-on-changes:
     description: Fail the step when any dependency changed its API after the cutoff.
     required: false
@@ -116,6 +122,7 @@ runs:
         SC_ONLY: ${{ inputs.only }}
         SC_EXCLUDE: ${{ inputs.exclude }}
         SC_CUTOFF: ${{ inputs.cutoff }}
+        SC_CUTOFF_MARGIN: ${{ inputs.cutoff-margin }}
         SC_FAIL: ${{ inputs.fail-on-changes }}
         SC_CHECK_NOTES: ${{ inputs.check-notes }}
         SC_STEP_SUMMARY: ${{ inputs.step-summary }}
@@ -143,6 +150,7 @@ runs:
         if [ -n "$SC_ONLY" ]; then args+=(--only "$SC_ONLY"); fi
         if [ -n "$SC_EXCLUDE" ]; then args+=(--exclude "$SC_EXCLUDE"); fi
         if [ -n "$SC_CUTOFF" ]; then args+=(--cutoff "$SC_CUTOFF"); fi
+        if [ -n "$SC_CUTOFF_MARGIN" ]; then args+=(--cutoff-margin "$SC_CUTOFF_MARGIN"); fi
         if [ "$SC_FAIL" = "true" ]; then args+=(--fail-on-changes); fi
         if [ -n "$SC_ARGS" ]; then read -ra extra <<< "$SC_ARGS"; args+=("${extra[@]}"); fi
 
@@ -175,14 +183,16 @@ runs:
 
         # The notes: sync --check writes nothing. A block keeps its model and cutoff; the model
         # input is for a project with no block yet (sync reads it from SINCE_CUTOFF_MODEL), and
-        # so is the cutoff input, as for the scan above. only and exclude do not apply: the
-        # notes are for the whole project.
+        # so is the cutoff input, as for the scan above. The margin is the scan's setting, not
+        # the block's, so it applies always. only and exclude do not apply: the notes are for
+        # the whole project.
         notes_status=0
         if [ "$SC_CHECK_NOTES" = "true" ]; then
           notes_args=(sync "$SC_WORKDIR" --check)
           if [ -n "$SC_CUTOFF" ] && ! grep -qs -- '<!-- since-cutoff:start -->' "$SC_WORKDIR/AGENTS.md" "$SC_WORKDIR/CLAUDE.md"; then
             notes_args+=(--model "$SC_MODEL" --cutoff "$SC_CUTOFF")
           fi
+          if [ -n "$SC_CUTOFF_MARGIN" ]; then notes_args+=(--cutoff-margin "$SC_CUTOFF_MARGIN"); fi
           SINCE_CUTOFF_MODEL="$SC_MODEL" uvx "${from[@]}" since-cutoff "${notes_args[@]}" || notes_status=$?
           case "$notes_status" in
             0) notes=up-to-date ;;

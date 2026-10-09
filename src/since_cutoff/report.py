@@ -215,6 +215,8 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "effort": scan.target.effort,
         "cutoff": scan.target.cutoff.isoformat(),
         "cutoff_source": scan.target.cutoff_source,
+        # The day the comparison releases were published by: ``cutoff_margin`` days earlier.
+        "compare_from": scan.target.compare_date.isoformat(),
         "project": str(scan.project.root),
         "version_source": scan.project.version_source,
         "dependencies_total": len(scan.packages),
@@ -229,6 +231,7 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
             "tool_version": __version__,
             "diff_schema": DIFF_SCHEMA,
             "griffe_version": griffe_version(),
+            "cutoff_margin": scan.target.margin,
             "date": now.date().isoformat(),
             **(run.settings if run is not None else {}),
         },
@@ -954,9 +957,11 @@ def versions_text(scan: ScanResult, p: PackageScan) -> str:
         pins = f"the project pins {locked}"
     else:
         pins = f"{source}: {locked}"
+    margin = scan.target.margin
+    when = f"{margin} days before the cutoff" if margin else "at the cutoff"
     return (
-        f"{p.name} {p.cutoff_version} -> {locked} ({p.cutoff_version} was the latest release at "
-        f"the cutoff; {pins})"
+        f"{p.name} {p.cutoff_version} -> {locked} ({p.cutoff_version} was the latest release "
+        f"{when}; {pins})"
     )
 
 
@@ -1718,9 +1723,14 @@ def _heldout_cells(h: dict[str, Any], role: str = "heldout") -> list[tuple[str, 
 
 
 def _cutoff_md(s: dict[str, Any]) -> str:
+    margin = s["settings"].get("cutoff_margin") or 0
+    from_day = f", comparing from releases up to **{s['compare_from']}**" if margin else ""
     if not s["model"]:
-        return f"Custom cutoff **{s['cutoff']}** (given with --cutoff, no model)"
-    return f"Model `{s['model']}`, training cutoff **{s['cutoff']}** (source: {s['cutoff_source']})"
+        return f"Custom cutoff **{s['cutoff']}**{from_day} (given with --cutoff, no model)"
+    return (
+        f"Model `{s['model']}`, training cutoff **{s['cutoff']}**{from_day} "
+        f"(source: {s['cutoff_source']})"
+    )
 
 
 def _md_change(

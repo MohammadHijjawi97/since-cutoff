@@ -93,7 +93,15 @@ log = logging.getLogger(__name__)
 # in quotes, or with alternatives ("Use 'proxy' or 'mounts' instead."), is a stated name
 # (``library_names``, and whether find_renamed runs); and a parameter in the place of a removed
 # one is no rename (``renamed``, ``suggestions``) when a version note in the new docstring says
-# the one was added or the other removed (_documented_apart: click 8.2's ``CliRunner``).
+# the one was added or the other removed (_documented_apart: click 8.2's ``CliRunner``). Also, a
+# module that takes its names from another distribution with ``from x import *`` (mcp 2.3's
+# ``mcp/types/__init__.py`` is ``from mcp_types import *``, and mcp requires mcp-types) is
+# compared with that distribution read next to the release (engine.Sibling: load_api's
+# ``extra_roots``), under the paths that re-export the names (``mcp.types.Tool``); and an
+# object the new release only re-exports from elsewhere is compared inside too
+# (_Differ._realiased: griffe stops at the alias), so ``Tool.inputSchema`` -> ``input_schema``
+# is a removal under ``mcp.types.Tool``. The diff's cache key has the distributions read next
+# to each release (Engine._diff_key).
 DIFF_SCHEMA = 21
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
@@ -502,8 +510,12 @@ def griffe_version() -> str:
     return "unknown"
 
 
-def load_api(import_name: str, root: Path) -> Any:
-    """Load one top-level package statically. ``foo-stubs`` directories load as ``foo``."""
+def load_api(import_name: str, root: Path, extra_roots: Sequence[Path] = ()) -> Any:
+    """Load one top-level package statically. ``foo-stubs`` directories load as ``foo``.
+
+    ``extra_roots`` are the source trees of the distributions the package takes names from with
+    ``from x import *`` (engine.Sibling): griffe expands such an import only from a package it
+    can find, so with them ``mcp.types`` has mcp-types' names, and without, a placeholder."""
 
     # griffe warns about every annotation it cannot resolve in third-party code; that is noise
     # for our purpose (and would spill into the user's terminal from worker processes).
@@ -514,13 +526,19 @@ def load_api(import_name: str, root: Path) -> Any:
     if not stubs and _stubs_only(root, name):  # pandas-stubs' import name is pandas
         stubs = True
     with _quiet():
-        module = _loader(root).load(name, try_relative_path=False, find_stubs_package=stubs)
+        loader = _loader(root, extra_roots)
+        module = loader.load(name, try_relative_path=False, find_stubs_package=stubs)
+        if extra_roots:
+            try:
+                loader.expand_wildcards(module, external=True)
+            except Exception as exc:  # a sibling griffe cannot read leaves the placeholder
+                log.debug("cannot expand the star imports of %s: %s", name, exc)
     _alias_class_assignments(module)
     _mark_reexports(module)
     return module
 
 
-def _loader(root: Path) -> Any:
+def _loader(root: Path, extra_roots: Sequence[Path] = ()) -> Any:
     """griffe's loader, keeping what it drops when it merges a ``.pyi`` stub into its module.
 
     Functions declared only through ``@overload`` (the usual case in a stub, which has no
@@ -564,13 +582,14 @@ def _loader(root: Path) -> Any:
                     member.runtime = True
             super().expand_wildcards(obj, **kwargs)
 
+    search_paths = [str(root), *(str(r) for r in extra_roots)]
     loader = Loader(
         extensions=griffe.load_extensions(Stubs()),
-        search_paths=[str(root)],
+        search_paths=search_paths,
         allow_inspection=False,
         store_source=True,
     )
-    loader.finder = Finder([str(root)])  # what griffe makes from the same search paths
+    loader.finder = Finder(search_paths)  # what griffe makes from the same search paths
     return loader
 
 
@@ -713,6 +732,8 @@ def diff_sources(
     old_requires: Sequence[str] = (),
     new_requires: Sequence[str] = (),
     new_compiled: Sequence[str] = (),
+    old_roots: Sequence[Path] = (),
+    new_roots: Sequence[Path] = (),
 ) -> list[dict[str, Any]]:
     """Diff two extracted source trees. Returns plain dicts (picklable across processes).
 
@@ -724,6 +745,10 @@ def diff_sources(
     ``new_compiled`` are the modules the pinned release ships compiled, without a source or a
     stub (SourceTree.compiled): what a static reading cannot see there is not reported as
     removed (:func:`diff_sources_with_unread` also says which of them hid something).
+
+    ``old_roots`` / ``new_roots`` are the source trees of the distributions each release takes
+    names from with ``from x import *`` (engine.Sibling: mcp 2.3's ``mcp.types`` is mcp-types'
+    names), so that those names are compared under the paths that re-export them.
 
     Never raises for problems in the analysed package: griffe can fail on unusual code, and one
     bad top-level module must not hide the changes found in the others.
@@ -738,6 +763,8 @@ def diff_sources(
         old_requires=old_requires,
         new_requires=new_requires,
         new_compiled=new_compiled,
+        old_roots=old_roots,
+        new_roots=new_roots,
     )[0]
 
 
@@ -752,6 +779,8 @@ def diff_sources_with_unread(
     old_requires: Sequence[str] = (),
     new_requires: Sequence[str] = (),
     new_compiled: Sequence[str] = (),
+    old_roots: Sequence[Path] = (),
+    new_roots: Sequence[Path] = (),
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """:func:`diff_sources`, and the entries of ``new_compiled`` that hid something the older
     release had, so that its removal was not reported: the scan warns that changes to them,
@@ -769,6 +798,8 @@ def diff_sources_with_unread(
             new_requires=new_requires,
             new_compiled=new_compiled,
             unread=unread,
+            old_roots=old_roots,
+            new_roots=new_roots,
         )
     return [c.to_dict() for c in _group(changes)], sorted(unread)
 
@@ -785,6 +816,8 @@ def _diff_imports(
     new_requires: Sequence[str] = (),
     new_compiled: Sequence[str] = (),
     unread: set[str] | None = None,
+    old_roots: Sequence[Path] = (),
+    new_roots: Sequence[Path] = (),
 ) -> list[APIChange]:
     """The changes of each import name; ``unread`` collects the entries of ``new_compiled``
     that hid a removal (see diff_sources_with_unread)."""
@@ -798,12 +831,12 @@ def _diff_imports(
     loaded: list[tuple[Any, Any]] = []
     for import_name in import_names:
         try:
-            old = load_api(import_name, old_root)
+            old = load_api(import_name, old_root, old_roots)
         except Exception as exc:
             log.debug("cannot load %s %s from %s: %s", package, old_version, import_name, exc)
             continue
         try:
-            new = load_api(import_name, new_root)
+            new = load_api(import_name, new_root, new_roots)
         except Exception as exc:
             owner = _compiled_owner(import_name, compiled, module=True)
             if owner is not None:
@@ -933,30 +966,36 @@ class _Differ:
         return found
 
     def _breakages(self) -> list[Any]:
-        """Collect griffe's breakages, keeping everything found before any internal error."""
+        """Collect griffe's breakages, keeping everything found before any internal error, and
+        those inside the objects the new release only re-exports (:meth:`_realiased`)."""
         import griffe
 
         found: list[Any] = []
+        complete = False
         try:
             gen = griffe.find_breaking_changes(self.old, self.new)
             while True:
                 try:
                     found.append(next(gen))
                 except StopIteration:
-                    return found
+                    complete = True
+                    break
         except Exception as exc:
             log.debug("breakage detection stopped early for %s: %s", self.package, exc)
-        # Fall back to diffing each public submodule on its own, so one bad alias costs one module.
-        for module in _walk_modules(self.old):
-            if module is self.old or _has_private_segment(module.path):
-                continue
-            new_module = self.new_object(module.path)
-            if new_module is None:
-                continue
-            try:
-                found.extend(griffe.find_breaking_changes(module, new_module))
-            except Exception:
-                continue
+        if not complete:
+            # Fall back to diffing each public submodule on its own, so one bad alias costs one
+            # module.
+            for module in _walk_modules(self.old):
+                if module is self.old or _has_private_segment(module.path):
+                    continue
+                new_module = self.new_object(module.path)
+                if new_module is None:
+                    continue
+                try:
+                    found.extend(griffe.find_breaking_changes(module, new_module))
+                except Exception:
+                    continue
+        found.extend(self._realiased())
         seen: set[tuple[str, str, str]] = set()
         unique = []
         for b in found:
@@ -965,6 +1004,43 @@ class _Differ:
                 seen.add(k)
                 unique.append(b)
         return unique
+
+    def _realiased(self) -> list[Any]:
+        """The breakages inside an object that the old release defined in a module and the new
+        release only imports there: an alias to an object of another module, or of another
+        distribution read next to it (mcp 2.3's ``mcp.types.Tool`` is ``mcp_types.Tool``, from
+        ``from mcp_types import *``). griffe compares an object with an alias by resolving the
+        alias, then stops: the old object's path is already among the paths it has seen, so a
+        field the target renamed (``Tool.inputSchema`` -> ``input_schema``) went unreported.
+        Each such pair is compared here on its own; what the pair's module gained or lost is
+        griffe's as before."""
+        import griffe
+
+        found: list[Any] = []
+        for module in _walk_modules(self.old):
+            new_module = self.new_object(module.path)
+            if not getattr(new_module, "is_module", False):
+                continue
+            for name, old_member in list(module.members.items()):
+                if name.startswith("_") or getattr(old_member, "is_alias", False):
+                    continue
+                kind = _kind_of(old_member)
+                if kind not in ("class", "function"):
+                    continue
+                new_member = new_module.members.get(name)
+                if new_member is None or not getattr(new_member, "is_alias", False):
+                    continue
+                try:
+                    target = new_member.final_target
+                except Exception:
+                    continue  # unresolved: griffe skipped it, and so does this
+                if _kind_of(target) != kind:
+                    continue
+                try:
+                    found.extend(griffe.find_breaking_changes(old_member, target))
+                except Exception as exc:
+                    log.debug("cannot compare %s with %s: %s", old_member.path, target.path, exc)
+        return found
 
     # ---------------------------------------------------------------- helpers
     def _change(

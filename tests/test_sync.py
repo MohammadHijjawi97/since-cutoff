@@ -170,8 +170,8 @@ def test_a_sync_with_nothing_to_change_leaves_the_file_alone(sc, tmp_path) -> No
     code, out = sc("sync", root)
     assert code == EXIT_OK, out
     assert (
-        "• Model claude-sonnet-4-5, training cutoff 2025-07-31 (from the notes in AGENTS.md; "
-        "--model to change)" in out
+        "• Model claude-sonnet-4-5, training cutoff 2025-07-31, comparing from releases up to "
+        "2025-07-01 (from the notes in AGENTS.md; --model to change)" in out
     )
     assert (
         "AGENTS.md is up to date: 2 notes for claude-sonnet-4-5 (cutoff 2025-07-31), versions "
@@ -345,7 +345,8 @@ def test_several_models_use_the_earliest_cutoff(sc, tmp_path) -> None:
     assert block.meta["cutoff"] == "2025-02-28"  # claude-haiku-4-5's; gpt-5.4's is 2025-08-31
     assert (
         "Changed after the earliest training cutoff of `gpt-5.4` and `claude-haiku-4-5` "
-        "(2025-02-28) and used by this project" in agents(root)
+        "(2025-02-28, comparing from releases up to 2025-01-29) and used by this project"
+        in agents(root)
     )
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OK and "• Models gpt-5.4, claude-haiku-4-5, earliest" in out
@@ -359,7 +360,10 @@ def test_a_cutoff_alone_is_sticky_too(sc, tmp_path) -> None:
     assert block is not None and block.meta["model"] is None
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OK
-    assert "• Custom cutoff 2025-07-31 (from the notes in AGENTS.md; --cutoff to change)" in out
+    assert (
+        "• Custom cutoff 2025-07-31, comparing from releases up to 2025-07-01 (from the notes in "
+        "AGENTS.md; --cutoff to change)" in out
+    )
     assert "2 notes for the cutoff 2025-07-31" in out
 
 
@@ -1107,3 +1111,30 @@ def test_per_package_sets_the_imported_budget_and_the_block_keeps_it(sc, tmp_pat
     block = parse_block(agents(root))
     assert block is not None and "per_package" not in block.meta  # the default is not recorded
     assert len(block.packages["toylib"].bullets) == 5
+
+
+def test_sync_rewrites_a_block_compared_from_another_day(sc, tmp_path) -> None:
+    """The margin is the scan's setting, not the block's: a block written with
+    ``--cutoff-margin 0`` is out of date for ``sync --check`` and rewritten by ``sync``, which
+    says why; the header and the meta line then say the new day."""
+    root = make_app(tmp_path)
+    assert sc("sync", root, *SONNET, "--yes", "--cutoff-margin", "0")[0] == EXIT_OK
+    assert "(2025-07-31) and used by this project" in agents(root)
+    code, out = sc("sync", root, "--check")
+    assert code == EXIT_OUT_OF_DATE
+    assert (
+        "AGENTS.md is out of date: the notes compare from the cutoff itself, not 30 days before "
+        "the cutoff (--cutoff-margin). Run `since-cutoff sync`."
+    ) in out
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK
+    assert (
+        "Updated AGENTS.md: now comparing from 30 days before the cutoff (it was the cutoff "
+        "itself; --cutoff-margin)."
+    ) in out
+    block = parse_block(agents(root))
+    assert block is not None and block.meta["margin"] == 30
+    assert "(2025-07-31, comparing from releases up to 2025-07-01) and used by this project" in (
+        agents(root)
+    )
+    assert sc("sync", root, "--check")[0] == EXIT_OK

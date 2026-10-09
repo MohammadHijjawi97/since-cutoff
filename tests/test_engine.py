@@ -7,24 +7,38 @@ from pathlib import Path
 
 import pytest
 
-from since_cutoff.apidiff import REMOVED
-from since_cutoff.cache import DiskCache
-from since_cutoff.engine import CHANGED, KNOWN, NEW, PASS, STALE, Engine, Settings
+from since_cutoff.apidiff import DIFF_SCHEMA, REMOVED, griffe_version
+from since_cutoff.cache import DiskCache, stable_hash
+from since_cutoff.engine import (
+    CHANGED,
+    KNOWN,
+    NEW,
+    PASS,
+    STALE,
+    UNCHANGED,
+    Engine,
+    PackageScan,
+    Settings,
+)
+from since_cutoff.errors import PackageIndexError
 from since_cutoff.notes import BLOCK_END, BLOCK_START, NOTE_DIFF, TAG_DIFF
 from since_cutoff.project import load_project
+from since_cutoff.pypi import SOURCE_SCHEMA, SourceTree
 from since_cutoff.report import render_markdown, summary, to_json
-from tests.conftest import ScriptedModel, compiled_fastlib
+from tests.conftest import FakePyPI, ScriptedModel, compiled_fastlib, write_tree
 
 pytestmark = pytest.mark.pyright
 
+TOYLIB_CODE = "from toylib import Client\nClient().send('hi')\n"
 
-def make_project(tmp_path: Path, deps: str = '"toylib==2.0"') -> Path:
+
+def make_project(tmp_path: Path, deps: str = '"toylib==2.0"', code: str = TOYLIB_CODE) -> Path:
     root = tmp_path / "app"
     root.mkdir()
     (root / "pyproject.toml").write_text(
         f'[project]\nname = "app"\nversion = "0"\ndependencies = [{deps}]\n'
     )
-    (root / "main.py").write_text("from toylib import Client\nClient().send('hi')\n")
+    (root / "main.py").write_text(code)
     return root
 
 
@@ -67,6 +81,150 @@ def test_package_newer_than_the_model(tmp_path, cache, fake_pypi, scripted):
     project = load_project(make_project(tmp_path))
     scan = engine.scan(project, engine.resolve_target())
     assert scan.package("toylib").status == NEW
+
+
+def test_the_comparison_release_is_a_margin_before_the_cutoff(tmp_path, cache, toylib, scripted):
+    """llama-index-core 0.13.0, which removed ``ReActAgent.from_tools``, was uploaded the day
+    before claude-sonnet-4-5's cutoff, and the scan compared from it. A release 1 day before the
+    cutoff is skipped with the default margin (30 days) and used with ``--cutoff-margin 0``; a
+    package first released within the margin says so; and the two diffs are cached apart."""
+    v1, v2 = toylib
+    pypi = FakePyPI(
+        cache,
+        {
+            "toylib": [("1.0", "2025-01-10"), ("1.9", "2025-07-30"), ("2.0", "2025-10-01")],
+            "newlib": [("1.0", "2025-07-15")],
+        },
+        {
+            ("toylib", "1.0"): v1,
+            ("toylib", "1.9"): SourceTree("toylib", "1.9", v2.root, ("toylib",)),
+            ("toylib", "2.0"): v2,
+        },
+    )
+    project = load_project(make_project(tmp_path, '"toylib==2.0", "newlib==1.0"'))
+    engine = make_engine(cache, pypi, scripted)
+    target = engine.resolve_target()
+    assert (target.margin, target.compare_date) == (30, date(2025, 7, 1))
+    scan = engine.scan(project, target)
+    default = scan.package("toylib")
+    assert (default.status, default.cutoff_version) == (CHANGED, "1.0")
+    assert "send" in {c.name for c in default.changes}
+    newlib = scan.package("newlib")
+    assert (newlib.status, newlib.first_released) == (NEW, "2025-07-15")
+    assert newlib.reason == "first released within 30 days of the cutoff (2025-07-15)"
+
+    engine = make_engine(cache, pypi, scripted, cutoff_margin=0)
+    target = engine.resolve_target()
+    assert target.compare_date == date(2025, 7, 31)
+    scan = engine.scan(project, target)
+    zero = scan.package("toylib")
+    assert (zero.status, zero.cutoff_version, zero.changes) == (UNCHANGED, "1.9", [])
+    assert scan.package("newlib").status == KNOWN
+    # The diff cache is keyed per comparison release: neither scan was served the other's diff.
+    assert Engine._diff_key(default) != Engine._diff_key(zero)
+
+
+def test_the_diff_cache_key_has_both_schemas_griffe_and_the_siblings():
+    """Review of #83: the diff reads what the source trees record (the compiled modules), so
+    its key has SOURCE_SCHEMA next to DIFF_SCHEMA, as _unread_key does; the distributions read
+    next to a release (Engine._siblings) are in it too."""
+    s = PackageScan("toylib", "2.0", "test", True, cutoff_version="1.0")
+    assert Engine._diff_key(s) == stable_hash(
+        "diff", DIFF_SCHEMA, SOURCE_SCHEMA, griffe_version(), "toylib", "1.0", "2.0"
+    )
+    assert Engine._diff_key(s, ("new:toylib-types==2.0",)) != Engine._diff_key(s)
+
+
+# mcp 2.3.0's ``mcp/types/__init__.py`` is ``from mcp_types import *`` and mcp requires
+# mcp-types 2.3.0, which renamed every field to snake_case: ``types.Tool(name=...,
+# inputSchema=...)`` breaks, and a diff of mcp's own tree had no entry under ``mcp.types``.
+MCPLIKE_OLD = {
+    "mcplike/__init__.py": "from mcplike import types\n",
+    "mcplike/types.py": "class Tool:\n    name: str\n    inputSchema: dict\n\nclass Gone:\n    pass\n",
+}
+MCPLIKE_NEW = {
+    "mcplike/__init__.py": "from mcplike import types\n",
+    "mcplike/types/__init__.py": "from mcplike_types import *\n",
+}
+MCPLIKE_TYPES = {
+    "mcplike_types/__init__.py": "class Tool:\n    name: str\n    input_schema: dict\n"
+}
+# The code reads the field on an instance of the class: that is what selection matches.
+MCPLIKE_CODE = "from mcplike.types import Tool\n\ntool = Tool()\nprint(tool.inputSchema)\n"
+SIBLING_LIMIT_ERROR = "mcplike-types==2.0 is above the 80 MB download limit (--max-download-mb)"
+
+
+def mcplike_pypi(root: Path, cache: DiskCache, *, sibling: bool = True) -> FakePyPI:
+    """mcplike 1.0 and 2.0 in the shape of mcp 1.28 and 2.3: 2.0's ``mcplike/types/__init__.py``
+    is ``from mcplike_types import *`` and it requires mcplike-types 2.0, whose ``Tool`` spells
+    ``inputSchema`` ``input_schema``. Without ``sibling``, mcplike-types cannot be downloaded."""
+
+    class Limited(FakePyPI):
+        def source(self, name: str, version: str) -> SourceTree:
+            if name == "mcplike-types":
+                raise PackageIndexError(SIBLING_LIMIT_ERROR)
+            return super().source(name, version)
+
+    old = write_tree(root / "mcplike-1.0", MCPLIKE_OLD)
+    new = write_tree(root / "mcplike-2.0", MCPLIKE_NEW)
+    types = write_tree(root / "mcplike-types-2.0", MCPLIKE_TYPES)
+    make = FakePyPI if sibling else Limited
+    return make(
+        cache,
+        {
+            "mcplike": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")],
+            "mcplike-types": [("2.0", "2025-10-01")],
+        },
+        {
+            ("mcplike", "1.0"): SourceTree("mcplike", "1.0", old, ("mcplike",)),
+            ("mcplike", "2.0"): SourceTree(
+                "mcplike", "2.0", new, ("mcplike",), requires=("mcplike-types==2.0",)
+            ),
+            ("mcplike-types", "2.0"): SourceTree("mcplike-types", "2.0", types, ("mcplike_types",)),
+        },
+    )
+
+
+def test_names_a_module_takes_from_another_distribution_are_compared(tmp_path, cache, scripted):
+    """Audit item 6: the sibling distribution is read next to the release, at the version its
+    requirement resolves to, and its names are compared under the paths that re-export them;
+    the diff is cached under a key that names the sibling, and served again from it."""
+    pypi = mcplike_pypi(tmp_path, cache)
+    project = load_project(make_project(tmp_path, '"mcplike==2.0"', code=MCPLIKE_CODE))
+    for attempt in ("diffed", "cached"):
+        engine = make_engine(cache, pypi, scripted)
+        scan = engine.scan(project, engine.resolve_target())
+        pkg = scan.package("mcplike")
+        assert {(c.kind, c.path) for c in pkg.changes} == {
+            (REMOVED, "mcplike.types.Gone"),
+            (REMOVED, "mcplike.types.Tool.inputSchema"),
+        }, attempt
+        assert (pkg.status, pkg.reexported, scan.warnings) == (CHANGED, {}, []), attempt
+        used = [c.path for u in scan.used_apis() for c in u.changes]
+        assert "mcplike.types.Tool.inputSchema" in used, attempt
+    assert cache.get("diffs", Engine._diff_key(pkg, ("new:mcplike-types==2.0",))) is not None
+    assert cache.get("diffs", Engine._diff_key(pkg)) is None
+
+
+def test_a_sibling_distribution_that_cannot_be_downloaded_is_a_warning(tmp_path, cache, scripted):
+    """Without mcplike-types, the names of ``mcplike.types`` cannot be compared (as before, when
+    no change was reported there): the scan says so, in the report too, and does not cache the
+    diff under the key with the sibling, so the next scan tries again."""
+    pypi = mcplike_pypi(tmp_path, cache, sibling=False)
+    project = load_project(make_project(tmp_path, '"mcplike==2.0"', code=MCPLIKE_CODE))
+    why = f"mcplike-types 2.0, which could not be downloaded: {SIBLING_LIMIT_ERROR}"
+    for attempt in ("diffed", "cached"):
+        engine = make_engine(cache, pypi, scripted)
+        scan = engine.scan(project, engine.resolve_target())
+        pkg = scan.package("mcplike")
+        assert (pkg.status, pkg.changes) == (UNCHANGED, []), attempt
+        assert pkg.reexported == {"mcplike.types": why}, attempt
+        assert scan.warnings == [
+            f"mcplike 2.0: changes to mcplike.types are not reported (re-exported from {why})"
+        ], attempt
+        assert "re-exported from mcplike-types 2.0" in render_markdown(scan, None), attempt
+    assert cache.get("diffs", Engine._diff_key(pkg)) is not None
+    assert cache.get("diffs", Engine._diff_key(pkg, ("new:mcplike-types==2.0",))) is None
 
 
 @pytest.mark.parametrize("module", ["fastlib.fast", "fastlib._core"], ids=["public", "private"])

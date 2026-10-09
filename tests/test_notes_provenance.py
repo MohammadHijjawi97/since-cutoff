@@ -117,7 +117,8 @@ def toy_diff(tmp_path: Path, package: str, old: dict[str, str], new: dict[str, s
 GOLDEN_BODY = """\
 ## Library changes after the model's training cutoff
 
-Changed after the training cutoff of `claude-sonnet-4-5` (2025-07-31) and used by this project \
+Changed after the training cutoff of `claude-sonnet-4-5` (2025-07-31, comparing from releases up \
+to 2025-07-01) and used by this project \
 at the versions in `uv.lock`, according to [since-cutoff](https://github.com/MohammadHijjawi97/\
 since-cutoff) 0.4.0. Tags: [diff] a static comparison of the two releases' public APIs; [library] \
 the replacement is named in the library's own deprecation text and exists in the pinned version; \
@@ -154,6 +155,7 @@ def test_golden_block_for_the_stale_demo() -> None:
         "tool": "0.4.0",
         "model": "claude-sonnet-4-5",
         "cutoff": "2025-07-31",
+        "margin": 30,
         "versions_from": "uv.lock",
         "deps": sha("anthropic==1.8.0"),
         "body": sha(GOLDEN_BODY),

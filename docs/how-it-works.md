@@ -45,11 +45,21 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
    (`2025-07` means 31 July 2025). Without `--model`, the model is the one your coding agent is
    set up with (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
-3. **The comparison release** is the newest final, non-yanked release published on or before the
-   cutoff date (PyPI upload time). A package that had only pre-releases by
-   then is compared with the newest of them (development releases do not count). A package
-   first released after the cutoff, or whose release at the cutoff only reserved the name (no
-   modules, or only empty ones), is reported as first released after the cutoff.
+3. **The comparison release** is the newest final, non-yanked release published at least 30
+   days before the cutoff date (PyPI upload time): the latest release published on or before
+   the cutoff minus the margin. The margin is `--cutoff-margin DAYS`, or
+   `SINCE_CUTOFF_CUTOFF_MARGIN`, or the `cutoff_margin` parameter of the MCP tools; 0 compares
+   from the latest release at the cutoff itself. The default is 30 because a model's training
+   data lags its stated cutoff, so it knows the last weeks before the cutoff least: llama-index-core
+   0.13.0, which removed `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on
+   2025-07-30, the day before claude-sonnet-4-5's cutoff, and a scan without the margin
+   compared from 0.13.0 and reported no change the code used; with the margin it compares
+   from 0.12.45 and reports both. The model line says both days: "training cutoff 2025-07-31,
+   comparing from releases up to 2025-07-01", and `results.json` records `compare_from` and
+   `settings.cutoff_margin`. A package that had only pre-releases by the comparison date is
+   compared with the newest of them (development releases do not count). A package first
+   released after it, or whose release then only reserved the name (no modules, or only empty
+   ones), is reported as first released after the cutoff (within the margin of it, when it was).
 4. **The API diff.** Both versions are downloaded once (wheels, falling back to sdists; only
    `.py`/`.pyi` files are extracted) and loaded *statically* with
    [griffe](https://mkdocstrings.github.io/griffe/). A module the pinned release ships
@@ -57,8 +67,19 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    `.pyx` in an sdist), cannot be read this way: when it had a source or a stub at the cutoff,
    it is not reported as removed, nor is what it defines or what a readable module still
    imports from it, and the scan warns that changes to it are not reported. A name a readable
-   module no longer imports from it is still removed. A package whose `__init__` is compiled
-   hides only the names it defines, not its readable submodules.
+   module no longer imports from it is still removed. A top-level package whose `__init__` is
+   compiled hides only the names it defines; a compiled subpackage `__init__` hides that
+   subpackage (griffe cannot enter a directory without an `__init__.py` inside a regular
+   package), and the scan warns.
+   A module that takes its names from another distribution with `from x import *` (mcp 2.3's
+   `mcp/types/__init__.py` is `from mcp_types import *`, and its requirements pin mcp-types
+   2.3.0) is compared with that distribution read next to the release, at the version the project
+   locks or, for the release at the cutoff, the newest its requirement allowed on the
+   comparison date (a few hundred KB, under the same download limit and cache); its names are
+   reported under the paths that re-export them (`mcp.types.Tool.inputSchema` was removed:
+   mcp-types spells it `input_schema`). When that distribution cannot be downloaded, the scan
+   warns that changes to those modules are not reported. Only star imports are followed, and
+   only of a distribution the release's own requirements name.
    since-cutoff reports only changes that break code written for the old version:
 
    | kind | example |
@@ -108,13 +129,14 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
 
 The cutoff date picks a comparison point. It is not a claim about what a model memorised.
 since-cutoff takes the date from models.dev (or `--cutoff`); a month means its last day
-(`2025-07` is 31 July 2025). For each dependency it takes the newest final, non-yanked release
-uploaded on or before that date (a pre-release only if the package had no final release by then,
+(`2025-07` is 31 July 2025). It moves that date back by the margin (`--cutoff-margin`, 30 days
+by default), and for each dependency takes the newest final, non-yanked release uploaded on or
+before the day it lands on (a pre-release only if the package had no final release by then,
 never a development release), and diffs that release's public API against your locked version.
 That diff is a list of candidates: API changes that the model's training data probably does not
 include.
 
-The date decides three things:
+The comparison date decides three things:
 
 - which packages are diffed at all: a package whose locked version is no newer than that release
   has nothing to diff, and a package first released after the date is listed as new;
@@ -124,9 +146,10 @@ The date decides three things:
   version, with the error on a changed API, is "stale" rather than "wrong".
 
 A model can know a release after its stated cutoff or not know releases shortly before it, so the
-scan can list changes the model already handles and miss some it does not. Whether the model
-actually writes the old API is shown only by `run`, which asks it: with no tools, told which
-version the project pins.
+scan can list changes the model already handles and miss some it does not. The margin is for the
+second case; `--cutoff-margin 0` compares from the cutoff itself. Whether the model actually
+writes the old API is shown only by `run`, which asks it: with no tools, told which version the
+project pins.
 
 ## Notes without a model: scan and sync
 
@@ -305,6 +328,7 @@ comes a meta line, an HTML comment holding JSON:
 | `v` | the block format, 2 |
 | `tool` | the since-cutoff version that wrote it |
 | `model`, `cutoff` | the model (several, comma-separated, for `sync --model a,b`) and the training cutoff the notes are for |
+| `margin` | how many days before the cutoff the comparison releases were published by (`--cutoff-margin`, 30 by default); a block without it, from an earlier since-cutoff, compared from the cutoff itself |
 | `versions_from` | where the versions come from (`uv.lock`; `pyproject.toml, latest on PyPI for 3 unpinned`) |
 | `deps` | a hash of the dependencies and their versions (an unpinned one by its declared range), so `status` sees a change offline |
 | `body` | a hash of the block's text after the meta line, with line breaks normalised, so a hand edit shows |
@@ -312,10 +336,12 @@ comes a meta line, an HTML comment holding JSON:
 | `suggestions`, `checked`, `added_eol` | only when needed: `sync --suggestions` was used; the API each `[type-checked]` bullet is about; the line break since-cutoff added to a file that did not end with one, which `unapply` takes away again |
 
 Then the title "## Library changes after the model's training cutoff", a header that names the
-model, the cutoff, the file the versions come from and the since-cutoff version, says what the
-tags mean, that no library code was run, and "Where these lines conflict with what you remember,
-follow these lines", and one group per package: `**anthropic 1.8.0** (0.60.0 at the cutoff)`
-followed by its bullets.
+model, the cutoff and the day the comparison releases were published by ("the training cutoff
+of `claude-sonnet-4-5` (2025-07-31, comparing from releases up to 2025-07-01)"), the file the
+versions come from and the since-cutoff version, says what the tags mean, that no library code
+was run, and "Where these lines conflict with what you remember, follow these lines", and one
+group per package: `**anthropic 1.8.0** (0.56.0 at the cutoff)`, the release the notes compare
+from, followed by its bullets.
 
 ### `sync`
 
@@ -332,7 +358,9 @@ file:
 2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
    teammates whose agents use other models do not rewrite it back and forth; with no block, the
    model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and
-   names both.
+   names both. The margin (`--cutoff-margin`) is not kept from the block: it is the scan's
+   setting, the same for everyone, and a block compared from another day is rewritten, with
+   "now comparing from 30 days before the cutoff (it was the cutoff itself)" as the reason.
 3. **What changes.** Notes for APIs the code starts using are added, and a bumped package is
    diffed again (diffs are cached per package and pair of versions, so the others come from the
    cache). A
@@ -390,7 +418,9 @@ What it prints, from the sample project:
 `since-cutoff status` compares the block with the project's dependencies as they are, with no
 network and without reading the code (`sync --check` does that): per package, the version the
 notes are for and the version the lockfile has; whether other dependencies changed (the `deps`
-hash); where the versions come from; and whether the model your coding agent is set up with has
+hash); where the versions come from; whether the block compared from another day than the scan
+does now (its `margin` against `--cutoff-margin`: a block from before there was a margin
+compared from the cutoff itself); and whether the model your coding agent is set up with has
 an earlier training cutoff than the notes, which may then miss changes (it prints the
 `sync --model` command for it; this is not a failure, since sync keeps the block's model). A
 block that 0.3 or `run --apply` wrote is out of date, as `sync --check` would find it. No block
