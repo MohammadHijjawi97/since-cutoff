@@ -11,6 +11,11 @@
   reseller listings.
 - The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
   the existing read-only tools; listing them needs no network or API key.
+- `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
+  end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
+  set in many containers). argparse wrote them itself, past the check for a closed pipe:
+  Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
+  exited with 0.
 - When PyPI cannot be reached (no network, a timeout, 429 or 5xx after the retries), a
   package's release list cached more than 12 hours ago is used instead of failing, and the
   scan and the MCP tools warn from which day each such copy is: releases published after it
