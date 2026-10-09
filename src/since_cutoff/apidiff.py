@@ -3312,10 +3312,9 @@ def signature_parameters(signature: str | None) -> list[str]:
 
 
 def _accepts_var_keyword(fn: Any) -> bool:
+    # By the kind's name: griffe 2.3.1 made str(kind) its value ("variadic keyword").
     try:
-        return any(
-            "var_keyword" in str(p.kind) or "VAR_KEYWORD" in str(p.kind) for p in fn.parameters
-        )
+        return any(_pkind(p) == "var_keyword" for p in fn.parameters)
     except Exception:
         return False
 
