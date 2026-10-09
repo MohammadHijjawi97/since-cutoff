@@ -50,6 +50,7 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     APIChange,
     diff_sources_with_unread,
+    griffe_version,
     load_api,
 )
 from since_cutoff.apidiff import (
@@ -1269,7 +1270,11 @@ class Engine:
 
     @staticmethod
     def _diff_key(s: PackageScan) -> str:
-        return stable_hash("diff", DIFF_SCHEMA, s.name, s.cutoff_version, s.locked)
+        # griffe is a range dependency: after an upgrade that reads sources differently, the
+        # diffs the old one made are not served again.
+        return stable_hash(
+            "diff", DIFF_SCHEMA, griffe_version(), s.name, s.cutoff_version, s.locked
+        )
 
     @staticmethod
     def _unread_key(s: PackageScan) -> str:
@@ -1324,6 +1329,7 @@ class Engine:
             "effort": (s.effort or "default") if claude else None,
             "prompt_version": prompts.PROMPT_VERSION,
             "diff_schema": DIFF_SCHEMA,
+            "griffe_version": griffe_version(),
             "max_probes": s.max_probes,
             "heldout": s.heldout,
             "regression": s.regression,

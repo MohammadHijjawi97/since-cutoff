@@ -387,6 +387,12 @@ def test_only_names_written_as_code_or_stated_as_the_replacement_count() -> None
         "receive",
     ]
     assert stated_names("Please login first. If needed, use `x=True`.") == []
+    # Quotes write a name as code too, and a text may give alternatives (httpx 0.27).
+    assert stated_names("Use 'proxy' or 'mounts' instead.") == ["proxy", "mounts"]
+    assert stated_names('Use "Command" instead.') == ["Command"]
+    assert stated_names("Use a, b, or c instead.") == ["a", "b", "c"]
+    assert stated_names("Use x Or y instead.") == ["x", "y"]
+    assert stated_names("It's deprecated; don't use it.") == []
 
 
 # ------------------------------------------------ 3. evidence: move, rename, similar
@@ -456,6 +462,109 @@ def test_a_parameter_renamed_in_place_is_a_labelled_guess(tmp_path) -> None:
         "Similar names in 2.0, not confirmed as replacements: `filename`. [diff; not confirmed]"
     )
     assert asked.tag_list == (TAG_DIFF, TAG_NOT_CONFIRMED)
+
+
+def _runner(flag: str, doc: str = "") -> dict[str, str]:
+    return {
+        "ck/__init__.py": f'''
+    class CliRunner:
+        """Runs commands.{doc}
+        """
+
+        def __init__(self, charset: str = "utf-8", {flag}: bool = True) -> None:
+            pass
+'''
+    }
+
+
+def test_a_parameter_the_docs_say_was_removed_is_no_rename(tmp_path) -> None:
+    """click 8.2's ``CliRunner`` took ``catch_exceptions: bool = True`` where 8.1 took
+    ``mix_stderr: bool = True``: the same position and type, but its docstring says the one was
+    added and the other removed. Telling an agent to pass ``catch_exceptions`` instead would
+    change what the test runner does."""
+    added = (
+        "\n\n        .. versionchanged:: 8.2\n            Added the ``catch_exceptions`` parameter."
+    )
+    removed = "\n\n        .. versionchanged:: 8.2\n            ``mix_stderr`` parameter has been removed."
+    for doc in (added, removed, added + removed):
+        [change] = toy_diff(
+            tmp_path / str(len(doc)), "ck", _runner("mix_stderr"), _runner("catch_exceptions", doc)
+        )
+        assert (change.parameter, change.renamed, change.suggestions) == ("mix_stderr", False, [])
+        assert "renamed" not in diff_note([change]).line
+    # A note that names both says what replaces what, and a parameter's description is no
+    # version note: neither is evidence against a rename.
+    both = (
+        "\n\n        .. versionchanged:: 8.2\n"
+        "            ``mix_stderr`` was removed in favour of ``catch_exceptions``."
+    )
+    described = "\n\n        New ``catch_exceptions`` values are accepted."
+    for name, doc in (("both", both), ("described", described), ("none", "")):
+        [change] = toy_diff(
+            tmp_path / name, "ck", _runner("mix_stderr"), _runner("catch_exceptions", doc)
+        )
+        assert (change.renamed, change.suggestions) == (True, ["catch_exceptions"]), name
+
+
+WARNED_OLD = {
+    "hx/__init__.py": """
+    import warnings
+
+
+    class Client:
+        def __init__(self, proxy=None, mounts=None, transport=None, proxies=None, app=None):
+            if proxies:
+                message = (
+                    "The 'proxies' argument is now deprecated."
+                    " Use 'proxy' or 'mounts' instead."
+                )
+                warnings.warn(message, DeprecationWarning)
+            if app:
+                message = (
+                    "The 'app' shortcut is now deprecated."
+                    " Use the explicit style 'transport=WSGITransport(app=...)' instead."
+                )
+                warnings.warn(message, DeprecationWarning)
+"""
+}
+WARNED_NEW = {
+    "hx/__init__.py": """
+    class WSGITransport:
+        def __init__(self, app=None):
+            pass
+
+
+    class Client:
+        def __init__(self, proxy=None, mounts=None, transport=None):
+            pass
+"""
+}
+
+
+def test_a_warning_message_built_before_its_warn_call_is_the_hint(tmp_path) -> None:
+    """httpx 0.27 builds each message first (``message = (...)``) and warns with it (its
+    ``Client.__init__``, with its own messages): each removed parameter gets the message
+    assigned last before its own ``warn``, and the names it states are its replacements. httpx
+    0.28's ``Client(proxies=...)`` broke a great deal of code written for 0.27."""
+    changes = {c.parameter: c for c in toy_diff(tmp_path, "hx", WARNED_OLD, WARNED_NEW)}
+    proxies, app = changes["proxies"], changes["app"]
+    assert proxies.hint == (
+        "The 'proxies' argument is now deprecated. Use 'proxy' or 'mounts' instead."
+    )
+    assert app.hint == (
+        "The 'app' shortcut is now deprecated. Use the explicit style "
+        "'transport=WSGITransport(app=...)' instead."
+    )
+    assert diff_note([proxies]).line == (
+        "`Client()` no longer accepts `proxies`; do not pass it. Use `proxy` or `mounts` "
+        "instead of `proxies`. [diff + library]"
+    )
+    # Advice, not a stated replacement: quoted, and the rest said as before.
+    assert diff_note([app]).line == (
+        '`Client()` no longer accepts `app`; do not pass it. On `app`, hx 1.0 said: "Use the '
+        "explicit style 'transport=WSGITransport(app=...)' instead.\" since-cutoff found no "
+        "replacement in hx's deprecation text. [diff]"
+    )
 
 
 FORCE_FILENAME = {
