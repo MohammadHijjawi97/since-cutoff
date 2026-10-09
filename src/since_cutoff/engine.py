@@ -327,7 +327,7 @@ class UsedAPI:
     """A changed API the project's code uses (:meth:`ScanResult.used_apis`): its package, the
     note from the API diff for it (which lists its changes), where the code uses it and how.
 
-    ``uses`` is file-level for now (``Use.line`` is None): the lines are issue #8's.
+    ``uses`` records the source locations where the project uses the changed API.
     """
 
     package: PackageScan

@@ -40,6 +40,7 @@ from since_cutoff.selection import (
     collapse,
     match,
     used_names,
+    uses,
     uses_text,
 )
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
@@ -59,6 +60,174 @@ def change(path: str, owner: str | None = None, parameter: str | None = None) ->
 
 
 # ------------------------------------------------------------ "your code uses"
+def test_uses_reports_call_lines() -> None:
+    removed = change("pkg.fetch")
+    files = code(
+        """
+        from pkg import fetch
+
+        result = fetch(url)
+        other = fetch(url)
+        """
+    )
+
+    found = uses(removed, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 4, 9),
+        ("", 5, 8),
+    ]
+
+
+def test_uses_reports_import_alias_call_location():
+    fetch = change("pkg.fetch")
+
+    files = code(
+        """
+        from pkg import fetch as get
+        result = get(url)
+        """
+    )
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 9)]
+
+
+def test_uses_reports_plain_name_reference_location():
+    fetch = change("pkg.fetch")
+
+    files = code(
+        """
+        from pkg import fetch
+        handler = fetch
+        """
+    )
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 10)]
+
+
+def test_uses_reports_chained_method_call_location():
+    send = change("pkg.Client.send", owner="Client")
+
+    files = code(
+        """
+        from pkg import Client
+        Client().send("hello")
+        """
+    )
+
+    found = uses(send, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_keyword_on_chained_method_call():
+    send = change("pkg.Client.send", owner="Client", parameter="timeout")
+
+    files = code(
+        """
+        from pkg import Client
+        Client().send("hello", timeout=10)
+        """
+    )
+
+    found = uses(send, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_constructor_location():
+    init = change("pkg.Client.__init__", owner="Client", parameter="timeout")
+
+    files = code(
+        """
+        from pkg import Client
+        client = Client(timeout=10)
+        """
+    )
+
+    found = uses(init, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 9)]
+
+
+def test_uses_reports_subclass_self_member_location():
+    routes = change("pkg.Base.routes", owner="Base")
+
+    files = code(
+        """
+        from pkg import Base
+
+        class Child(Base):
+            def read(self):
+                return self.routes
+        """
+    )
+
+    found = uses(routes, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 6, 15)]
+
+
+def test_uses_does_not_match_same_member_name_on_other_class():
+    routes = change("pkg.Client.routes", owner="Client")
+
+    files = code(
+        """
+        from pkg import Client
+        from flask import Flask
+
+        app = Client()
+        other = Flask()
+
+        app.routes
+        other.routes
+        """
+    )
+
+    found = uses(routes, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 8, 0)]
+
+
+def test_uses_does_not_match_same_function_name_from_other_module():
+    fetch = change("pkg.fetch")
+
+    files = code(
+        """
+        from pkg import fetch
+        from other import fetch as other_fetch
+
+        fetch(url)
+        other_fetch(url)
+        """
+    )
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 5, 0)]
+
+
+def test_uses_reports_parameter_at_call_line() -> None:
+    removed = change("pkg.fetch", parameter="resume")
+    files = code(
+        """
+        from pkg import fetch
+
+        result = fetch(url, resume=True)
+        """
+    )
+
+    found = uses(removed, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 4, 9),
+    ]
+
+
 def test_a_module_level_name_counts_only_under_its_own_path() -> None:
     files = code(
         """

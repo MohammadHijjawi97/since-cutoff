@@ -980,12 +980,13 @@ class FileUse:
     members: frozenset[tuple[str, str]] = frozenset()
     # The file, relative to the project root, with "/" on every system: ``app/main.py``
     # (:func:`scan_sources`); "" when unknown. Where the code uses a change is file-level for
-    # now (selection.uses); the lines and columns are issue #8's.
-    file: str = ""
+    # (:func:`scan_sources`); "" when unknown. Source locations are recorded
+    # separately for each use when the scanner can match a specific site.
     # Every chain of two or more names read with dots, from its first name (or the first
     # attribute after a call): ``client.beta.messages.create``, ``get().messages.create`` as
     # ``messages.create``. What ``pairs`` cannot tell: whether ``messages.create`` is reached
     # through ``beta``.
+    file: str = ""
     chains: frozenset[str] = frozenset()
     # ``(callable, keyword)`` of each keyword argument whose callable the file shows the path
     # of: an imported name (``fetch(retries=1)`` after ``from toylib import fetch``:
@@ -1015,6 +1016,8 @@ class FileUse:
     # of one of its classes): ``("httpx.HTTPError", "huggingface_hub")`` for ``try:
     # hf_hub_download(...)`` ``except httpx.HTTPError:``.
     handled: frozenset[tuple[str, str]] = frozenset()
+    # Where each API-related use occurs: (kind, name, line, column).
+    sites: frozenset[tuple[str, str, int, int]] = frozenset()
 
     def imports(self, import_names: Iterable[str]) -> bool:
         """Whether the file imports a distribution with these import names (``requests``,
@@ -1172,12 +1175,17 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
     keyword_paths: set[tuple[str, str]] = set()
     keyword_modules: set[tuple[str, str, str]] = set()
     positional_modules: set[tuple[str, int, str]] = set()
+    sites: set[tuple[str, str, int, int]] = set()
+
     for node in nodes:
         bases = {p for p in map(resolve, node.bases) if p} if isinstance(node, ast.ClassDef) else ()
         for n in ast.walk(node) if bases else ():
             # ``self.routes`` or ``super().routes`` in a subclass of an imported class.
             if isinstance(n, ast.Attribute) and _on_self(n.value):
                 members.update((base, n.attr) for base in bases)
+                sites.update(
+                    ("member", f"{base}.{n.attr}", n.lineno, n.col_offset) for base in bases
+                )
             elif (
                 isinstance(n, ast.Call)
                 and isinstance(n.func, ast.Attribute)
@@ -1185,6 +1193,12 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
             ):
                 keyword_paths.update(
                     (f"{base}.{n.func.attr}", k.arg) for base in bases for k in n.keywords if k.arg
+                )
+                sites.update(
+                    ("keyword", f"{base}.{n.func.attr}:{k.arg}", n.lineno, n.col_offset)
+                    for base in bases
+                    for k in n.keywords
+                    if k.arg
                 )
                 # ``super().__init__(http_client=...)`` calls the base class itself.
                 method = "" if n.func.attr == "__init__" else f".{n.func.attr}"
@@ -1222,6 +1236,7 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
     calls: set[str] = set()
     keywords: set[tuple[str, str]] = set()
     keyword_chains: set[tuple[str, str]] = set()
+
     for node in nodes:
         if isinstance(node, ast.Attribute):
             attributes.add(node.attr)
@@ -1240,9 +1255,19 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
             named = resolve(inner)  # ``Starlette.routes``, or a module's attribute
             kinds = {named} if named else made(inner) or instances.get(_dotted(inner) or "", set())
             members.update((kind, node.attr) for kind in kinds)
-        elif isinstance(node, ast.Name) and star and node.id not in bound:
-            for module in star:
-                reach(f"{module}.{node.id}")
+            sites.update(
+                ("member", f"{kind}.{node.attr}", node.lineno, node.col_offset) for kind in kinds
+            )
+            if named:
+                sites.add(("reference", f"{named}.{node.attr}", node.lineno, node.col_offset))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in bound:
+                sites.add(("reference", bound[node.id], node.lineno, node.col_offset))
+            elif star:
+                for module in star:
+                    path = f"{module}.{node.id}"
+                    reach(path)
+                    sites.add(("reference", path, node.lineno, node.col_offset))
         elif isinstance(node, ast.Call):
             func = node.func
             callee = None
@@ -1252,9 +1277,18 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
                 callee = bound.get(func.id, func.id).rsplit(".", 1)[-1]
             if callee:
                 calls.add(callee)
+                call_paths = callee_paths(func)
+                site_callees = call_paths or {callee}
+                sites.update(("call", path, node.lineno, node.col_offset) for path in site_callees)
                 passed = [k.arg for k in node.keywords if k.arg]
+                sites.update(
+                    ("keyword", f"{path}:{k.arg}", node.lineno, node.col_offset)
+                    for path in site_callees
+                    for k in node.keywords
+                    if k.arg
+                )
                 keywords.update((callee, k) for k in passed)
-                targets = callee_paths(func)
+                targets = call_paths
                 keyword_paths.update((p, k) for p in targets for k in passed)
                 keyword_modules.update(
                     (p, k.arg, m)
@@ -1287,6 +1321,7 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
         frozenset(keyword_modules),
         frozenset(positional_modules),
         frozenset(_handled(nodes, resolve, bound, instances)),
+        frozenset(sites),
     )
 
 

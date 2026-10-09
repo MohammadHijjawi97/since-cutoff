@@ -1138,7 +1138,8 @@ def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[
     column = max(len(where) for where, _ in shown[:cut]) if shown else 0
     snippets: dict[str, list[str]] = {}
     for where, here in shown[:cut]:
-        what = _snippet(scan.project.root, here[0], snippets) or use_text(here)
+        snippet = _snippet(scan.project.root, here[0], snippets)
+        what = f"{snippet} - {use_text(here)}" if snippet else use_text(here)
         for i, line in enumerate(
             _wrap(what, width, f"    {where.ljust(column)}   ", " " * (column + 7))
         ):
@@ -1999,8 +2000,8 @@ def _used_api_json(scan: ScanResult, u: UsedAPI) -> dict[str, Any]:
     """One entry of ``used_apis``: a changed API the project's code uses, its changes, where
     and how the code uses it, and the note from the API diff for it.
 
-    ``locations`` are file-level for now: ``line``, ``column`` and ``code`` stay null until the
-    scan records where in each file (issue #8). ``used_in`` lists the files."""
+    ``locations`` records the file, line, column, kind, names, form, match and source snippet
+    for each use. ``used_in`` lists the files."""
     p, note = u.package, u.note
     snippets: dict[str, list[str]] = {}
     locations = []

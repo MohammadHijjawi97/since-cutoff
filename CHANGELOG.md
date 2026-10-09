@@ -169,6 +169,11 @@
 - When `sync` has no notes to write, it says how many changes `--scope imported` would write,
   and for how many packages.
 
+## Unreleased
+
+- `scan` now reports the source location of changed API uses and resolves member and reference
+  uses by their imported API path to avoid same-name false positives.
+
 ## 0.4.0 - 2026-09-28
 
 - New `since-cutoff sync` writes the notes from the API diff for the changed APIs your code
