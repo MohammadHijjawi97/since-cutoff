@@ -1303,6 +1303,30 @@ def test_a_field_or_attribute_no_base_outside_the_package_is_given_is_removed(tm
     )
 
 
+def test_a_keyword_of_another_call_puts_nothing_in_the_dict_the_base_is_given(tmp_path):
+    """The constructor gives the base ``super().__init__(**options)``: the keys of ``options``
+    are handed on, and a keyword of another call in the constructor (``_warn(secure=secure)``)
+    is not one. The attribute it no longer sets is removed; it was unknown."""
+    old = {
+        "pkg/__init__.py": "import httpx\n\nclass Client(httpx.Client):\n"
+        "    def __init__(self, base_url, secure=True):\n        self.secure = secure\n"
+        "        super().__init__(base_url=base_url)\n"
+    }
+    new = {
+        "pkg/__init__.py": "import httpx\n\ndef _warn(**flags):\n    return flags\n\n"
+        "class Client(httpx.Client):\n    def __init__(self, base_url, secure=True):\n"
+        "        options = {'base_url': base_url}\n        _warn(secure=secure)\n"
+        "        super().__init__(**options)\n"
+    }
+    assert unread(tmp_path, old, new) == ({(REMOVED, "pkg.Client.secure", None)}, [])
+    # A key of the dict the base is given is handed on, as before.
+    handed = new["pkg/__init__.py"].replace(
+        "{'base_url': base_url}", "dict(base_url=base_url, secure=secure)"
+    )
+    entry = f"pkg.Client{UNREAD_BASE}httpx.Client"
+    assert unread(tmp_path / "dict", old, {"pkg/__init__.py": handed}) == (set(), [entry])
+
+
 @pytest.mark.parametrize("module", ["typing", "typing_extensions"])
 def test_a_key_dropped_from_a_typed_dict_is_removed(tmp_path, module):
     """anthropic 0.60 -> 1.8: ``MessageCreateParamsBase(TypedDict)`` lost ``top_k``. typing's

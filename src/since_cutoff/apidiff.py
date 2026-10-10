@@ -3267,7 +3267,8 @@ def _is_base_init(func: ast.expr) -> bool:
 
 def _dict_keys(node: ast.AST) -> set[str]:
     """The string keys the code puts in dicts: ``d["k"] = v``, ``{"k": v}``, ``d.setdefault("k",
-    v)`` and the keywords of calls (``dict(k=v)``, ``d.update(k=v)``)."""
+    v)`` and the keywords of ``dict(k=v)`` and ``d.update(k=v)`` (not those of any other call:
+    ``log.info(..., extra=...)`` puts no ``extra`` in a dict)."""
     keys: set[str] = set()
     for n in ast.walk(node):
         if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store):
@@ -3278,7 +3279,8 @@ def _dict_keys(node: ast.AST) -> set[str]:
                 k.value for k in n.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)
             }
         elif isinstance(n, ast.Call):
-            keys |= {kw.arg for kw in n.keywords if kw.arg}
+            if _name(n.func) in ("dict", "update"):
+                keys |= {kw.arg for kw in n.keywords if kw.arg}
             if _name(n.func) == "setdefault" and n.args:
                 first = n.args[0]
                 if isinstance(first, ast.Constant) and isinstance(first.value, str):
