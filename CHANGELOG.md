@@ -17,7 +17,10 @@
   since-cutoff compared from the cutoff itself and is reported out of date until `since-cutoff
   sync` rewrites it (`--cutoff-margin 0` keeps the old comparison). The block's package line
   says which release the notes compare from, `**anthropic 1.8.0** (compared from 0.56.0)`; it
-  said "0.56.0 at the cutoff", which the margin made false, and both forms are read.
+  said "0.56.0 at the cutoff", which the margin made false, and both forms are read. A
+  dependency first released within the margin counts as new to the model, and the scan, the
+  MCP tools and `sync` say it was "first released 2025-07-15, within 30 days of the cutoff", not
+  "after the cutoff"; one the model knows is "the latest release 30 days before the cutoff".
 - A module that takes its names from another distribution with `from x import *` is compared
   with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
   mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under

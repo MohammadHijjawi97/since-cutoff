@@ -301,6 +301,20 @@ class ModelTarget:
         ``margin`` days before the cutoff (:func:`since_cutoff.models.compare_date`)."""
         return compare_date(self.cutoff, self.margin)
 
+    @property
+    def compare_when(self) -> str:
+        """When the release a scan compares from was the latest one, in words: ``30 days
+        before the cutoff``, or ``at the cutoff`` with a margin of 0."""
+        return f"{self.margin} days before the cutoff" if self.margin else "at the cutoff"
+
+    def released_within_margin(self, p: PackageScan) -> bool:
+        """Was ``p``, a dependency the scan counts as new (NEW), first released within the
+        margin: after the day the scan compares from, but not after the cutoff, which is what
+        a text about a new dependency says otherwise."""
+        if p.status != NEW or not p.first_released:
+            return False
+        return self.compare_date.isoformat() < p.first_released <= self.cutoff.isoformat()
+
 
 @dataclass
 class PackageScan:

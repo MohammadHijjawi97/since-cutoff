@@ -22,10 +22,12 @@ from since_cutoff.engine import (
     star_imports_from_outside,
 )
 from since_cutoff.errors import PackageIndexError
-from since_cutoff.notes import BLOCK_END, BLOCK_START, NOTE_DIFF, TAG_DIFF
+from since_cutoff.mcp_server import Target, _render_project
+from since_cutoff.notes import BLOCK_END, BLOCK_START, NOTE_DIFF, SCOPE_USED, TAG_DIFF
 from since_cutoff.project import load_project
 from since_cutoff.pypi import SOURCE_SCHEMA, SourceTree
-from since_cutoff.report import render_markdown, summary, to_json
+from since_cutoff.report import headline, render_markdown, scan_lines, summary, to_json
+from since_cutoff.sync import _dropped
 from tests.conftest import FakePyPI, ScriptedModel, compiled_fastlib, write_tree
 
 pytestmark = pytest.mark.pyright
@@ -123,6 +125,60 @@ def test_the_comparison_release_is_a_margin_before_the_cutoff(tmp_path, cache, t
     assert scan.package("newlib").status == KNOWN
     # The diff cache is keyed per comparison release: neither scan was served the other's diff.
     assert Engine._diff_key(default) != Engine._diff_key(zero)
+
+
+def test_a_dependency_first_released_within_the_margin_is_not_after_the_cutoff(
+    tmp_path, cache, toylib, scripted
+):
+    """newlib 1.0 was uploaded 16 days before the cutoff, after the day the scan compares from:
+    it counts as new, and the scan, the MCP tool and sync say it was first released within the
+    margin, not after the cutoff (late 1.0 was); toylib 1.0, which the model knows, is the
+    latest release 30 days before the cutoff, not at it."""
+    v1, v2 = toylib
+    pypi = FakePyPI(
+        cache,
+        {
+            "toylib": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")],
+            "newlib": [("1.0", "2025-07-15")],
+            "late": [("1.0", "2025-09-01")],
+        },
+        {("toylib", "1.0"): v1, ("toylib", "2.0"): v2},
+    )
+    code = TOYLIB_CODE + "import newlib\nimport late\n"
+    deps = '"toylib==1.0", "newlib==1.0", "late==1.0"'
+    project = load_project(make_project(tmp_path, deps, code))
+    engine = make_engine(cache, pypi, scripted)
+    target = engine.resolve_target()
+    scan = engine.scan(project, target)
+    newlib, late = scan.package("newlib"), scan.package("late")
+    assert (newlib.status, late.status) == (NEW, NEW)
+
+    text = "\n".join(t.plain for t in [*headline(scan, None), *scan_lines(scan, width=200)])
+    assert (
+        "Your code imports newlib 1.0 (first released 2025-07-15, within 30 days of the cutoff): "
+        "its whole API is newer than the releases the scan compares from." in text
+    )
+    assert "Your code imports late 1.0 (first released 2025-09-01, after the cutoff)" in text
+    assert "2 dependencies did not exist yet 30 days before the cutoff" in text
+
+    mcp = _render_project(scan, Target(target.cutoff, "scripted-1"), [], 40)
+    assert (
+        "- Your code imports newlib 1.0, first released 2025-07-15: within 30 days before "
+        "your reported training cutoff" in mcp
+    )
+    assert "- Your code imports late 1.0, first released 2025-09-01: released after" in mcp
+    assert "## First released after the cutoff or within 30 days before it" in mcp
+    assert "- newlib 1.0 (2025-07-15); first released within 30 days of the cutoff" in mcp
+
+    assert _dropped(scan, newlib, "newlib", SCOPE_USED)[0] == (
+        "first released 2025-07-15, within 30 days of the cutoff"
+    )
+    assert _dropped(scan, late, "late", SCOPE_USED)[0] == "first released after the cutoff"
+    assert _dropped(scan, scan.package("toylib"), "toylib", SCOPE_USED)[0] == (
+        "1.0 is the latest release 30 days before the cutoff"
+    )
+    assert target.released_within_margin(newlib)
+    assert not target.released_within_margin(late)
 
 
 def test_the_diff_cache_key_has_both_schemas_griffe_and_the_siblings():

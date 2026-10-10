@@ -510,16 +510,22 @@ def _dropped(scan: ScanResult, p: PackageScan | None, name: str, scope: str) -> 
         return f"no longer checked: {why}", f"{name} is no longer checked ({why})"
     where = scan.versions_from(p)
     if p.status == KNOWN:
+        latest = f"the latest release {scan.target.compare_when}"
         if p.locked and p.cutoff_version and not _same_version(p.locked, p.cutoff_version):
-            why = f"older than {p.cutoff_version}, the latest release at the cutoff"
+            why = f"older than {p.cutoff_version}, {latest}"
         else:
-            why = "the latest release at the cutoff"
+            why = latest
         return f"{p.locked} is {why}", f"{name} {p.locked} in {where} is {why}"
     if p.status == UNCHANGED:
         why = f"did not change from {p.cutoff_version} to {p.locked}"
         return f"its API {why}", f"{name}'s API {why}"
     if p.status == NEW:
-        why = "first released after the cutoff"
+        if scan.target.released_within_margin(p):
+            why = (
+                f"first released {p.first_released}, within {scan.target.margin} days of the cutoff"
+            )
+        else:
+            why = "first released after the cutoff"
         return why, f"{name} was {why}"
     if p.status == SKIPPED:
         return f"could not be checked: {p.reason}", f"{name} could not be checked ({p.reason})"

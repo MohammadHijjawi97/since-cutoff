@@ -692,15 +692,18 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
 
     tail: list[str] = []
     if new:
+        within = [p for p in new if scan.target.released_within_margin(p)]
+        when = f"after the cutoff or within {scan.target.margin} days before it" if within else ""
         tail += [
             "",
-            "## First released after the cutoff (so they may be missing from your training data)",
+            f"## First released {when or 'after the cutoff'} (so they may be missing from your "
+            "training data)",
             "",
         ]
         tail += _capped(
             [
                 f"- {p.name} {p.locked or ''} ({p.locked_date or 'date unknown'})"
-                + (f"; {p.reason}" if p.cutoff_version and p.reason else "")
+                + (f"; {p.reason}" if (p.cutoff_version or p in within) and p.reason else "")
                 for p in new
             ]
         )
@@ -742,9 +745,17 @@ def _used_section(scan: ScanResult) -> list[str]:
     imports; the bullet before it says how many APIs there are."""
     used = scan.used_apis()
     imported = [
-        f"- Your code imports {p.name} {p.locked}, first released "
-        f"{p.first_released or 'after the cutoff'}: released after your reported training "
-        "cutoff, so its whole API may be missing from your training data."
+        (
+            f"- Your code imports {p.name} {p.locked}, first released {p.first_released}: "
+            f"within {scan.target.margin} days before your reported training cutoff, so little "
+            "or none of its API may be in your training data."
+        )
+        if scan.target.released_within_margin(p)
+        else (
+            f"- Your code imports {p.name} {p.locked}, first released "
+            f"{p.first_released or 'after the cutoff'}: released after your reported training "
+            "cutoff, so its whole API may be missing from your training data."
+        )
         for p in scan.new_imported()
     ]
     if not used:

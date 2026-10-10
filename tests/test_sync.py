@@ -269,19 +269,27 @@ def test_a_package_at_or_below_the_cutoff_release_is_dropped(sc, tmp_path) -> No
     set_pins(root, ("toylib==1.0", "otherlib==1.0"))
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OUT_OF_DATE
+    # The release the scan compares from is the latest one 30 days before the cutoff (the
+    # margin), not at it.
     assert (
-        "AGENTS.md is out of date: toylib 1.0 in pyproject.toml is the latest release at the "
-        "cutoff." in out
+        "AGENTS.md is out of date: toylib 1.0 in pyproject.toml is the latest release 30 days "
+        "before the cutoff." in out
     )
     code, out = sc("sync", root, "--yes")
-    assert "toylib dropped (1.0 is the latest release at the cutoff)" in out
+    assert "toylib dropped (1.0 is the latest release 30 days before the cutoff)" in out
     assert parse_block(agents(root)) is None
     # Older than the release at the cutoff: said so (it said "0.9 is not newer than 1.0").
     set_pins(root, ("toylib==2.0", "otherlib==1.0"))
     first_sync(sc, root)
     set_pins(root, ("toylib==0.9", "otherlib==1.0"))
+    # With no margin, the release the scan compares from is the one at the cutoff itself.
+    code, out = sc("sync", root, "--check", "--cutoff-margin", "0")
+    assert "toylib 0.9 in pyproject.toml is older than 1.0, the latest release at the cutoff" in out
     code, out = sc("sync", root, "--yes")
-    assert "toylib dropped (0.9 is older than 1.0, the latest release at the cutoff)" in out
+    assert (
+        "toylib dropped (0.9 is older than 1.0, the latest release 30 days before the cutoff)"
+        in out
+    )
 
 
 def test_an_api_the_code_no_longer_uses_loses_its_note(sc, tmp_path) -> None:
