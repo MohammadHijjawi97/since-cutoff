@@ -54,15 +54,20 @@ from since_cutoff.engine import (
     ScanResult,
     Settings,
     UsedAPI,
+    reexport_warning,
     stale_warning,
     unread_warning,
 )
 from since_cutoff.errors import ModelLookupError, PackageIndexError, SinceCutoffError
 from since_cutoff.models import (
+    CUTOFF_MARGIN_VAR,
+    DEFAULT_CUTOFF_MARGIN,
     PROVIDER_ALIASES,
     ModelInfo,
     ModelRegistry,
+    compare_date,
     parse_cutoff,
+    parse_margin,
 )
 from since_cutoff.notes import (
     SCOPE_IMPORTED,
@@ -147,6 +152,23 @@ class Target:
     label: str
     model: str | None = None
     note: str = ""
+    # Days before the cutoff the comparison release must have been published (`cutoff_margin`).
+    margin: int = DEFAULT_CUTOFF_MARGIN
+
+    @property
+    def compare_date(self) -> date:
+        return compare_date(self.cutoff, self.margin)
+
+    @property
+    def compared_from(self) -> str:
+        """``, comparing from releases up to 2025-07-01 (30 days before it)``; nothing with a
+        margin of 0."""
+        if not self.margin:
+            return ""
+        return (
+            f", comparing from releases up to {self.compare_date.isoformat()} "
+            f"({self.margin} days before it)"
+        )
 
 
 class Tools:
@@ -229,6 +251,7 @@ class Tools:
         to_version: str | None = None,
         symbol: str | None = None,
         limit: int = 40,
+        cutoff_margin: int | None = None,
         *,
         progress: ProgressFn | None = None,
     ) -> str:
@@ -241,8 +264,9 @@ class Tools:
         or classes you are about to use. For all dependencies of a project in one call, use
         project_changes.
 
-        Compares the newest final release on or before the cutoff (or `from_version`) with
-        `to_version` (default: the latest final release on PyPI).
+        Compares the newest final release published `cutoff_margin` days before the cutoff
+        (30 by default: models know the weeks before their cutoff least) or earlier, or
+        `from_version`, with `to_version` (default: the latest final release on PyPI).
 
         Read-only: downloads the two releases' wheels from PyPI (80 MB at most each, by
         default) and reads their sources statically. No package code runs and no model is
@@ -256,8 +280,8 @@ class Tools:
                 is looked up.
             cutoff: your training cutoff instead of `model`, as "YYYY-MM" or "YYYY-MM-DD",
                 e.g. "2025-02".
-            from_version: compare from this version instead of the one at the cutoff, e.g.
-                "0.29.1".
+            from_version: compare from this version instead of the latest release 30 days
+                before the cutoff, or the margin given, e.g. "0.29.1".
             to_version: the version the project uses, e.g. "2.0.0" (default: the latest
                 release on PyPI).
             symbol: only changes to what this names, e.g. "hf_hub_download",
@@ -268,6 +292,9 @@ class Tools:
                 matches too. Separate several symbols with commas.
             limit: the most changes to list, e.g. 100 (default 40), shared between the kinds
                 of change.
+            cutoff_margin: compare from the newest release published this many days before
+                the cutoff (default 30, or SINCE_CUTOFF_CUTOFF_MARGIN); 0 compares from the
+                newest release at the cutoff itself.
 
         One of `model`, `cutoff` or `from_version` is required.
 
@@ -293,12 +320,18 @@ class Tools:
             old = self.pypi.release(name, from_version.strip())
             old_role = "as requested"
         else:
-            target = self._target(model, cutoff, needs="`from_version`")
-            at_cutoff = self.pypi.version_at(name, target.cutoff)
+            target = self._target(model, cutoff, needs="`from_version`", margin=cutoff_margin)
+            at_cutoff = self.pypi.version_at(name, target.compare_date)
             if at_cutoff is None:
                 return _newer_than_cutoff(name, new, target)
             old = at_cutoff
-            old_role = f"the newest release on or before {target.cutoff} ({target.label})"
+            if target.margin:
+                old_role = (
+                    f"the newest release on or before {target.compare_date}, {target.margin} "
+                    f"days before the cutoff {target.cutoff} ({target.label})"
+                )
+            else:
+                old_role = f"the newest release on or before {target.cutoff} ({target.label})"
 
         head = [
             f"# {name} {old.version} -> {new.version}",
@@ -328,15 +361,19 @@ class Tools:
         reporter = _Progress(progress) if progress else None
         if reporter:
             reporter.stage(f"Diffing the API of {name} {old.version} -> {new.version}", 1)
-        self._engine(Settings(cutoff=target.cutoff if target else None), reporter).diff_package(
-            scan
+        settings = Settings(
+            cutoff=target.cutoff if target else None,
+            cutoff_margin=target.margin if target else self._margin(cutoff_margin),
         )
+        self._engine(settings, reporter).diff_package(scan)
         if scan.status == SKIPPED:
             raise PackageIndexError(scan.reason or f"could not diff {name}")
         if scan.status == NEW:  # the release at the cutoff was an empty placeholder
             return "\n".join([*head, "", _placeholder_note(old, new)]) + "\n"
         if scan.unread:  # compiled modules: no changes found there is not the same as none
             head.append(f"- Warning: {unread_warning(scan)}")
+        if scan.reexported:  # names from another distribution that could not be read
+            head.append(f"- Warning: {reexport_warning(scan)}")
         changes = scan.distinct
         head.append(f"- {_counts(changes)}")
         if not changes:
@@ -374,6 +411,7 @@ class Tools:
         cutoff: str | None = None,
         only: list[str] | None = None,
         limit_per_package: int = 10,
+        cutoff_margin: int | None = None,
         *,
         progress: ProgressFn | None = None,
     ) -> str:
@@ -386,8 +424,9 @@ class Tools:
 
         Reads the project's lockfile (uv.lock, poetry.lock, pdm.lock, pylock.toml,
         Pipfile.lock), requirements*.txt, pyproject.toml or .venv, and for each direct
-        dependency compares the release that existed at the cutoff with the pinned one.
-        Changes to names the project's code uses, in packages it imports, come first.
+        dependency compares the newest release published `cutoff_margin` days before the cutoff
+        (30 by default) or earlier with the pinned one. Changes to names the project's code
+        uses, in packages it imports, come first.
 
         Read-only: nothing in the project is written. Reads PyPI metadata, downloads the
         wheels of the dependencies that changed and reads them statically; no package code
@@ -407,6 +446,9 @@ class Tools:
             only: check only these dependencies (PyPI names), e.g. ["openai", "pydantic"].
             limit_per_package: changes listed per dependency, e.g. 20 (default 10);
                 api_changes lists the rest.
+            cutoff_margin: compare from the newest release published this many days before
+                the cutoff (default 30, or SINCE_CUTOFF_CUTOFF_MARGIN); 0 compares from the
+                newest release at the cutoff itself.
 
         One of `model` or `cutoff` is required.
 
@@ -427,16 +469,19 @@ class Tools:
         that, the remaining changed dependencies get one line each, under "N more with API
         changes"; pass them in `only` to see their changes.
         """
-        target = self._target(model, cutoff)
+        target = self._target(model, cutoff, margin=cutoff_margin)
         project = load_project(_project_root(project_dir))
         settings = Settings(
             model=target.model or "cutoff",
             cutoff=target.cutoff,
+            cutoff_margin=target.margin,
             include=[s for s in (only or []) if s.strip()],
             python_version=project.python_version,
             today=self._now(),
         )
-        model_target = ModelTarget(settings.model, target.model or "", target.cutoff, target.label)
+        model_target = ModelTarget(
+            settings.model, target.model or "", target.cutoff, target.label, margin=target.margin
+        )
         # Two stages: look every dependency up, then diff the ones that changed.
         reporter = _Progress(progress, stages=2) if progress else None
         scan = self._engine(settings, reporter).scan(project, model_target)
@@ -458,21 +503,44 @@ class Tools:
             processes=self.processes,
         )
 
-    def _target(self, model: str | None, cutoff: str | None, *, needs: str = "") -> Target:
+    def _margin(self, given: int | None) -> int:
+        """The tools' ``cutoff_margin``: as given, else ``SINCE_CUTOFF_CUTOFF_MARGIN`` (the
+        server's environment), else the default."""
+        if given is not None:
+            if not isinstance(given, int) or isinstance(given, bool) or given < 0:
+                raise SinceCutoffError("cutoff_margin: pass 0 or a positive whole number of days")
+            return given
+        value = os.environ.get(CUTOFF_MARGIN_VAR)
+        if value is None or not value.strip():
+            return DEFAULT_CUTOFF_MARGIN
+        try:
+            return parse_margin(value)
+        except ValueError as exc:
+            raise SinceCutoffError(f"{CUTOFF_MARGIN_VAR}: {exc}") from None
+
+    def _target(
+        self,
+        model: str | None,
+        cutoff: str | None,
+        *,
+        needs: str = "",
+        margin: int | None = None,
+    ) -> Target:
         model = (model or "").strip() or None
+        days = self._margin(margin)
         if cutoff and cutoff.strip():
             try:
                 when = parse_cutoff(cutoff)
             except ValueError as exc:
                 raise SinceCutoffError(f"cutoff: {exc}") from None
             label = f"cutoff given as {cutoff.strip()}" + (f" for {model}" if model else "")
-            return Target(when, label, model)
+            return Target(when, label, model, margin=days)
         if model:
             info, note = self._resolve_model(model)
             assert info.knowledge is not None
             source = self.registry.source.split(" (")[0]
             label = f"training cutoff of {info.id}, from {source}"
-            return Target(info.knowledge, label, info.id, note)
+            return Target(info.knowledge, label, info.id, note, margin=days)
         alternatives = f", or {needs}" if needs else ""
         raise SinceCutoffError(
             "pass `model` (your model id, e.g. 'claude-sonnet-4-5') or `cutoff` (your training "
@@ -603,12 +671,13 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
         f"# {project.root.name}: {f'{checked} of {total}' if skipped else total} checked "
         f"(versions from {project.version_source})",
         "",
-        f"- Cutoff {target.cutoff.isoformat()} ({target.label})",
+        f"- Cutoff {target.cutoff.isoformat()} ({target.label}){target.compared_from}",
     ]
     if target.note:
         out.append(f"- {target.note}")
     out += [f"- Warning: {w}" for w in project.warnings]  # (`only` gets its own line below)
     out += [f"- Warning: {unread_warning(p)}" for p in scan.packages if p.unread]
+    out += [f"- Warning: {reexport_warning(p)}" for p in scan.packages if p.reexported]
     if scan.stale:
         out.append(f"- Warning: {stale_warning(scan.stale)}")
     out.append(
@@ -623,15 +692,18 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
 
     tail: list[str] = []
     if new:
+        within = [p for p in new if scan.target.released_within_margin(p)]
+        when = f"after the cutoff or within {scan.target.margin} days before it" if within else ""
         tail += [
             "",
-            "## First released after the cutoff (so they may be missing from your training data)",
+            f"## First released {when or 'after the cutoff'} (so they may be missing from your "
+            "training data)",
             "",
         ]
         tail += _capped(
             [
                 f"- {p.name} {p.locked or ''} ({p.locked_date or 'date unknown'})"
-                + (f"; {p.reason}" if p.cutoff_version and p.reason else "")
+                + (f"; {p.reason}" if (p.cutoff_version or p in within) and p.reason else "")
                 for p in new
             ]
         )
@@ -673,9 +745,17 @@ def _used_section(scan: ScanResult) -> list[str]:
     imports; the bullet before it says how many APIs there are."""
     used = scan.used_apis()
     imported = [
-        f"- Your code imports {p.name} {p.locked}, first released "
-        f"{p.first_released or 'after the cutoff'}: released after your reported training "
-        "cutoff, so its whole API may be missing from your training data."
+        (
+            f"- Your code imports {p.name} {p.locked}, first released {p.first_released}: "
+            f"within {scan.target.margin} days before your reported training cutoff, so little "
+            "or none of its API may be in your training data."
+        )
+        if scan.target.released_within_margin(p)
+        else (
+            f"- Your code imports {p.name} {p.locked}, first released "
+            f"{p.first_released or 'after the cutoff'}: released after your reported training "
+            "cutoff, so its whole API may be missing from your training data."
+        )
         for p in scan.new_imported()
     ]
     if not used:
@@ -797,12 +877,18 @@ def _placeholder_note(old: Release, new: Release) -> str:
 
 
 def _newer_than_cutoff(name: str, latest: Release, target: Target) -> str:
+    before = (
+        f"{target.compare_date.isoformat()}, {target.margin} days before the cutoff "
+        f"{target.cutoff.isoformat()}"
+        if target.margin
+        else target.cutoff.isoformat()
+    )
     return (
         f"# {name}: no release on or before the cutoff\n\n"
-        f"{name} had no release on or before {target.cutoff.isoformat()} "
+        f"{name} had no release on or before {before} "
         f"({target.label}); {latest.version} was published {_day(latest)}. Its whole API was "
-        "released after your reported training cutoff, so it may be missing from your training "
-        "data: read its documentation or source before using it.\n"
+        "released after, or shortly before, your reported training cutoff, so it may be "
+        "missing from your training data: read its documentation or source before using it.\n"
     )
 
 

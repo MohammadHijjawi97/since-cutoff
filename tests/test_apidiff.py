@@ -12,6 +12,7 @@ from since_cutoff.apidiff import (
     HINT_DOCSTRING,
     HINT_PARAM_DOC,
     HINT_WARNING,
+    KIND_CHANGED,
     MOVED,
     PARAM_REMOVED,
     PARAM_REQUIRED,
@@ -530,3 +531,102 @@ def test_a_diff_cached_before_import_paths_is_recomputed(cache: DiskCache, toyli
     scan = engine.diff_package(PackageScan("toylib", "2.0", "test", True, cutoff_version="1.0"))
     assert "stale" not in {c.name for c in scan.changes}
     assert scan.changes and all(c.import_paths for c in scan.changes)
+
+
+def test_an_object_the_new_release_only_re_exports_is_compared_inside(tmp_path: Path):
+    """griffe compares an object with an alias to it by resolving the alias, then stops: the
+    old object's path is already among the paths it has seen. A field the target renamed went
+    unreported (mcp 2.2's ``RegistrationRequest = OAuthClientMetadata`` lost ``root``; mcp 2.3's
+    ``mcp.types.Tool``, from ``from mcp_types import *``, spells ``inputSchema``
+    ``input_schema``). Such a pair is compared on its own, under the re-exporting path."""
+    old = write_tree(
+        tmp_path / "a",
+        {
+            "pkg/__init__.py": "",
+            "pkg/types.py": "class Tool:\n    name: str\n    inputSchema: dict\n",
+        },
+    )
+    new = write_tree(
+        tmp_path / "b",
+        {
+            "pkg/__init__.py": "",
+            "pkg/_impl.py": "class Tool:\n    name: str\n    input_schema: dict\n",
+            "pkg/types.py": "from pkg._impl import Tool\n",
+        },
+    )
+    raw = diff_sources("pkg", "1.0", old, "2.0", new, ["pkg"])
+    changes = [APIChange.from_dict(c) for c in raw]
+    assert {(c.kind, c.path) for c in changes} == {(REMOVED, "pkg.types.Tool.inputSchema")}
+
+
+@pytest.mark.parametrize("where", ["sibling", "public", "private"])
+def test_a_parameter_a_re_exported_callable_lost_is_reported_under_the_old_path(
+    tmp_path: Path, where: str
+):
+    """griffe hangs a parameter breakage on the new callable, whose path is the target's: in
+    another distribution read next to the release (``pkg_types.Client.send``, from ``from
+    pkg_types import *``), where no lookup of this package reaches, or in another module of it.
+    The old callable is found through the name the old release defined, and the change is
+    reported under it; a re-exported function is compared by its signature (griffe's
+    ``find_breaking_changes`` compares members, of which a function has none)."""
+    old = write_tree(
+        tmp_path / "a",
+        {
+            "pkg/__init__.py": "",
+            "pkg/types.py": (
+                "class Client:\n    def send(self, a, b):\n        pass\n\n"
+                "def go(a, b):\n    pass\n"
+            ),
+        },
+    )
+    impl = "class Client:\n    def send(self, a):\n        pass\n\ndef go(a):\n    pass\n"
+    roots: list[Path] = []
+    if where == "sibling":
+        files = {"pkg/__init__.py": "", "pkg/types/__init__.py": "from pkg_types import *\n"}
+        roots = [write_tree(tmp_path / "s", {"pkg_types/__init__.py": impl})]
+    else:
+        module = "impl" if where == "public" else "_impl"
+        files = {
+            "pkg/__init__.py": "",
+            f"pkg/{module}.py": impl,
+            "pkg/types.py": f"from pkg.{module} import Client, go\n",
+        }
+    new = write_tree(tmp_path / "b", files)
+    raw = diff_sources("pkg", "1.0", old, "2.0", new, ["pkg"], new_roots=roots)
+    changes = [APIChange.from_dict(c) for c in raw]
+    assert {(c.kind, c.path, c.parameter) for c in changes} == {
+        (PARAM_REMOVED, "pkg.types.Client.send", "b"),
+        (PARAM_REMOVED, "pkg.types.go", "b"),
+    }
+    by_path = {c.path: c for c in changes}
+    send = by_path["pkg.types.Client.send"]
+    assert (send.owner, send.old_signature, send.new_signature) == (
+        "Client",
+        "send(self, a, b)",
+        "send(self, a)",
+    )
+    # Reached under the old name and, inside the package, where it is defined now.
+    inside = {"pkg.impl.Client.send"} if where == "public" else set()
+    assert set(send.import_paths) == {"pkg.types.Client.send"} | inside
+    assert by_path["pkg.types.go"].old_signature == "go(a, b)"
+
+
+def test_a_re_export_of_another_kind_is_a_kind_change(tmp_path: Path):
+    """The new release imports a function where the old one defined a class: griffe stops at
+    the alias (as for every re-exported pair), so the pair is compared here, kind first."""
+    old = write_tree(
+        tmp_path / "a", {"pkg/__init__.py": "", "pkg/api.py": "class Tool:\n    pass\n"}
+    )
+    new = write_tree(
+        tmp_path / "b",
+        {
+            "pkg/__init__.py": "",
+            "pkg/_impl.py": "def Tool():\n    pass\n",
+            "pkg/api.py": "from pkg._impl import Tool\n",
+        },
+    )
+    raw = diff_sources("pkg", "1.0", old, "2.0", new, ["pkg"])
+    changes = [APIChange.from_dict(c) for c in raw]
+    assert [(c.kind, c.path, c.old_kind, c.new_kind) for c in changes] == [
+        (KIND_CHANGED, "pkg.api.Tool", "class", "function")
+    ]

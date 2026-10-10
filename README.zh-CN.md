@@ -36,17 +36,18 @@ pipx install since-cutoff    # 或：pip install since-cutoff
 
 ## 快速开始
 
-[示例项目](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)调用了 `client.messages.create`，并锁定 anthropic 1.8.0。在 Claude Sonnet 4.5 的训练截止日期，anthropic 的最新版本是 0.60.0，它的 `create` 还接受 `temperature`；1.8.0 遇到这个参数会抛出 `TypeError`。`scan` 的输出（只保留 anthropic 部分）：
+[示例项目](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)调用了 `client.messages.create`，并锁定 anthropic 1.8.0。在 Claude Sonnet 4.5 的训练截止日期，anthropic 的最新版本是 0.60.0，它的 `create` 还接受 `temperature`；1.8.0 遇到这个参数会抛出 `TypeError`。`scan` 的输出（只保留 anthropic 部分；它从 0.56.0 开始对比，即截止日期前 30 天发布的最新版本：模型对截止日期前几周的了解最少）：
 
 ```console
 $ uvx since-cutoff scan --model anthropic:claude-sonnet-4-5
 Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31)
 
-huggingface-hub 0.34.3 -> 2.0.0 (0.34.3 was the latest release at the cutoff; pyproject.toml pins
-  2.0.0)
+huggingface-hub 0.33.1 -> 2.0.0 (0.33.1 was the latest release 30 days before the cutoff;
+  pyproject.toml pins 2.0.0)
   ...
 
-anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyproject.toml pins 1.8.0)
+anthropic 0.56.0 -> 1.8.0 (0.56.0 was the latest release 30 days before the cutoff; pyproject.toml
+  pins 1.8.0)
   Messages.create: temperature, top_k and top_p were removed                          uses this API
     app/main.py   calls create
     Note: `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword
@@ -63,10 +64,10 @@ anthropic 0.60.0 -> 1.8.0 (0.60.0 was the latest release at the cutoff; pyprojec
 接着，`since-cutoff sync` 写入这两条说明。它以 diff 的形式显示区块，并询问 `Write this to AGENTS.md? [y/N]`（`--yes` 不询问直接写入；`--dry-run` 只显示 diff）。对于示例项目，区块的结尾是：
 
 ```markdown
-**anthropic 1.8.0** (0.60.0 at the cutoff)
+**anthropic 1.8.0** (compared from 0.56.0)
 - `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
-**huggingface-hub 2.0.0** (0.34.3 at the cutoff)
+**huggingface-hub 2.0.0** (compared from 0.33.1)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
 <!-- since-cutoff:end -->
 ```
@@ -150,7 +151,7 @@ uvx since-cutoff run
 
 `scan` 在示例项目上的完整输出：
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="在示例项目上运行 since-cutoff scan --model anthropic:claude-sonnet-4-5。你的代码用到了 2 个在 claude-sonnet-4-5 训练截止日期（2025-07-31）之后发生变化的 API。huggingface-hub 0.34.3 -> 2.0.0：app/main.py 用到的 hf_hub_download 的签名中不再有 force_filename、local_dir_use_symlinks、resume_download 和 proxies；它的说明标为 [diff]，一行 Runtime 提示指出 2.0.0 的源码仍会处理这些参数，所以传入它们的调用可能会带着警告运行。anthropic 0.60.0 -> 1.8.0：app/main.py 调用的 Messages.create 不再接受 temperature、top_k 和 top_p；它的说明标为 [diff]。2 条说明可以写入 AGENTS.md；uses this API 和 [diff] 的含义；代码没有用到的另外 7 个包中的 323 个变更。"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="在示例项目上运行 since-cutoff scan --model anthropic:claude-sonnet-4-5。你的代码用到了 2 个在 claude-sonnet-4-5 训练截止日期（2025-07-31）之后发生变化的 API。huggingface-hub 0.33.1 -> 2.0.0：app/main.py 用到的 hf_hub_download 的签名中不再有 force_filename、local_dir_use_symlinks、resume_download 和 proxies；它的说明标为 [diff]，一行 Runtime 提示指出 2.0.0 的源码仍会处理这些参数，所以传入它们的调用可能会带着警告运行。anthropic 0.56.0 -> 1.8.0：app/main.py 调用的 Messages.create 不再接受 temperature、top_k 和 top_p；它的说明标为 [diff]。2 条说明可以写入 AGENTS.md；uses this API 和 [diff] 的含义；代码没有用到的另外 7 个包中的 496 个变更。"></p>
 
 这两个 API 都是“uses this API”；如果某个文件传了 `resume_download=True` 或 `temperature=0.2`，它们就会变成“old form”。`scan -v` 列出用到某个 API 的所有文件（默认显示 3 个），`scan --all` 会逐个包列出其余所有变更。`scan --json` 和 `.since-cutoff/results.json` 的 `used_apis` 中有同样的内容（每个 API、用到它的位置、它的变更和说明，以及说明的标签、适用的版本和检查了什么），`.since-cutoff/report.md` 以“Used by your code”开头。
 
@@ -253,11 +254,11 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 如果没有任何设置指定模型，它会使用 Claude Code 的默认模型，并明确说明这一点。它只读取这些文件中的模型字段；遇到无法识别的模型名称时会停止运行，并在提示中指出是哪个设置。Agent 通过其他服务（GitHub Copilot、Amazon Bedrock、Vertex AI）使用的模型，会按开发它的厂商来命名，因此 `run` 调用的是该厂商的 API（`openai:` 需要 `OPENAI_API_KEY`）。`sync` 会沿用区块写入时的模型，不管你的 Agent 现在用的是哪个。
 
-训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
+训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`--cutoff-margin 30`（默认值；也可以用 `SINCE_CUTOFF_CUTOFF_MARGIN` 设置）从截止日期前 30 天或更早发布的最新版本开始对比，因为模型对截止日期前几周的了解最少；`--cutoff-margin 0` 则从截止日期当天的最新版本开始对比。模型行会同时显示这两个日期。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
 
 ## 常见问题
 
-**训练截止日期是不是模型从那天起就对某个库一无所知的日期？** 不是。since-cutoff 只用截止日期来选一个对比点：对每个依赖，取那一天或之前发布的最新版本，再把它的公开 API 与你锁定的版本对比。模型对截止日期前几个月的内容掌握得不好，也可能知道截止日期之后发布的版本，所以扫描结果可能列出模型本来就会用对的变更，也可能漏掉它会写错的变更。模型是否会写旧 API，由 `run` 来测量。日期来自 [models.dev](https://models.dev)；`since-cutoff models <名称>` 会把每个模型的截止日期和发布日期并排列出，两者相差数月（claude-sonnet-4-5：截止 2025-07-31，发布于 2025-09-29）。详见[训练截止日期的用途](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#训练截止日期的用途)。
+**训练截止日期是不是模型从那天起就对某个库一无所知的日期？** 不是。since-cutoff 只用截止日期来选一个对比点：对每个依赖，默认取那一天至少 30 天之前发布的最新版本，再把它的公开 API 与你锁定的版本对比（`--cutoff-margin 0` 恢复原来的行为：取截止日期当天或之前发布的最新版本）。模型对截止日期前几个月的内容掌握得不好，也可能知道截止日期之后发布的版本，所以扫描结果可能列出模型本来就会用对的变更，也可能漏掉它会写错的变更。模型是否会写旧 API，由 `run` 来测量。日期来自 [models.dev](https://models.dev)；`since-cutoff models <名称>` 会把每个模型的截止日期和发布日期并排列出，两者相差数月（claude-sonnet-4-5：截止 2025-07-31，发布于 2025-09-29）。详见[训练截止日期的用途](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#训练截止日期的用途)。
 
 **什么内容会被发送到哪里？** `scan`、`sync`、`status`、MCP 服务器、GitHub Action 和 pre-commit 钩子只读取 PyPI（元数据和 wheel 文件）和 models.dev，不向任何模型发送任何内容。`run` 会向你选择的模型服务商发送提示词：包名、版本、有变更 API 的公开签名和文档字符串、生成的任务，以及（为了写说明）模型自己的回答；绝不会发送你的源代码。哪些文件用到了有变更的 API，会显示在终端和 `.since-cutoff/` 中，只有你主动发送时才会传到别处：用 `--markdown` 生成的 CI 摘要，或调用了 MCP 工具 `project_changes` 的 Agent。没有遥测。详见[它会运行、发送和保存什么](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#它会运行发送和保存什么)和 [PRIVACY.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/PRIVACY.md)（英文）。
 
@@ -451,6 +452,7 @@ jobs:
 | `working-directory` | `.` | 项目目录 |
 | `only`、`exclude` | | 逗号分隔的 PyPI 包名 |
 | `cutoff` | | 覆盖训练截止日期（`YYYY-MM` 或 `YYYY-MM-DD`） |
+| `cutoff-margin` | | 从截止日期前这么多天发布的最新版本开始对比（since-cutoff 的默认值是 30；`0` 表示从截止日期当天算起） |
 | `fail-on-changes` | `false` | 有依赖在截止日期之后改了 API 时，让这一步失败 |
 | `check-notes` | `false` | 同时运行 `since-cutoff sync --check`（不写入任何内容），当 AGENTS.md / CLAUDE.md 中的说明已过时或区块被手动修改过时，让任务失败；说明沿用写入时的模型，`model`（和 `cutoff`）用于还没有区块的项目 |
 | `step-summary` | `true` | 把 Markdown 摘要加到任务摘要（job summary）中 |
@@ -572,20 +574,20 @@ AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明�
 - “Your code uses”（你的代码用到了）是逐个文件的静态名称匹配：导入（包括重新导出的名称）、调用、属性读取和关键字参数。它不追踪 `getattr` 这类动态访问，目前只指出文件，不指出行号（[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)）。变为必需、仅限关键字或仅限位置的参数，目前总是显示为“uses this API”，从不显示为“old form”。
 - 只有当库自己的弃用说明明确给出替代项时，说明才会写出替代项。只出现在迁移指南里的建议（anthropic 的 [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md) 建议对仍接受 `temperature` 的旧模型使用 `extra_body`）不会出现在说明中。
 - 探测的是破坏性变更中按优先级排序的一个**样本**（你的代码已经用到的符号优先），而不是全部。
-- “对照版本”指截止日期当天或之前发布的最新版本。模型对最近的版本了解得更少，所以实际的过时可能开始得更早。
+- “对照版本”指在截止日期至少 30 天之前发布的最新版本（`--cutoff-margin`；`0` 表示从截止日期当天算起）。模型对截止日期前几周的了解最少，所以实际的过时可能开始得更早；这个余量只是对“早多少”的一个估计。
 - 留出任务是针对同一个变更的改写：它们能说明一条说明修正了*这个*变更，不能说明模型整体变强了。
 
 ### 训练截止日期的用途
 
-截止日期只用来选定一个对照点，并不代表模型记住了什么。since-cutoff 从 models.dev 获取这个日期（或使用 `--cutoff`）；只写到月份时指该月的最后一天（`2025-07` 即 2025 年 7 月 31 日）。对每个依赖，它取在这一天或之前上传的最新正式版本（跳过被撤回（yanked）的版本；只有当这个包到那时还没有任何正式版本时才用预发布版本，从不使用开发版本），再把这个版本的公开 API 与你锁定的版本做对比。对比结果是一份候选清单：模型的训练数据大概率不包含的 API 变更。
+截止日期只用来选定一个对照点，并不代表模型记住了什么。since-cutoff 从 models.dev 获取这个日期（或使用 `--cutoff`）；只写到月份时指该月的最后一天（`2025-07` 即 2025 年 7 月 31 日）。它把这个日期往前推一个余量（`--cutoff-margin`，默认 30 天），再对每个依赖取在得到的那一天或之前上传的最新正式版本（跳过被撤回（yanked）的版本；只有当这个包到那时还没有任何正式版本时才用预发布版本，从不使用开发版本），再把这个版本的公开 API 与你锁定的版本做对比。对比结果是一份候选清单：模型的训练数据大概率不包含的 API 变更。
 
-这个日期决定三件事：
+这个对照日期决定三件事：
 
 - 哪些包需要对比：锁定版本不比对照版本新的包没有可对比的内容；在这个日期之后才首次发布的包会被列为新包；
 - 在 `run` 中，对照版本一侧做类型检查时，该版本自身的依赖取哪些版本（每个依赖要求在那一天允许的最新版本）；
 - `run` 中每次探测的“旧”一侧：一个回答如果在对照版本上有效、在你的版本上无效，并且错误落在有变更的 API 上，就记为“过时”（stale），而不是“写错”（wrong）。
 
-模型可能了解其标称截止日期之后的某个版本，也可能不了解截止日期前不久的版本，所以扫描结果可能列出模型其实已经能处理的变更，也可能漏掉一些它处理不了的变更。模型是否真的会写出旧 API，只有 `run` 能说明：它在不给工具、只告诉模型项目锁定了哪个版本的情况下直接询问模型。
+模型可能了解其标称截止日期之后的某个版本，也可能不了解截止日期前不久的版本，所以扫描结果可能列出模型其实已经能处理的变更，也可能漏掉一些它处理不了的变更。余量针对的是后一种情况；`--cutoff-margin 0` 从截止日期当天算起。模型是否真的会写出旧 API，只有 `run` 能说明：它在不给工具、只告诉模型项目锁定了哪个版本的情况下直接询问模型。
 
 ## 与其他工具的比较
 

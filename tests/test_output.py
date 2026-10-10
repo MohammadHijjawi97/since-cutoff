@@ -423,7 +423,9 @@ def test_a_git_reference_is_named_in_the_skip_reason(tmp_path) -> None:
         deps["local-lib"].non_pypi_reason == "installed from file:///srv/local-lib, not from PyPI"
     )
     engine = Engine(Settings(), store=DiskCache(tmp_path / "c"), llm_cache=DiskCache(tmp_path))
-    scan = engine._scan_versions(deps["dacvae"], date(2025, 1, 1), load_project(tmp_path))
+    scan = engine._scan_versions(
+        deps["dacvae"], ModelTarget.cutoff_only(date(2025, 1, 1), margin=0), load_project(tmp_path)
+    )
     assert scan.status == SKIPPED and "secret" not in (scan.reason or "")
 
 
@@ -705,9 +707,10 @@ def test_a_package_with_only_prereleases_existed_at_the_cutoff(cache) -> None:
     project = load_project(root)
     deps = {d.name: d for d in project.dependencies}
     engine = Engine(Settings(), store=cache, llm_cache=cache, pypi=pypi)
-    parser = engine._scan_versions(deps["sqlgpt-parser"], cutoff, project)
+    at_cutoff = ModelTarget.cutoff_only(cutoff, margin=0)
+    parser = engine._scan_versions(deps["sqlgpt-parser"], at_cutoff, project)
     assert parser.status == KNOWN  # not "first released after the cutoff"
-    beta = engine._scan_versions(deps["beta-only"], cutoff, project)  # not "no final releases"
+    beta = engine._scan_versions(deps["beta-only"], at_cutoff, project)  # not "no final releases"
     assert (beta.locked, beta.cutoff_version, beta.status) == ("0.62b1", "0.51b0", CHANGED)
 
 

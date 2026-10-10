@@ -162,7 +162,7 @@ def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     )
     assert _unwrapped(console.rstrip().split("\n\n")[-1]) == ready
     # The block `sync` writes has the same bullet, under the package's line.
-    assert f"**anthropic 1.8.0** (0.60.0 at the cutoff)\n- {note}\n" in text
+    assert f"**anthropic 1.8.0** (compared from 0.56.0)\n- {note}\n" in text
     # One command that needs no API key.
     assert "```bash\nuvx since-cutoff scan\n```" in first
 
