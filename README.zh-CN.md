@@ -9,7 +9,7 @@
 
 **你的编程助手的训练数据截止于你的依赖最新版本发布之前，所以它可能写出你锁定的版本已经不再接受的调用。since-cutoff 指出你的代码在哪里用到了在模型训练截止日期之后发生变化的 API，并写出简短的说明，帮助你的助手避开旧写法。**
 
-since-cutoff 是一个面向 Python 项目的命令行工具和 MCP 服务器。`scan` 读取你的 lockfile，为每个依赖取你的编程模型训练截止日期当天或之前发布的最新版本，静态地把这个版本的公开 API 与你锁定的版本对比，并指出你的代码用到了哪些有变更的 API、在哪里用到，为每个 API 给出一条说明。`sync` 把这些说明写进 AGENTS.md 或 CLAUDE.md，并让它们与 lockfile 保持同步；说明过时时，`status`、pre-commit 钩子和 GitHub Action 会提醒你。`run`（可选）测量你的模型实际会写错哪些变更，以及这些说明是否有用。只有 `run` 会调用模型。
+since-cutoff 是一个面向 Python 项目的命令行工具和 MCP 服务器。`scan` 读取你的 lockfile，为每个依赖默认取你的编程模型训练截止日期至少 30 天之前发布的最新版本，静态地把这个版本的公开 API 与你锁定的版本对比，并指出你的代码用到了哪些有变更的 API、在哪里用到，为每个 API 给出一条说明。`sync` 把这些说明写进 AGENTS.md 或 CLAUDE.md，并让它们与 lockfile 保持同步；说明过时时，`status`、pre-commit 钩子和 GitHub Action 会提醒你。`run`（可选）测量你的模型实际会写错哪些变更，以及这些说明是否有用。只有 `run` 会调用模型。
 
 [![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -80,7 +80,7 @@ anthropic 0.56.0 -> 1.8.0 (0.56.0 was the latest release 30 days before the cuto
 uvx since-cutoff scan
 ```
 
-它会检测你的编程模型（也可以用 `--model` 指定），读取你的 lockfile，为每个依赖取模型训练截止日期当天或之前发布的最新版本，并静态地把这个版本的公开 API 与你锁定的版本对比：不运行任何包代码。截止日期只用来决定看哪些变更，并不代表模型记住了什么。你的模型是否真的会写错这些 API、说明是否有用，由 [`since-cutoff run`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#测量你的模型) 来测量；它会调用你的模型，是可选的。
+它会检测你的编程模型（也可以用 `--model` 指定），读取你的 lockfile，为每个依赖默认取模型训练截止日期至少 30 天之前发布的最新版本，并静态地把这个版本的公开 API 与你锁定的版本对比：不运行任何包代码。截止日期只用来决定看哪些变更，并不代表模型记住了什么。你的模型是否真的会写错这些 API、说明是否有用，由 [`since-cutoff run`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#测量你的模型) 来测量；它会调用你的模型，是可选的。
 
 ## 适用场景，以及它不做什么
 
@@ -127,7 +127,7 @@ uvx since-cutoff scan
 
 since-cutoff 针对这个问题做三件事：
 
-1. **`scan`**：为每个依赖找出模型截止日期当天或之前发布的最新版本，把它的公开 API 与你锁定的版本做对比，并指出你的代码用到了哪些有变更的 API、在哪里用到，为每个 API 给出一条说明。不调用模型，不需要 API key。
+1. **`scan`**：为每个依赖找出默认在模型截止日期至少 30 天之前发布的最新版本，把它的公开 API 与你锁定的版本做对比，并指出你的代码用到了哪些有变更的 API、在哪里用到，为每个 API 给出一条说明。不调用模型，不需要 API key。
 2. **`sync`**：先给你看 diff，再把这些说明写进 AGENTS.md（或 CLAUDE.md）中一个带标记的区块，并让它们与你的 lockfile 保持同步；说明过时时，`sync --check` 和 `status` 会提醒 CI、pre-commit 和你的 Agent。每条说明都根据 API 对比结果写成，并带有一个标签，表明检查了什么。不调用模型。
 3. **`run`**（可选）：在不给工具、不给文档的情况下，让模型完成需要用到这些变更 API 的简短编程任务，再用类型检查器针对*两个*版本分别给每个回答打分：过时（stale）、写错（wrong）、已弃用（deprecated）或正确（correct）。全程没有 LLM 当评判。它为每个失败项写一条说明；模型写的说明只有在其中的示例能通过你所用版本的类型检查时才保留；然后在留出任务（held-out）上，分别在无说明和有说明的情况下重新测试模型。
 
@@ -159,7 +159,7 @@ uvx since-cutoff run
 
 `since-cutoff sync`（0.4.0 及以后）把 `scan` 显示的说明写进一个带标记的区块：写在 AGENTS.md 中；只有 CLAUDE.md 时写在 CLAUDE.md 中；已经有区块的，就更新那个区块（`--target` 可以指定其他文件）。它会显示一个统一格式的 diff，并询问 `Write this to AGENTS.md? [y/N]`；`--yes` 不询问直接写入；没有可以询问的终端时，它什么也不写。区块以外的文本逐字节保持不变（包括 CRLF 换行），`since-cutoff unapply` 可以移除这个区块。示例项目的区块见[快速开始](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#快速开始)。“Runtime:”这条提示不写进区块：无论如何，建议（“do not pass them”，不要传这些参数）都是一样的。
 
-修改 lockfile 或代码之后，再运行一次 `sync`。它会为代码新用到的 API 添加说明，重新检查升级过的包；当某个包不再是依赖、不再比截止日期时的版本新，或者你的代码不再用到它有变更的 API 时，删除这个包的说明，并说明原因。它会沿用区块写入时的模型和截止日期（这样，Agent 使用其他模型的同事就不会来回改写它），除非你传入 `--model` 或 `--cutoff`；`--model a,b` 取它们中最早的截止日期。没有任何变化时，它什么也不写，文件的字节和修改时间都保持不变。
+修改 lockfile 或代码之后，再运行一次 `sync`。它会为代码新用到的 API 添加说明，重新检查升级过的包；当某个包不再是依赖、不再比对照版本新，或者你的代码不再用到它有变更的 API 时，删除这个包的说明，并说明原因。它会沿用区块写入时的模型和截止日期（这样，Agent 使用其他模型的同事就不会来回改写它），除非你传入 `--model` 或 `--cutoff`；`--model a,b` 取它们中最早的截止日期。没有任何变化时，它什么也不写，文件的字节和修改时间都保持不变。
 
 | 命令 | 作用 | 退出码 |
 |---|---|---|
@@ -337,7 +337,7 @@ huggingface-hub 那条说明并不完全准确：`resume_download` 是在 1.0 �
 
 | 工具 | 回答什么 |
 |---|---|
-| `api_changes(package, model, symbol=...)` | 一个库从模型截止日期时的版本到最新（或指定）版本之间改了什么，破坏性变更排在最前 |
+| `api_changes(package, model, symbol=...)` | 一个库从默认在模型截止日期至少 30 天之前发布的版本到最新（或指定）版本之间改了什么，破坏性变更排在最前 |
 | `project_changes(project_dir, model)` | 对项目的每个依赖按锁定版本做同样的检查，从你的代码用到的有变更 API 开始：每个 API 列出用到它的文件（最多 3 个）、它的说明、运行时提示，以及相似但未确认为替代项的名称 |
 | `model_cutoff(model)` | 模型的训练截止日期，来自 [models.dev](https://models.dev) |
 
@@ -512,7 +512,7 @@ since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 
 | 结果 | 含义 |
 |---|---|
-| **stale**（过时） | 代码在对照版本（模型截止日期时的版本）上有效、在你的版本上无效，并且错误涉及一个有变更的 API |
+| **stale**（过时） | 代码在对照版本（默认为模型截止日期至少 30 天之前发布的最新版本）上有效、在你的版本上无效，并且错误涉及一个有变更的 API |
 | **wrong**（写错） | 对你的版本无效，但不能用变更来解释（臆造或误用了 API） |
 | **deprecated**（已弃用） | 有效，但用到了在你的版本中标记为 `@deprecated` 的 API |
 | **correct**（正确） | 对你的版本有效，并且确实用到了变更后的 API |
@@ -530,7 +530,7 @@ since-cutoff 从不单独使用“verified”（已验证）这个词。每条�
 
 | 标签 | 检查了什么 | 没有检查什么 |
 |---|---|---|
-| `[diff]` | 这个变更出现在对两个版本公开 API 的静态对比（griffe）中：模型训练截止日期当天或之前发布的最新版本，以及你的项目锁定的版本。源码只被读取，不被导入。只有 `[diff]` 时，说明不会给出任何替代项：它转述库自己的弃用说明中的话（“there is no replacement for `resume_download`”，没有替代项），或者说明 since-cutoff 在其中没有找到替代项。 | 行为，以及调用是否仍能运行：锁定的版本可能仍会接受一个已移除的参数并发出警告，比如 huggingface-hub 2.0.0 对 `resume_download` 就是这样。当锁定版本的源码仍会处理某个参数时，终端、report.md、MCP 工具和 JSON 会加上一行“Runtime:”；区块中不写，因为建议是一样的。你的模型是否会写错。 |
+| `[diff]` | 这个变更出现在对两个版本公开 API 的静态对比（griffe）中：默认在模型训练截止日期至少 30 天之前发布的最新版本，以及你的项目锁定的版本。源码只被读取，不被导入。只有 `[diff]` 时，说明不会给出任何替代项：它转述库自己的弃用说明中的话（“there is no replacement for `resume_download`”，没有替代项），或者说明 since-cutoff 在其中没有找到替代项。 | 行为，以及调用是否仍能运行：锁定的版本可能仍会接受一个已移除的参数并发出警告，比如 huggingface-hub 2.0.0 对 `resume_download` 就是这样。当锁定版本的源码仍会处理某个参数时，终端、report.md、MCP 工具和 JSON 会加上一行“Runtime:”；区块中不写，因为建议是一样的。你的模型是否会写错。 |
 | `[diff + library]` | 同 `[diff]`，并且库自己的弃用说明（docstring、docstring 中某个参数的条目、`@deprecated` 消息或 `warnings.warn` 文本，来自旧版本；对于弃用，则来自锁定版本）明确给出了替代项（“Use `stop` instead”），而且这个名称在你锁定的版本中存在。只是作为建议提到某个名称的文字，会在 `[diff]` 下引用，不被当作替代项。 | 替代项的行为是否相同。 |
 | `[diff + move checked]` | 同 `[diff]`，并且就能统计的方面而言，新路径上的对象就是同一个对象：类或模块至少保留了旧对象一半的公开名称，函数保留了它的参数，值保持不变。 | 行为。 |
 | `[diff + metadata]` | 旧版本的 Requires-Dist（其 wheel 的 METADATA）列出了一个锁定的版本不再列出的库，而公开 API 中原先用到该库类型的位置（参数、返回类型、属性、基类、重新导出）改为用到锁定的版本所依赖的另一个库的类型，或它自带的旧库副本的类型，旧库的类型一个也没有留下：openai 3.x、anthropic 1.8、huggingface-hub 2.0 和 mcp 2.2 在原先接受 `httpx` 对象的地方改为接受 `httpx2` 对象。 | 行为：锁定的版本是否仍接受旧库的对象（根据各自的源码，openai 3 会转换其中一部分，anthropic 1.8 会抛出 `TypeError`）。终端、report.md、MCP 工具和 JSON 会加上一行“Installed:”（你的项目，包括其虚拟环境，是否仍有旧库）和一行“Runtime:”，指出锁定版本的源码在哪里仍提到它。 |
@@ -555,7 +555,7 @@ since-cutoff 从不单独使用“verified”（已验证）这个词。每条�
 
 **在 `run` 中，一个回答算作正确**的条件是：它导入了这个包，用到了有变更的 API，并且在你的版本上没有归属于该包的“知识”错误（未知的名称、导入或参数；缺少必需参数；参数个数错误）。纯粹的类型严格性问题会被忽略。不会运行任何回答。
 
-AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明所适用的版本和截止日期时的版本。其余信息在 `scan --json` 和 `results.json` 中：`used_apis[]`（你的代码用到的每个有变更 API、用到的位置、它的变更、它的替代项及来源，以及它的说明，含 `tags`、`applies_to` 和 `checks`），以及 `run` 之后的 `notes_detail[]`（每条说明，包括模型写的示例和留出任务测试测得的结果；`verified` 仍然保留，含义与 `checks.example_type_checks` 相同）。
+AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明所适用的版本和对照版本。其余信息在 `scan --json` 和 `results.json` 中：`used_apis[]`（你的代码用到的每个有变更 API、用到的位置、它的变更、它的替代项及来源，以及它的说明，含 `tags`、`applies_to` 和 `checks`），以及 `run` 之后的 `notes_detail[]`（每条说明，包括模型写的示例和留出任务测试测得的结果；`verified` 仍然保留，含义与 `checks.example_type_checks` 相同）。
 
 ## 它会运行、发送和保存什么
 

@@ -64,7 +64,7 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    `.py`/`.pyi` files are extracted) and loaded *statically* with
    [griffe](https://mkdocstrings.github.io/griffe/). A module the pinned release ships
    compiled, with no `.py` source and no `.pyi` stub (an extension module in a wheel, a Cython
-   `.pyx` in an sdist), cannot be read this way: when it had a source or a stub at the cutoff,
+   `.pyx` in an sdist), cannot be read this way: when it had a source or a stub in the comparison release,
    it is not reported as removed, nor is what it defines or what a readable module still
    imports from it, and the scan warns that changes to it are not reported. A name a readable
    module no longer imports from it is still removed. A top-level package whose `__init__` is
@@ -74,7 +74,7 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    A module that takes its names from another distribution with `from x import *` (mcp 2.3's
    `mcp/types/__init__.py` is `from mcp_types import *`, and its requirements pin mcp-types
    2.3.0) is compared with that distribution read next to the release, at the version the project
-   locks or, for the release at the cutoff, the newest its requirement allowed on the
+   locks or, for the comparison release, the newest its requirement allowed on the
    comparison date (a few hundred KB, under the same download limit and cache); its names are
    reported under the paths that re-export them (`mcp.types.Tool.inputSchema` was removed:
    mcp-types spells it `input_schema`), and so is what else changed in an object the release
@@ -187,7 +187,7 @@ Each use is one of two **forms**:
 
 | form | meaning |
 |---|---|
-| **old form** | the code uses the API as the release at the cutoff allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
+| **old form** | the code uses the API as the comparison release allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
 | **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
 
 The terminal and the MCP tool `project_changes` show at most 3 files per API (`scan -v` shows
@@ -587,7 +587,7 @@ was checked, and nothing else is claimed:
 
 | tag | what was checked | what was not |
 |---|---|---|
-| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release on or before the model's training cutoff, and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
+| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release published at least 30 days before the model's training cutoff (by default), and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
 | `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
@@ -631,7 +631,7 @@ parameter; missing required argument; wrong number of arguments). Pure type-stri
 are ignored. No answer is executed.
 
 The block in AGENTS.md holds the bullets with their tags, and for each package the version its
-notes apply to and the release at the cutoff. The rest is in `scan --json` and `results.json`:
+notes apply to and the release they are compared from. The rest is in `scan --json` and `results.json`:
 `used_apis[]` (each changed API the code uses, where, its changes, its replacements with their
 source, and its note with `tags`, `applies_to` and `checks`) and, after `run`, `notes_detail[]`
 (each note with the model's example and what the held-out test measured; `verified` is kept,
