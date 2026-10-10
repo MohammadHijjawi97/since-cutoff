@@ -1041,6 +1041,68 @@ def test_a_typed_dict_from_outside_the_package_takes_any_keyword(tmp_path):
     assert diff(tmp_path / "base", old, new) == []
 
 
+def test_a_method_made_static_with_typed_kwargs_does_not_lose_self(tmp_path):
+    """``self`` and ``cls`` are no keywords: a method that became a static or a class method,
+    keeping its ``**kw: Unpack[_Opts]``, was reported as losing parameter ``self``. A key the
+    TypedDict of a method drops is still a removed parameter."""
+    opts = (
+        "from typing import TypedDict\nfrom typing_extensions import Unpack\n\n"
+        "class _Opts(TypedDict, total=False):\n    sep: str\n\n"
+    )
+    old = {
+        "pkg/__init__.py": opts + "class R:\n    def read(self, path, **kw: Unpack[_Opts]):\n"
+        "        pass\n"
+    }
+    static = {
+        "pkg/__init__.py": opts + "class R:\n    @staticmethod\n"
+        "    def read(path, **kw: Unpack[_Opts]):\n        pass\n"
+    }
+    assert diff(tmp_path, old, static) == []
+    classmethod_ = {
+        "pkg/__init__.py": opts + "class R:\n    @classmethod\n"
+        "    def read(cls, path, **kw: Unpack[_Opts]):\n        pass\n"
+    }
+    assert diff(tmp_path / "cls", old, classmethod_) == []
+    fewer = {"pkg/__init__.py": old["pkg/__init__.py"].replace("    sep: str\n", "    pass\n")}
+    assert found(diff(tmp_path / "key", old, fewer)) == {(PARAM_REMOVED, "pkg.R.read", "sep")}
+
+
+@pytest.mark.parametrize(
+    "keywords", ["extra_items=int", "closed=False"], ids=["extra_items", "open"]
+)
+def test_a_typed_dict_that_allows_other_keys_takes_any_keyword(tmp_path, keywords):
+    """PEP 728: a TypedDict with ``extra_items=`` or ``closed=False`` takes keys it does not
+    name, so a ``**kwargs`` unpacking it takes any keyword, as a bare one does; ``read(path,
+    verbose=1)`` is accepted. A closed one takes its keys only."""
+    old = {"pkg/__init__.py": "def read(path, sep=',', verbose=False):\n    pass\n"}
+    new = {
+        "pkg/__init__.py": "from typing_extensions import TypedDict, Unpack\n\n"
+        f"class _Opts(TypedDict, total=False, {keywords}):\n    sep: str\n\n"
+        "def read(path, **kw: Unpack[_Opts]):\n    pass\n"
+    }
+    assert diff(tmp_path, old, new) == []
+    closed = {"pkg/__init__.py": new["pkg/__init__.py"].replace(f", {keywords}", ", closed=True")}
+    assert found(diff(tmp_path / "closed", old, closed)) == {(PARAM_REMOVED, "pkg.read", "verbose")}
+
+
+def test_keys_of_a_typed_kwargs_the_new_signature_does_not_name_are_removed(tmp_path):
+    """The other way round: ``read(path, **kw: Unpack[_Opts])`` became ``read(path, sep=",")``.
+    The TypedDict's keys the new signature does not name are removed parameters, one by one,
+    in place of a ``**kw`` removal that names none of them."""
+    old = {
+        "pkg/__init__.py": "from typing import TypedDict\nfrom typing_extensions import Unpack\n\n"
+        "class _Opts(TypedDict, total=False):\n    sep: str\n    verbose: bool\n\n"
+        "def read(path, **kw: Unpack[_Opts]):\n    pass\n"
+    }
+    new = {"pkg/__init__.py": "def read(path, sep=','):\n    pass\n"}
+    assert found(diff(tmp_path, old, new)) == {(PARAM_REMOVED, "pkg.read", "verbose")}
+    none = {"pkg/__init__.py": "def read(path):\n    pass\n"}
+    assert found(diff(tmp_path / "none", old, none)) == {
+        (PARAM_REMOVED, "pkg.read", "sep"),
+        (PARAM_REMOVED, "pkg.read", "verbose"),
+    }
+
+
 # ------------------------------------------------------ inherited methods (audit item 3b)
 # pandas 2.3.1 -> 3.0.6: NDFrame.fillna lost ``method``. DataFrame inherits fillna, Series
 # overrides it (and lost ``method`` too).
@@ -1102,36 +1164,142 @@ def test_a_subclass_that_gets_the_method_from_another_base_is_not_a_path(tmp_pat
     assert fillna.occurrences == 2
 
 
+def test_a_parameter_change_to_a_private_bases_method_is_reported_on_the_public_subclass(
+    tmp_path,
+):
+    """A method a private class defines and a public one inherits: a change to it was never
+    reported (the owner's path is private), so ``df.fillna(method=...)`` on the public class
+    was never a use. It is reported under the shortest public inheritor, as a removal folded
+    over the subclasses is, with the inheritor as its owner."""
+    base = "class _Base:\n    def fillna(self, value=None, method=None):\n        pass\n"
+    frames = {
+        "pkg/__init__.py": "from pkg.frame import DataFrame\n__all__ = ['DataFrame']\n",
+        "pkg/frame.py": "from pkg._base import _Base\n\nclass DataFrame(_Base):\n    pass\n",
+    }
+    old = {**frames, "pkg/_base.py": base}
+    new = {**frames, "pkg/_base.py": base.replace(", method=None", "")}
+    (fillna,) = diff(tmp_path, old, new)
+    assert (fillna.kind, fillna.path, fillna.parameter, fillna.owner) == (
+        PARAM_REMOVED,
+        "pkg.DataFrame.fillna",
+        "method",
+        "DataFrame",
+    )
+    assert fillna.import_paths == ["pkg.DataFrame.fillna", "pkg.frame.DataFrame.fillna"]
+    assert fillna.tier == TIER_PUBLIC
+    assert fillna.describe(versioned=False) == (
+        "`pkg.DataFrame.fillna(method=...)`: parameter `method` was removed"
+    )
+    # No public class inherits it: nothing to report.
+    old["pkg/frame.py"] = new["pkg/frame.py"] = "class DataFrame:\n    pass\n"
+    assert diff(tmp_path / "none", old, new) == []
+
+
 # ------------------------------------------ attributes of a base outside the package (item 7)
-def test_attributes_a_base_outside_the_package_may_set_are_unknown_not_removed(tmp_path):
-    """fastapi 0.116.1 -> 0.143.0: ``APIRoute(starlette.routing.Route)`` no longer assigns
-    ``path``, ``endpoint``, ``name`` and ``methods`` itself; starlette's ``Route`` does, which
-    since-cutoff did not read. They are not removed; the scan says the class's attributes
-    were not compared. A method the class dropped, with no ``super()`` call, is still
-    removed."""
+def test_attributes_the_new_class_sets_where_griffe_does_not_look_are_not_removed(tmp_path):
+    """fastapi 0.116.1 -> 0.143.0: ``APIRoute.__init__`` no longer assigns ``path``,
+    ``endpoint`` and ``methods`` itself; ``_populate_api_route_state(cast(_APIRouteLike,
+    self), path, ...)``, a function of its module, sets them on the route, and
+    ``APIWebSocketRoute.__init__`` sets ``dependant`` in a tuple target. griffe lists neither
+    as an attribute, and the four were reported as removed. ``secure_cloned_response_field``,
+    which 0.143.0 sets nowhere and hands to no base, is removed, as is the method
+    ``secure``."""
     old = {
         "pkg/__init__.py": "",
         "pkg/routing.py": "from starlette import routing\n\nclass APIRoute(routing.Route):\n"
-        "    def __init__(self, path, endpoint):\n        self.path = path\n"
+        "    def __init__(self, path, endpoint, secure=True):\n        self.path = path\n"
         "        self.endpoint = endpoint\n        self.methods = ['GET']\n"
-        "    def secure(self):\n        pass\n",
+        "        self.secure_cloned_response_field = secure\n"
+        "        self.dependant = build(path)\n"
+        "    def secure(self):\n        pass\n\ndef build(path):\n    return path\n",
     }
     new = {
         "pkg/__init__.py": "",
-        "pkg/routing.py": "from starlette import routing\n\nclass APIRoute(routing.Route):\n"
-        "    def __init__(self, path, endpoint):\n        super().__init__(path, endpoint)\n",
+        "pkg/routing.py": "from typing import cast\nfrom starlette import routing\n\n"
+        "class APIRoute(routing.Route):\n    def __init__(self, path, endpoint, secure=True):\n"
+        "        _populate(cast(routing.Route, self), path, endpoint=endpoint)\n"
+        "        self.dependant, _ = build(path), None\n\n"
+        "def _populate(route, path, *, endpoint):\n    route.path = path\n"
+        "    route.endpoint = endpoint\n    route.methods = ['GET']\n\n"
+        "def build(path):\n    return path\n",
     }
-    changes, hid = unread(tmp_path, old, new)
-    assert changes == {(REMOVED, "pkg.routing.APIRoute.secure", None)}
-    assert hid == [f"pkg.routing.APIRoute{UNREAD_BASE}starlette.routing.Route"]
-    assert unread_text("fastapi", "0.143.0", "0.116.1", hid) == (
-        "fastapi 0.143.0: pkg.routing.APIRoute inherits from starlette.routing.Route, which "
+    assert unread(tmp_path, old, new) == (
+        {
+            (REMOVED, "pkg.routing.APIRoute.secure", None),
+            (REMOVED, "pkg.routing.APIRoute.secure_cloned_response_field", None),
+        },
+        [],
+    )
+
+
+def test_an_attribute_the_constructor_hands_to_a_base_outside_the_package_is_unknown(tmp_path):
+    """fastapi 0.143.0's ``Param(pydantic.fields.FieldInfo)`` no longer assigns
+    ``self.deprecated``: it puts ``kwargs["deprecated"]`` and calls ``super().__init__(
+    **use_kwargs)``, so pydantic's ``FieldInfo``, which since-cutoff did not read, may set it.
+    The attribute is unknown, not removed, and the scan says the class's attributes were not
+    compared. So is one the constructor passes by name, one its own ``**kwargs`` passes on,
+    and one of a class that lost its constructor (the base's runs)."""
+
+    def param(body: str) -> dict[str, str]:
+        return {
+            "pkg/__init__.py": "",
+            "pkg/params.py": "from pydantic.fields import FieldInfo\n\nclass Param(FieldInfo):\n"
+            + body,
+        }
+
+    old = param(
+        "    def __init__(self, default, deprecated=None, **extra):\n"
+        "        self.deprecated = deprecated\n        super().__init__(default=default, **extra)\n"
+    )
+    entry = f"pkg.params.Param{UNREAD_BASE}pydantic.fields.FieldInfo"
+    new = param(
+        "    def __init__(self, default, deprecated=None, **extra):\n"
+        "        kwargs = dict(default=default, **extra)\n        kwargs['deprecated'] = deprecated\n"
+        "        use_kwargs = {k: v for k, v in kwargs.items() if v is not None}\n"
+        "        super().__init__(**use_kwargs)\n"
+    )
+    assert unread(tmp_path, old, new) == (set(), [entry])
+    assert unread_text("fastapi", "0.143.0", "0.116.1", [entry]) == (
+        "fastapi 0.143.0: pkg.params.Param inherits from pydantic.fields.FieldInfo, which "
         "since-cutoff did not read; the attributes it sets are not compared"
     )
-    # What it reported before: four attributes removed.
-    assert (
-        len(diff(tmp_path / "before", old, new)) == 1
-        and len(found(diff(tmp_path / "b", old, {}))) == 1
+    by_name = param(
+        "    def __init__(self, default, deprecated=None, **extra):\n"
+        "        super().__init__(default, deprecated=deprecated, **extra)\n"
+    )
+    assert unread(tmp_path / "name", old, by_name) == (set(), [entry])
+    passed_on = param(
+        "    def __init__(self, default, **kwargs):\n        super().__init__(default, **kwargs)\n"
+    )
+    assert unread(tmp_path / "kwargs", old, passed_on) == (set(), [entry])
+    assert unread(tmp_path / "none", old, param("    pass\n")) == (set(), [entry])
+
+
+def test_a_field_or_attribute_no_base_outside_the_package_is_given_is_removed(tmp_path):
+    """A pydantic model's field (``usage: int``, a name of the class body), a constant of a
+    class deriving from another package's, and an attribute the old constructor set that the
+    new one neither sets nor hands to the base (fastapi 0.143.0's
+    ``APIRoute.secure_cloned_response_field``) are removed, as for any class: the base cannot
+    set what it was never given."""
+    old = {
+        "pkg/__init__.py": "import httpx\nimport pydantic\n\nclass Resp(pydantic.BaseModel):\n"
+        "    id: str\n    usage: int\n\nclass Client(httpx.Client):\n    DEFAULT_TIMEOUT = 10\n\n"
+        "    def __init__(self, base_url, secure=True):\n        self.secure = secure\n"
+        "        super().__init__(base_url=base_url)\n"
+    }
+    new = {
+        "pkg/__init__.py": "import httpx\nimport pydantic\n\nclass Resp(pydantic.BaseModel):\n"
+        "    id: str\n\nclass Client(httpx.Client):\n"
+        "    def __init__(self, base_url, secure=True):\n"
+        "        super().__init__(base_url=base_url)\n"
+    }
+    assert unread(tmp_path, old, new) == (
+        {
+            (REMOVED, "pkg.Resp.usage", None),
+            (REMOVED, "pkg.Client.DEFAULT_TIMEOUT", None),
+            (REMOVED, "pkg.Client.secure", None),
+        },
+        [],
     )
 
 
@@ -1275,3 +1443,55 @@ def test_a_member_inherited_by_a_public_class_is_public(tmp_path):
     )
     (send,) = diff(tmp_path / "async", old, new)
     assert (send.path, send.tier) == ("pkg.clients.AsyncClient.send", TIER_INTERNAL)
+
+
+def test_a_name_re_exported_as_itself_or_copied_to_the_top_by_a_star_import_is_public(tmp_path):
+    """anthropic 0.60.0 -> 1.8.0: ``anthropic/types/__init__.py`` re-exports
+    ``CompletionCreateParams as CompletionCreateParams`` (no ``__all__``, no docstring), and
+    ``anthropic/__init__.py``, which has an ``__all__``, does ``from .lib.bedrock import *``,
+    copying ``AnthropicBedrock`` (``as AnthropicBedrock`` in ``lib/bedrock/__init__.py``): the
+    client ``from anthropic import AnthropicBedrock`` gives. Both counted as internal. A plain
+    import in a package ``__init__`` is a path to the object, not a re-export on purpose."""
+    old = {
+        "pkg/__init__.py": "from .lib.bedrock import *\n__all__ = ['Client']\n\n"
+        "class Client:\n    pass\n",
+        "pkg/lib/__init__.py": "",
+        "pkg/lib/bedrock/__init__.py": "from ._client import Bedrock as Bedrock\n",
+        "pkg/lib/bedrock/_client.py": "class Bedrock:\n    def completions(self):\n        pass\n",
+        "pkg/types/__init__.py": "from .message import Message as Message\n"
+        "from .other import Other\n",
+        "pkg/types/message.py": "class Message:\n    usage: int\n",
+        "pkg/types/other.py": "class Other:\n    usage: int\n",
+    }
+    new = {
+        **old,
+        "pkg/lib/bedrock/_client.py": "class Bedrock:\n    pass\n",
+        "pkg/types/message.py": "class Message:\n    pass\n",
+        "pkg/types/other.py": "class Other:\n    pass\n",
+    }
+    assert tiers(diff(tmp_path, old, new)) == {
+        "pkg.lib.bedrock.Bedrock.completions": TIER_PUBLIC,
+        "pkg.types.message.Message.usage": TIER_PUBLIC,
+        "pkg.types.other.Other.usage": TIER_INTERNAL,
+    }
+
+
+def test_a_value_made_of_a_documented_function_is_public(tmp_path):
+    """langchain-core 0.3.72 -> 1.6.5: ``convert_pydantic_to_openai_function = deprecated(
+    "0.1.16", ...)(_convert_pydantic_to_openai_function)`` has no docstring of its own; the
+    function it is made of has one (and langchain's API reference lists it). It counted as
+    internal. A value made of an undocumented function stays internal."""
+    old = {
+        "pkg/__init__.py": "",
+        "pkg/utils.py": "from pkg._deprecation import deprecated\n\n"
+        'def _convert(fn):\n    """Convert a function."""\n\n'
+        "convert = deprecated('0.1.16', removal='1.0')(_convert)\n\n"
+        "def _plain(fn):\n    pass\n\nplain = deprecated('0.1.16')(_plain)\n",
+        "pkg/_deprecation.py": "def deprecated(since, removal=None):\n"
+        "    def wrap(fn):\n        return fn\n    return wrap\n",
+    }
+    new = {**old, "pkg/utils.py": ""}
+    assert tiers(diff(tmp_path, old, new)) == {
+        "pkg.utils.convert": TIER_PUBLIC,
+        "pkg.utils.plain": TIER_INTERNAL,
+    }

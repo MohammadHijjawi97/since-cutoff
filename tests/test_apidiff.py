@@ -32,6 +32,7 @@ from since_cutoff.project import load_project
 from since_cutoff.pypi import SourceTree
 from since_cutoff.report import (
     headline,
+    render_console,
     render_markdown,
     render_scan_changes,
     render_scan_markdown,
@@ -657,9 +658,15 @@ def test_reports_count_public_changes_and_keep_internal_ones_apart(tmp_path, cac
     assert "<b>mixlib</b> 1.0 -> 2.0: 1 breaking, 0 deprecated (+2 internal)</summary>" in short
     assert "helper" not in short
 
+    # The dependency table counts the public changes, with the internal ones next to them.
+    console = Console(width=200, record=True)
+    render_console(console, scan, None)
+    assert "1 (+2)" in console.export_text()
+    assert "| API changed, imported by your code | 1 (+2) | 0 |" in md
+
     tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
     out = tools.api_changes("mixlib", cutoff="2025-07-31")
-    assert "- 1 breaking change, 0 new deprecations (parameters removed 1) (+2 internal)" in out
+    assert "- 1 breaking change, 0 new deprecations (parameters removed 1, +2 internal)" in out
     assert "Client.send" in out and "helper" not in out
     full = tools.api_changes("mixlib", cutoff="2025-07-31", include_internal=True)
     assert "helper" in full and "LOOP_SETUPS" in full
@@ -672,6 +679,35 @@ def test_reports_count_public_changes_and_keep_internal_ones_apart(tmp_path, cac
     )
 
 
+def test_a_symbol_is_matched_against_internal_changes_too(tmp_path, cache):
+    """``api_changes(symbol="helper")`` filtered the public changes and answered that
+    ``helper`` did not change, although the diff has its removal (as internal). A question
+    about a symbol asks for its changes, whichever tier: internal matches are listed when
+    they are all there is, and counted next to the public ones otherwise."""
+    _, pypi = _scan(tmp_path, cache, "mixlib", MIXLIB_V1, MIXLIB_V2, "import mixlib\n")
+    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
+    out = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="helper")
+    assert (
+        '- 1 of them match symbol "helper", in internal APIs (listed since the symbol asks '
+        "for them)"
+    ) in out
+    assert "mixlib.core.helper" in out and "did not change" not in out
+    out = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="send")
+    assert '- 1 of them match symbol "send"\n' in out and "internal APIs" not in out
+    out = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="send, helper")
+    assert (
+        '- 1 of them match symbol "send, helper"; 1 more in internal APIs '
+        "(include_internal=true lists them)"
+    ) in out
+    assert "Client.send" in out and "`mixlib.core.helper`" not in out
+    out = tools.api_changes(
+        "mixlib", cutoff="2025-07-31", symbol="send, helper", include_internal=True
+    )
+    assert '- 2 of them match symbol "send, helper"\n' in out and "`mixlib.core.helper`" in out
+    none = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="nothing-like-this")
+    assert "leave `symbol` out to see all 1 change." in none  # the public one
+
+
 def test_a_package_that_changed_only_internal_apis(tmp_path, cache):
     v2 = {
         **MIXLIB_V1,
@@ -679,6 +715,8 @@ def test_a_package_that_changed_only_internal_apis(tmp_path, cache):
     }
     scan, pypi = _scan(tmp_path, cache, "mixlib", MIXLIB_V1, v2, "import mixlib\n")
     assert (scan.package("mixlib").counts, scan.package("mixlib").internal) == ((0, 0), 1)
+    # The table says why the package is "API changed" with no public change to count.
+    assert "| API changed, imported by your code | 0 (+1) | 0 |" in render_markdown(scan)
     tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
     out = tools.api_changes("mixlib", cutoff="2025-07-31")
     assert "- 0 breaking changes, 0 new deprecations (+1 internal)" in out

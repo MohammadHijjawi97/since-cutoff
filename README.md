@@ -90,7 +90,7 @@ unpinned, the tool uses the latest release):
 | openai | 1.98.0 | 3.19.2 | 19 breaking changes, 6 new deprecations (+3 internal) |
 
 In that project, 7 of 9 dependencies changed their public API after the cutoff. The static diff
-flags 222 breaking changes and 23 new deprecations in public APIs, and 77 changes to internal
+flags 229 breaking changes and 23 new deprecations in public APIs, and 69 changes to internal
 ones; the project's code uses 2 of the changed APIs.
 
 It is not one model or one vendor. Across 36 widely used Python AI libraries and 21 models from
@@ -145,7 +145,7 @@ provider and uses your API credits or Claude Code usage.
 
 What `scan` prints for the sample project:
 
-<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 on the sample project. Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, used in app/main.py, no longer has force_filename, local_dir_use_symlinks, resume_download and proxies in its signature; its note is tagged [diff], and a Runtime line says that 2.0.0's source still handles them, so calls passing them may run with a warning. anthropic 0.60.0 -> 1.8.0: Messages.create, called in app/main.py, no longer accepts temperature, top_k and top_p; its note is tagged [diff]. 2 notes ready for AGENTS.md; what uses this API and [diff] mean; 238 more changes in 7 packages that the code does not use, and 77 changes to internal APIs."></p>
+<p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 on the sample project. Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31). huggingface-hub 0.34.3 -> 2.0.0: hf_hub_download, used in app/main.py, no longer has force_filename, local_dir_use_symlinks, resume_download and proxies in its signature; its note is tagged [diff], and a Runtime line says that 2.0.0's source still handles them, so calls passing them may run with a warning. anthropic 0.60.0 -> 1.8.0: Messages.create, called in app/main.py, no longer accepts temperature, top_k and top_p; its note is tagged [diff]. 2 notes ready for AGENTS.md; what uses this API and [diff] mean; 245 more changes in 7 packages that the code does not use, and 69 changes to internal APIs."></p>
 
 Both APIs are "uses this API"; a file that passed `resume_download=True` or `temperature=0.2`
 would make them "old form". `scan -v` lists every file that uses an API (3 are shown), and
@@ -533,7 +533,7 @@ What `api_changes("huggingface-hub", model="claude-haiku-4-5", to_version="2.0.0
 - From 0.29.1 (2025-02-20): the newest release on or before 2025-02-28 (training cutoff of claude-haiku-4-5, from models.dev)
 - To 2.0.0 (2026-09-24): as requested
 - Warning: huggingface-hub 2.0.0: huggingface_hub.hf_file_system.HfFileSystemFile inherits from fsspec.spec.AbstractBufferedFile, which since-cutoff did not read; the attributes it sets are not compared
-- 100 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 47, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1) (+8 internal)
+- 98 breaking changes, 0 new deprecations (dependencies switched 1, removed or moved 45, parameters removed 43, parameters now required 7, changed kind 1, now keyword-only or positional-only 1, +8 internal)
 
 ## Dependencies switched
 
@@ -551,7 +551,7 @@ What `api_changes("huggingface-hub", model="claude-haiku-4-5", to_version="2.0.0
 - `huggingface_hub.snapshot_download(proxies=...)`: parameter `proxies` was removed; 2.0.0's source still handles `proxies` (huggingface_hub/utils/_validators.py:178), so calls passing it may run with a warning; type checkers reject it
 ...
 
-Not listed: 60 breaking changes, 0 new deprecations (removed or moved 32, parameters removed 28). Narrow with symbol="..." or raise limit.
+Not listed: 58 breaking changes, 0 new deprecations (removed or moved 30, parameters removed 28). Narrow with symbol="..." or raise limit.
 ```
 
 With `symbol="hf_hub_download"` it lists only the 8 changes to that function (`resume_download=`,

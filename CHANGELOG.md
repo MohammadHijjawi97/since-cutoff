@@ -82,31 +82,50 @@
   Unpack[_read_shared]`, and griffe takes a `**kwargs` for any keyword, so the loss of
   `delim_whitespace`, `date_parser`, `infer_datetime_format`, `keep_date_col` and `verbose`
   was not reported. The TypedDict's keys (its bases' included) are now compared like the
-  signature's names; a bare `**kwargs` still takes anything (diff schema 21).
+  signature's names, in both directions: a key of the old TypedDict the new signature does
+  not name is a removed parameter too. A bare `**kwargs` still takes anything, and so does a
+  TypedDict that allows other keys (PEP 728's `extra_items=` or `closed=False`); `self` and
+  `cls` are no keywords, so a method made static or a class method is not a change (diff
+  schema 21).
 - A change to a method is matched under the public classes that inherit it without overriding
   it. pandas 2.3.1 -> 3.0.6's `NDFrame.fillna` lost `method`, and the change carried only
   `pandas.core.generic.NDFrame.fillna`, a path no code calls, so `df.fillna(method="ffill")`
   on a `DataFrame` was not a use and the change never reached the report. The change now lists
   the inheriting classes' paths (`pandas.DataFrame.fillna`) in `import_paths` and `also`, and
-  the scan matches calls on them.
-- An attribute a class set itself at the cutoff and may get from a base in another package in
-  the pinned release is unknown, not removed. fastapi 0.143.0's `APIRoute(starlette.routing
-  .Route)` no longer assigns `path`, `endpoint`, `name` and `methods` (starlette's `Route`
-  does), and the scan reported them as removed. since-cutoff does not read other
-  distributions, so the scan, report.md and the MCP tools warn once per package that the
-  class's attributes were not compared, next to the compiled-module warning. A method the
-  class dropped is still removed; a key dropped from a `TypedDict` too.
+  the scan matches calls on them. A change to a method of a private class (`pkg._base._Base
+  .fillna`) that a public class inherits, never reported before, is reported under the
+  shortest public inheritor (`pkg.DataFrame.fillna`), as a folded removal is.
+- An attribute a class set in a method at the cutoff and may get from a base in another
+  package in the pinned release is unknown, not removed. fastapi 0.143.0's `Param(pydantic
+  .fields.FieldInfo)` no longer assigns `self.deprecated`; it puts `kwargs["deprecated"]` and
+  calls `super().__init__(**use_kwargs)`, so pydantic may set it, and the scan reported it as
+  removed. since-cutoff does not read other distributions, so when the new constructor hands
+  the name to the base's (by name, in position, through a `**kwargs`, or by having no
+  constructor of its own) the scan, report.md and the MCP tools warn once per package that
+  the class's attributes were not compared, next to the compiled-module warning. A field or
+  constant of the class body (a pydantic model's `usage: int`), an attribute the constructor
+  neither sets nor hands on (0.143.0's `APIRoute.secure_cloned_response_field`), a method the
+  class dropped and a key dropped from a `TypedDict` are still removed. An attribute the new
+  class sets where griffe does not look, in a tuple target (`self.dependant, _ = ...`) or in a
+  function of its module given `self` (0.143.0's `_populate_api_route_state(self, path,
+  ...)`, which sets `route.path`, `endpoint`, `name` and `methods`), is not removed.
 - The counts tell public APIs from internal ones. fastapi 0.116.1 -> 0.143.0 scanned as "35
   breaking changes", 9 of them helpers such as `dependencies.utils.get_flat_dependant` and 34
   paths to `BaseModelWithConfig.Config`; uvicorn's were `loops.*`, `config.LOOP_SETUPS` and
   `main.HTTP_CHOICES`. Each change now has a `tier`: public when the package's top level
-  exports the API, a module names it in `__all__`, or it is documented (a member with its
-  class; a method a public class inherits is public), else internal. The headline counts, the
-  dependency table, `scan --all`, the Action summary and the MCP tools' totals count the
-  public changes and give the internal ones once as "(+N internal)"; `scan --all --internal`
-  and `include_internal` (MCP) list them; report.md lists them after the public ones;
-  results.json and `scan --json` keep every change (`internal_changes` next to
-  `breaking_changes`). The notes are not affected: they cover the APIs the code uses.
+  exports the API (a `from .m import *` there that copies it from a module re-exporting it
+  on purpose counts: `anthropic.AnthropicBedrock`), a module names it in `__all__` or
+  re-exports it as `from .m import X as X` (`anthropic.types.CompletionCreateParams`), or it
+  is documented (a value made of a function, `convert = deprecated(...)(_convert)`, with the
+  function's docstring; a member with its class; a method a public class inherits is public),
+  else internal. The headline counts, `scan --all`, the Action summary and the MCP tools'
+  totals count the public changes and give the internal ones once as "+N internal"; the
+  dependency table's breaking column gives them as "19 (+3)"; `scan --internal` (which
+  implies `--all`) and `include_internal` (MCP) list them; report.md lists them after the
+  public ones; results.json and `scan --json` keep every change (`internal_changes` next to
+  `breaking_changes`). `api_changes(symbol=...)` matches the symbol against every change and
+  lists the internal ones when they are all that match: a question about an API asks for its
+  changes. The notes are not affected: they cover the APIs the code uses.
 
 ## 0.5.0 - 2026-09-28
 

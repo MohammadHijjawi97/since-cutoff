@@ -510,8 +510,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--internal",
         action="store_true",
-        help="with --all, list the changes to internal APIs too (not reached from the "
-        "package's top level, named in an __all__ or documented); they are counted apart",
+        help="list the changes to internal APIs too (not reached from the package's top "
+        "level, named in an __all__ or documented), which every count gives apart; implies "
+        "--all",
     )
     scan.add_argument(
         "--fail-on",
@@ -888,7 +889,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
             render_scan(
                 ui,
                 scan,
-                show_all=args.all,
+                show_all=args.all or args.internal,
                 verbose=args.verbose,
                 limit=args.limit,
                 shown=shown,

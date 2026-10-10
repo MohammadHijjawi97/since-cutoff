@@ -799,11 +799,17 @@ def _fold_at_hyphens(name: str, width: int) -> str:
 
 
 def _count_cells(row: dict[str, Any]) -> list[str]:
-    """The breaking and deprecated cells of a changed dependency (``0`` included); blank for
-    the others, which were not diffed or have nothing to count."""
+    """The breaking and deprecated cells of a changed dependency (``0`` included), the
+    breaking one with `` (+N)`` for its changes to internal APIs (``0 (+3)`` says why a
+    package with no public change is "API changed"); blank for the others, which were not
+    diffed or have nothing to count."""
     if row["status"] != CHANGED:
         return ["", ""]
-    return [str(row["breaking_changes"]), str(row["deprecations"])]
+    internal = row.get("internal_changes") or 0
+    breaking = (
+        f"{row['breaking_changes']} (+{internal})" if internal else str(row["breaking_changes"])
+    )
+    return [breaking, str(row["deprecations"])]
 
 
 def render_scan_changes(

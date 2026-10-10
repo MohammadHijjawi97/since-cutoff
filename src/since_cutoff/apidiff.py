@@ -97,17 +97,22 @@ log = logging.getLogger(__name__)
 # ``**kwargs: Unpack[SomeTypedDict]`` takes the TypedDict's keys (its bases' included) and no
 # other keyword, so a key the release at the cutoff had and the pinned one has not is a removed
 # parameter (issue #60: pandas 3's ``read_csv`` overloads take ``**kwds: Unpack[_read_shared]``
-# and lost ``delim_whitespace``); a bare ``**kwargs`` still takes anything (_Differ
-# .keyword_names, _typed_kwargs_removals). A change to a method or attribute carries the paths
-# of the public classes that inherit it without overriding it (``import_paths``, ``also``:
+# and lost ``delim_whitespace``), and so is a key of the old TypedDict the new signature does
+# not name; a bare ``**kwargs``, or a TypedDict open to other keys (PEP 728), still takes
+# anything, and ``self``/``cls`` are no keywords (_Differ.keyword_names,
+# _typed_kwargs_removals). A change to a method or attribute carries the paths of the public
+# classes that inherit it without overriding it (``import_paths``, ``also``:
 # ``pandas.DataFrame.fillna`` for ``NDFrame.fillna``), so the scan matches calls on them
-# (_Differ.inheritors). An attribute the old class set itself and the new class may get from a
-# base outside the package (fastapi 0.143's ``APIRoute(starlette.routing.Route)`` no longer
-# assigns ``path`` and ``endpoint``) is unknown, not removed, and the unread entries say which
-# class inherits from which base (UNREAD_BASE; unread_text). ``tier``: whether the changed API
-# is public (reached from the top-level package, named in an ``__all__``, or documented) or
-# internal (_Differ.tier_of); the reports count public changes and list internal ones on
-# request.
+# (_Differ.inheritors), and a change to a method of a private class is reported under the
+# shortest public inheritor (_Differ._public_inheritor). An attribute the old class set in a
+# method and the new constructor hands to a base outside the package (fastapi 0.143's
+# ``Param(FieldInfo)`` passes ``kwargs["deprecated"]`` on) is unknown, not removed, and the
+# unread entries say which class inherits from which base (UNREAD_BASE; unread_text); one the
+# new class sets in a tuple target or through a function of its module is there
+# (_Differ._attributes_set). ``tier``: whether the changed API is public (reached from the
+# top-level package, a wildcard-copied name included, named in an ``__all__``, re-exported as
+# ``X as X``, or documented) or internal (_Differ.tier_of); the reports count public changes
+# and list internal ones on request.
 DIFF_SCHEMA = 21
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
@@ -974,6 +979,8 @@ class _Differ:
         # Per version and TypedDict path, its keys, or None when they cannot be read
         # (see typed_dict_keys).
         self._typed_dicts: dict[tuple[int, str], set[str] | None] = {}
+        # The parsed ``class`` statement of each class looked at (see _class_def).
+        self._class_defs: dict[int, ast.ClassDef | None] = {}
         self.fuzzy = True
 
     def run(self) -> list[APIChange]:
@@ -1059,13 +1066,25 @@ class _Differ:
 
     # ---------------------------------------------------------------- helpers
     def _change(
-        self, kind: str, obj: Any, *, old_obj: Any = None, new_obj: Any = None, **kw: Any
+        self,
+        kind: str,
+        obj: Any,
+        *,
+        old_obj: Any = None,
+        new_obj: Any = None,
+        path: str | None = None,
+        **kw: Any,
     ) -> APIChange:
         """The change to ``obj``, which is ``old_obj`` (the old version's object) or ``new_obj``
-        (the new version's); the paths of both make ``import_paths``."""
-        path = self.public_path(obj.path) or obj.path
+        (the new version's); the paths of both make ``import_paths``. ``path``: where to report
+        it instead of under its own public path (a public class that inherits a private class's
+        method: ``pkg.DataFrame.fillna`` for ``pkg._base._Base.fillna``), its owner the class
+        on that path."""
         parent = getattr(obj, "parent", None)
         owner = parent.name if parent is not None and getattr(parent, "is_class", False) else None
+        if path is not None and owner is not None:
+            owner = path.rsplit(".", 2)[-2]
+        path = path or self.public_path(obj.path) or obj.path
         change = APIChange(
             package=self.package,
             from_version=self.old_version,
@@ -1131,6 +1150,27 @@ class _Differ:
                 continue
         return found
 
+    def _public_inheritor(self, obj: Any) -> str | None:
+        """For a method of a private class (the new version's ``obj``): the shortest public
+        path of a class that inherits it without overriding it, in both versions, with the
+        method's name (``pkg.DataFrame.fillna`` for ``pkg._base._Base.fillna``), or None when
+        no public class does. A change to the method is reported there: code calls it on
+        the public class, as it does the folded removals of _fold_inherited."""
+        parent: Any = getattr(obj, "parent", None)
+        if not getattr(parent, "is_class", False):
+            return None
+        old_parent = _get(self.old, _rel(parent.path, self.old.path))
+        if not getattr(old_parent, "is_class", False):
+            return None
+        before = {str(sub.path) for sub in self.inheritors(self.old, old_parent, obj.name)}
+        paths = [
+            p
+            for sub in self.inheritors(self.new, parent, obj.name)
+            if str(sub.path) in before
+            for p in self.paths_in(self.new, sub)
+        ]
+        return f"{_ordered(paths)[0]}.{obj.name}" if paths else None
+
     def _inheritor_index(self, tree: Any) -> dict[str, list[Any]]:
         key = id(tree)
         if key not in self._inheritors:
@@ -1161,22 +1201,43 @@ class _Differ:
 
     def _public_api(self, tree: Any, obj: Any) -> bool:
         """Is this module-level object (or module) one the package presents, in ``tree``: a
-        name of the top-level package (``pkg.Thing``, ``pkg.sub``), a name listed in the
-        ``__all__`` of a module it is reached through, or a documented one? Its paths have
-        no private part already (only public paths are reported)."""
+        name of the top-level package (``pkg.Thing``, ``pkg.sub``; one a ``from .m import *``
+        there copies from a module that re-exports it on purpose too: ``anthropic
+        .AnthropicBedrock``), a name a module it is reached through lists in ``__all__`` or
+        re-exports as ``from .m import X as X`` (``anthropic.types.CompletionCreateParams``),
+        or a documented one (a value made of a function, ``convert = deprecated(...)(_convert)``,
+        with the function's docstring)? Its paths have no private part already (only public
+        paths are reported)."""
         top = str(tree.path).count(".") + 1
         paths = self.paths_in(tree, obj)
-        if any(p.count(".") == top for p in paths):
+        if any(p.count(".") == top for p in paths) or self._copied_to_top(tree, obj):
             return True
         for p in paths:
-            module = find_object(tree, p.rsplit(".", 1)[0])
-            if getattr(module, "is_module", False) and self._listed(module, obj.name):
+            module_path, _, name = p.rpartition(".")
+            module = find_object(tree, module_path)
+            if getattr(module, "is_module", False) and (
+                self._listed(module, name) or name in self._source(module).reexported
+            ):
                 return True
+        return bool(_api_docstring(obj))
+
+    def _copied_to_top(self, tree: Any, obj: Any) -> bool:
+        """Did a ``from .m import *`` of the top-level package copy ``obj`` there, from a module
+        that re-exports it on purpose (not :meth:`_leaked`)? griffe does not count the copy
+        as public when the package has an ``__all__`` that leaves it out (anthropic's
+        ``from .lib.bedrock import *``, with ``AnthropicBedrock as AnthropicBedrock`` there),
+        but ``from anthropic import AnthropicBedrock`` is how it is used."""
+        if getattr(obj, "is_module", False):
+            return False
+        member = tree.members.get(obj.name)
+        if not getattr(member, "is_alias", False) or not getattr(
+            member, "wildcard_imported", False
+        ):
+            return False
         try:
-            doc = obj.docstring
+            return str(member.final_target.path) == str(obj.path) and not self._leaked(member)
         except Exception:
             return False
-        return doc is not None and bool(str(getattr(doc, "value", "")).strip())
 
     def _from_breakage(self, b: Any) -> APIChange | None:
         kind = b.kind.name
@@ -1188,8 +1249,13 @@ class _Differ:
             if owner is not None:
                 self.unread.add(owner)
                 return None
+        via = None  # the public path a change to a private class's method is reported under
         if not self.is_public(obj.path, module=_kind_of(obj) == "module"):
-            return None
+            if not kind.startswith("PARAMETER_"):
+                return None
+            via = self._public_inheritor(obj)
+            if via is None:
+                return None
         if kind == "OBJECT_REMOVED":
             parent = getattr(obj, "parent", None)
             if (
@@ -1302,6 +1368,10 @@ class _Differ:
             if pkind in _VARIADIC:
                 if _absorbed(old_fn, new_fn, pkind):
                     return None  # what *args or **kwargs took, the new signature names
+                if pkind == "var_keyword" and self.keyword_names(self.old, old_fn) is not None:
+                    # ``**kwargs: Unpack[SomeTypedDict]`` took the TypedDict's keys, which are
+                    # compared one by one (_typed_kwargs_removals).
+                    return None
                 param = ("**" if pkind == "var_keyword" else "*") + param
             elif pkind == "positional_only" and renamed is not None:
                 return None  # a positional-only parameter renamed: its name is not API
@@ -1342,7 +1412,7 @@ class _Differ:
                 # one. Keyword callers of the old name see its removal, reported once.
                 return None
             ckind = PARAM_REQUIRED
-        return self._parameter_change(ckind, old_fn, new_fn, param, suggestions, rename)
+        return self._parameter_change(ckind, old_fn, new_fn, param, suggestions, rename, via)
 
     def _parameter_change(
         self,
@@ -1352,10 +1422,12 @@ class _Differ:
         param: str,
         suggestions: list[str],
         rename: bool,
+        via: str | None = None,
     ) -> APIChange:
         """The change of kind ``ckind`` to parameter ``param`` of ``old_fn`` (the old
         version's callable; ``new_fn`` is the new version's), with the library's hint for it,
-        whether the new source still handles it and the request extras it has."""
+        whether the new source still handles it and the request extras it has. ``via``: the
+        public path to report a private class's method under (:meth:`_public_inheritor`)."""
         if ckind == PARAM_REMOVED:
             hint, source = parameter_hint(old_fn, param.lstrip("*"))
         else:
@@ -1371,6 +1443,7 @@ class _Differ:
             new_fn,
             old_obj=old_fn,
             new_obj=new_fn,
+            path=via,
             parameter=param,
             hint=hint,
             hint_source=source,
@@ -1397,19 +1470,20 @@ class _Differ:
         it (pandas 3.0's ``read_csv`` has ``**kwds: Unpack[_read_shared]`` in its implementation
         and its four overloads, and ``delim_whitespace``, which 2.3 took, is no key of
         ``_read_shared``: issue #60). So the names the old signatures took by keyword, their
-        own TypedDict's keys included, are compared with the new ones' here. A bare ``**kwargs``
-        on either side takes anything, and nothing is compared. ``found``: the changes the
-        breakages gave, not reported twice.
+        own TypedDict's keys included, are compared with the new ones' here, whichever side
+        has the TypedDict: a key of the old one that the new signature does not name is gone
+        too. A bare ``**kwargs`` on either side takes anything, and nothing is compared.
+        ``found``: the changes the breakages gave, not reported twice.
         """
         reported = {(c.path, c.parameter) for c in found}
         out: list[APIChange] = []
         for new_fn, _public in iter_public_objects(self.new):
-            if not getattr(new_fn, "is_function", False) or not self._typed_kwargs(new_fn):
-                continue
-            if not self.is_public(new_fn.path):
+            if not getattr(new_fn, "is_function", False) or not self.is_public(new_fn.path):
                 continue
             old_fn = _get(self.old, _rel(new_fn.path, self.old.path))
             if _kind_of(old_fn) != "function" or _special_form(old_fn) or _fixture(old_fn):
+                continue
+            if not (self._typed_kwargs(new_fn) or self._typed_kwargs(old_fn)):
                 continue
             new_names = self._keyword_names_of_all(self.new, new_fn)
             old_names = self._keyword_names_of_all(self.old, old_fn)
@@ -1453,6 +1527,7 @@ class _Differ:
             parameters = list(fn.parameters)
         except Exception:
             return None
+        bound = _bound_parameter(fn)  # ``self``, ``cls``: not a keyword
         for p in parameters:
             kind = _pkind(p)
             if kind == "var_keyword":
@@ -1463,7 +1538,7 @@ class _Differ:
                 if keys is None:
                     return None
                 names |= keys
-            elif kind not in ("positional_only", "var_positional"):
+            elif kind not in ("positional_only", "var_positional") and p is not bound:
                 names.add(p.name)
         return names
 
@@ -1471,7 +1546,8 @@ class _Differ:
         """The keys of the TypedDict class at ``path`` in ``tree``: its annotated attributes
         and its bases' (a key that moved to a base is still a key). None when the class is not
         in the package or has a base outside it other than typing's (``TypedDict``,
-        ``Generic[T]``), whose keys cannot be read; ``total=`` changes nothing here."""
+        ``Generic[T]``), whose keys cannot be read, or allows other keys (PEP 728's
+        ``extra_items=`` or ``closed=False``); ``total=`` changes nothing here."""
         key = (id(tree), path)
         if key not in self._typed_dicts:
             self._typed_dicts[key] = self._typed_dict_keys(tree, path, frozenset())
@@ -1483,6 +1559,8 @@ class _Differ:
         cls = find_object(tree, path)
         if not getattr(cls, "is_class", False):
             return None
+        if _open_typed_dict(self._class_def(cls)):
+            return None  # PEP 728: keys it does not name are allowed
         keys: set[str] = set()
         try:
             for name, member in cls.members.items():
@@ -1855,15 +1933,27 @@ class _Differ:
         A class that drops its own ``keys`` but still derives from ``UserDict`` keeps ``keys``.
         Bases from the standard library are looked up; for any other outside base, a method
         that called the same method of its base (``super().get(...)``) was an override of it,
-        and an attribute the old class set itself (``self.path = path``) may now be set by the
-        base, which since-cutoff did not read (fastapi 0.143's ``APIRoute(starlette.routing
-        .Route)`` leaves ``path``, ``endpoint``, ``name`` and ``methods`` to ``Route``): it is
-        unknown, not removed, and the class is an unread entry (UNREAD_BASE), so that the scan
-        says its attributes were not compared.
+        and an attribute the old class set in a method (``self.deprecated = deprecated``) that
+        the new constructor hands to the base's (``super().__init__(deprecated=...)``, a
+        ``**kwargs`` with the key, or no constructor of its own, so that the base's runs) may
+        now be set by the base, which since-cutoff did not read (fastapi 0.143's ``Param
+        (pydantic.fields.FieldInfo)`` passes ``kwargs["deprecated"]`` on): it is unknown, not
+        removed, and the class is an unread entry (UNREAD_BASE), so that the scan says its
+        attributes were not compared. A field or constant of the class body (a pydantic
+        model's ``usage: int``), and an attribute the constructor neither sets nor hands on
+        (fastapi 0.143's ``APIRoute.secure_cloned_response_field``), are removed.
+
+        First, though, an attribute the new class still sets where griffe does not look: in a
+        tuple target (``self.dependant, _ = build(...)``), or in a function of its module the
+        constructor gives ``self`` to (fastapi 0.143's ``_populate_api_route_state(self,
+        path, ...)`` sets ``route.path``). It is there, whatever the bases.
         """
         cls = self.new_object(obj.parent.path)
         if not getattr(cls, "is_class", False):
             return False
+        attribute = _kind_of(obj) == "attribute"
+        if attribute and obj.name in self._attributes_set(cls):
+            return True
         package = self.new.path.split(".")[0]
         for base in getattr(cls, "bases", None) or []:
             path = str(base if isinstance(base, str) else getattr(base, "canonical_path", "") or "")
@@ -1876,11 +1966,50 @@ class _Differ:
                 found = False  # typing's constructs (TypedDict, Generic) set no attributes
             if found or (found is None and _calls_super(obj)):
                 return True
-            if found is None and _kind_of(obj) == "attribute":
+            if (
+                found is None
+                and attribute
+                and obj.name not in _class_body_names(self._class_def(obj.parent))
+                and _handed_to_base(self._init_def(cls), obj.name)
+            ):
                 owner = self.public_path(str(cls.path)) or str(cls.path)
                 self.unread.add(f"{owner}{UNREAD_BASE}{path}")
                 return True
         return False
+
+    def _attributes_set(self, cls: Any) -> set[str]:
+        """The attributes the (new) class's own methods refer to on ``self``, read or set, a
+        tuple target included, and those a function of its module that a method gives
+        ``self`` to assigns on it. griffe lists an attribute only from a plain ``self.x = ...``
+        in a method."""
+        node = self._class_def(cls)
+        if node is None:
+            return set()
+        module = getattr(cls, "module", None)
+        tree = self._source(module).tree if getattr(module, "is_module", False) else None
+        return _self_attributes(node) | _set_by_helpers(node, tree)
+
+    def _class_def(self, cls: Any) -> ast.ClassDef | None:
+        """The parsed ``class`` statement of a griffe class (None when its source cannot be
+        read), kept per class."""
+        key = id(cls)
+        if key not in self._class_defs:
+            self._class_defs[key] = _class_def(cls)
+        return self._class_defs[key]
+
+    def _init_def(self, cls: Any) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        """The parsed constructor the (new) class runs: its own ``__init__``, or one from a
+        base of the package; None when it has none the package defines (the outside base's
+        runs) or its source cannot be read."""
+        try:
+            init = cls.all_members.get("__init__")
+            if getattr(init, "is_alias", False):
+                init = init.final_target
+        except Exception:
+            return None
+        if not getattr(init, "is_function", False):
+            return None
+        return _function_def(init)
 
     def _vendored_attribute(self, path: str, name: str) -> bool | None:
         """Whether the package's own copy of the outside class at ``path`` has ``name``: from
@@ -2990,6 +3119,173 @@ def _calls_super(obj: Any) -> bool:
     return bool(re.search(pattern, source or ""))
 
 
+# ------------------------------------------------------ a class's own source
+def _class_def(cls: Any) -> ast.ClassDef | None:
+    """The parsed ``class`` statement of a griffe class, or None when its source cannot be
+    read or parsed."""
+    node = _parsed(cls)
+    return node if isinstance(node, ast.ClassDef) else None
+
+
+def _function_def(fn: Any) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The parsed ``def`` of a griffe function, or None."""
+    node = _parsed(fn)
+    return node if isinstance(node, _FUNCTIONS) else None
+
+
+def _parsed(obj: Any) -> ast.stmt | None:
+    try:
+        source = textwrap.dedent(obj.source or "")
+        with _quiet():
+            body = ast.parse(source).body
+    except Exception:
+        return None
+    return next((n for n in body if isinstance(n, (ast.ClassDef, *_FUNCTIONS))), None)
+
+
+def _class_body_names(node: ast.ClassDef | None) -> set[str]:
+    """The names a class binds in its body: fields (``usage: int``), constants
+    (``DEFAULT_TIMEOUT = 10``), methods and nested classes."""
+    if node is None:
+        return set()
+    names: set[str] = set()
+    for stmt in node.body:
+        if isinstance(stmt, (ast.ClassDef, *_FUNCTIONS)):
+            names.add(stmt.name)
+        elif isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            names |= {
+                n.id
+                for n in ast.walk(stmt)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+            }
+    return names
+
+
+def _self_attributes(node: ast.ClassDef) -> set[str]:
+    """The attributes the class's methods refer to on their first parameter (``self.x``, read
+    or set, in a tuple target too)."""
+    names: set[str] = set()
+    for fn in node.body:
+        me = _first_parameter(fn)
+        if me is None:
+            continue
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == me:
+                names.add(n.attr)
+    return names
+
+
+def _set_by_helpers(node: ast.ClassDef, module: ast.Module | None) -> set[str]:
+    """The attributes that functions of the class's module assign on the instance a method
+    gives them (fastapi 0.143's ``APIRoute.__init__`` calls ``_populate_api_route_state(self,
+    path, ...)``, which sets ``route.path``)."""
+    if module is None:
+        return set()
+    functions = {n.name: n for n in module.body if isinstance(n, _FUNCTIONS)}
+    names: set[str] = set()
+    for fn in node.body:
+        me = _first_parameter(fn)
+        if me is None:
+            continue
+        for call in ast.walk(fn):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                continue
+            helper = functions.get(call.func.id)
+            if helper is None:
+                continue
+            params = [a.arg for a in (*helper.args.posonlyargs, *helper.args.args)]
+            given = {
+                params[i] for i, a in enumerate(call.args) if _hands(a, me) and i < len(params)
+            }
+            given |= {kw.arg for kw in call.keywords if kw.arg and _hands(kw.value, me)}
+            for n in ast.walk(helper):
+                if (
+                    isinstance(n, ast.Attribute)
+                    and isinstance(n.ctx, ast.Store)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id in given
+                ):
+                    names.add(n.attr)
+    return names
+
+
+def _first_parameter(fn: ast.stmt) -> str | None:
+    """The name a method's first parameter (``self``, ``cls``), or None for a static method
+    or anything that is not a method."""
+    if not isinstance(fn, _FUNCTIONS) or any(_name(d) == "staticmethod" for d in fn.decorator_list):
+        return None
+    first = [*fn.args.posonlyargs, *fn.args.args]
+    return first[0].arg if first else None
+
+
+def _is_name(node: ast.AST, name: str) -> bool:
+    return isinstance(node, ast.Name) and node.id == name
+
+
+def _hands(node: ast.AST, name: str) -> bool:
+    """Is the argument ``name`` itself, or ``cast(SomeType, name)`` (fastapi 0.143 passes
+    ``cast(_APIRouteLike, self)``)?"""
+    if isinstance(node, ast.Call) and _name(node.func) == "cast" and len(node.args) == 2:
+        node = node.args[1]
+    return _is_name(node, name)
+
+
+def _handed_to_base(init: ast.FunctionDef | ast.AsyncFunctionDef | None, name: str) -> bool:
+    """Does the constructor give ``name`` to the base's: ``super().__init__(path, deprecated=
+    ...)`` (``Base.__init__(self, ...)`` too), by name or as a positional of that name, or
+    through a ``**kwargs`` whose dict its body gives the key (``kwargs["deprecated"] = ...``),
+    or its own ``**kwargs`` passed on, which takes the name when no parameter does? Without a
+    constructor (``init`` is None) the base's runs with the arguments: True."""
+    if init is None:
+        return True
+    var_keyword = init.args.kwarg.arg if init.args.kwarg is not None else None
+    params = {a.arg for a in (*init.args.posonlyargs, *init.args.args, *init.args.kwonlyargs)}
+    for call in ast.walk(init):
+        if not isinstance(call, ast.Call) or not _is_base_init(call.func):
+            continue
+        handed = {kw.arg for kw in call.keywords if kw.arg}
+        handed |= {a.id for a in call.args if isinstance(a, ast.Name)}
+        starred = [kw.value for kw in call.keywords if kw.arg is None]
+        if starred:
+            handed |= _dict_keys(init)
+            if name not in params and any(_is_name(s, var_keyword or "") for s in starred):
+                return True
+        if name in handed:
+            return True
+    return False
+
+
+def _is_base_init(func: ast.expr) -> bool:
+    """``super().__init__``, ``super(Cls, self).__init__`` or ``Base.__init__``."""
+    if not isinstance(func, ast.Attribute) or func.attr != "__init__":
+        return False
+    value = func.value
+    if isinstance(value, ast.Call):
+        return _is_name(value.func, "super")
+    return isinstance(value, (ast.Name, ast.Attribute))
+
+
+def _dict_keys(node: ast.AST) -> set[str]:
+    """The string keys the code puts in dicts: ``d["k"] = v``, ``{"k": v}``, ``d.setdefault("k",
+    v)`` and the keywords of calls (``dict(k=v)``, ``d.update(k=v)``)."""
+    keys: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store):
+            if isinstance(n.slice, ast.Constant) and isinstance(n.slice.value, str):
+                keys.add(n.slice.value)
+        elif isinstance(n, ast.Dict):
+            keys |= {
+                k.value for k in n.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+        elif isinstance(n, ast.Call):
+            keys |= {kw.arg for kw in n.keywords if kw.arg}
+            if _name(n.func) == "setdefault" and n.args:
+                first = n.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    keys.add(first.value)
+    return keys
+
+
 # --------------------------------------------------------------- module sources
 _ALWAYS, _SOMETIMES, _MAIN = "always", "sometimes", "main"
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -3781,6 +4077,31 @@ def _unsubscripted(expr: Any) -> str:
     return str(getattr(expr, "canonical_path", "") or "")
 
 
+def _open_typed_dict(node: ast.ClassDef | None) -> bool:
+    """Does the TypedDict class (its parsed ``class`` statement) take keys it does not name:
+    PEP 728's ``extra_items=`` or ``closed=False``? griffe keeps no class keywords."""
+    for kw in node.keywords if node is not None else ():
+        if kw.arg == "extra_items":
+            return True
+        if kw.arg == "closed" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+            return True
+    return False
+
+
+def _bound_parameter(fn: Any) -> Any:
+    """The parameter a method is bound on (``self``, ``cls``): its first, unless it is a static
+    method; None for a function."""
+    parent = getattr(fn, "parent", None)
+    if not getattr(parent, "is_class", False) or "staticmethod" in (
+        getattr(fn, "labels", None) or ()
+    ):
+        return None
+    try:
+        return next(iter(fn.parameters), None)
+    except Exception:
+        return None
+
+
 def _typing_path(path: str) -> str:
     """``typing_extensions.X`` as ``typing.X``, which the standard library has (and
     :func:`_outside_attribute` can look at); any other path as it is."""
@@ -3794,6 +4115,39 @@ def _api_anchor(obj: Any) -> Any:
     while obj is not None and getattr(getattr(obj, "parent", None), "is_class", False):
         obj = obj.parent
     return obj
+
+
+def _api_docstring(obj: Any) -> str:
+    """The object's docstring, or, for a value made of a function (``convert = deprecated(
+    "0.1")(_convert)``), the function's; "" when there is none or it cannot be read."""
+    try:
+        doc = obj.docstring
+        text = str(getattr(doc, "value", "")).strip() if doc is not None else ""
+    except Exception:
+        return ""
+    if text or not getattr(obj, "is_attribute", False):
+        return text
+    wrapped = _wrapped_function(obj)
+    return _api_docstring(wrapped) if wrapped is not None else ""
+
+
+def _wrapped_function(obj: Any) -> Any:
+    """The function of the attribute's own module that its value is a call on (``deprecated(
+    "0.1.16", alternative=...)(_impl)`` is ``_impl`` with a warning), or None."""
+    value = getattr(obj, "value", None)
+    parent = getattr(obj, "parent", None)
+    arguments = getattr(value, "arguments", None)
+    if type(value).__name__ != "ExprCall" or parent is None or arguments is None:
+        return None
+    for arg in arguments:
+        name = getattr(arg, "name", None) if type(arg).__name__ == "ExprName" else None
+        try:
+            member = parent.members.get(name) if name else None
+        except Exception:
+            return None
+        if getattr(member, "is_function", False):
+            return member
+    return None
 
 
 def _close(names: list[str], name: str) -> list[str]:

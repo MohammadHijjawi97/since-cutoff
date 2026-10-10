@@ -346,8 +346,12 @@ class Tools:
             head.append(f"- Warning: {unread_warning(scan)}")
         changes = scan.distinct
         head.append(f"- {_counts(changes)}")
+        wanted = (symbol or "").strip()
+        if wanted and _names_package(wanted, name, changes):
+            head.append(f'- symbol "{wanted}" names the package itself, so no filter was applied')
+            wanted = ""
         internal = len(internal_changes(changes))
-        if not include_internal:
+        if not wanted and not include_internal:
             changes = public_changes(changes)
         if not changes:
             none = "No breaking changes or new deprecations found"
@@ -355,22 +359,33 @@ class Tools:
                 none += f" in the public API; include_internal=true lists the {internal} internal"
             return "\n".join([*head, "", f"{none}."]) + "\n"
 
-        wanted = (symbol or "").strip()
-        if wanted and _names_package(wanted, name, changes):
-            head.append(f'- symbol "{wanted}" names the package itself, so no filter was applied')
-        elif wanted:
-            total = len(changes)
+        if wanted:
+            # The symbol is matched against every change, the internal ones included: a
+            # question about an API asks for its changes, whichever tier they are.
+            total = len(changes if include_internal else public_changes(changes))
             changes, loose = _matching(changes, wanted)
+            listed = changes if include_internal else public_changes(changes)
+            hidden = len(changes) - len(listed)
             if loose and changes:
                 bare = _symbol_terms(wanted)[0][-1]
                 head.append(
                     f'- nothing names "{wanted}" exactly; showing the {len(changes)} changes '
                     f"to any `{bare}`, which may be unrelated"
                 )
+            elif changes and not listed:
+                head.append(
+                    f'- {len(changes)} of them match symbol "{wanted}", in internal APIs '
+                    "(listed since the symbol asks for them)"
+                )
             else:
-                head.append(f'- {len(changes)} of them match symbol "{wanted}"')
+                more = f"; {hidden} more in internal APIs (include_internal=true lists them)"
+                head.append(
+                    f'- {len(listed)} of them match symbol "{wanted}"{more if hidden else ""}'
+                )
             if not changes:
                 return "\n".join([*head, "", _no_match(wanted, old, new, total)]) + "\n"
+            if listed:
+                changes = listed
         shown = _share(changes, max(1, limit))
         out = [*head, *_sections(shown)]
         if len(shown) < len(changes):
@@ -847,25 +862,24 @@ def _share(changes: list[APIChange], limit: int) -> list[APIChange]:
 
 
 def _counts(changes: list[APIChange]) -> str:
-    """``5 breaking changes, 1 new deprecation (removed or moved 3, parameters removed 2)``,
-    counting the changes to public APIs, with `` (+N internal)`` for the others among
-    ``changes``."""
+    """``5 breaking changes, 1 new deprecation (removed or moved 3, parameters removed 2, +4
+    internal)``, counting the changes to public APIs, with ``+N internal`` last for the others
+    among ``changes``."""
     public = public_changes(changes)
     breaking = sum(c.kind != DEPRECATED for c in public)
     per_section = [0] * len(_SECTIONS)
     for c in public:
         per_section[_section_of(c)] += 1
-    detail = ", ".join(
+    parts = [
         f"{title.split(' (')[0].lower()} {n}"
         for (title, _), n in zip(_SECTIONS, per_section, strict=True)
         if n
-    )
+    ]
+    if internal := len(changes) - len(public):
+        parts.append(f"+{internal} internal")
     deprecations = len(public) - breaking
     total = f"{_plural(breaking, 'breaking change')}, {_plural(deprecations, 'new deprecation')}"
-    internal = len(changes) - len(public)
-    return (f"{total} ({detail})" if detail else total) + (
-        f" (+{internal} internal)" if internal else ""
-    )
+    return f"{total} ({', '.join(parts)})" if parts else total
 
 
 _CALL = re.compile(r"\([^()]*\)")
