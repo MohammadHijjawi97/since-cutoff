@@ -65,7 +65,7 @@ donne le même diff à n'importe quel agent.
 Le [projet d'exemple](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)
 appelle `client.messages.create` et épingle anthropic 1.8.0. La dernière version d'anthropic à la
 date limite d'entraînement de Claude Sonnet 4.5 était la 0.60.0, dont `create` acceptait encore
-`temperature` ; la 1.8.0 lève `TypeError` pour ce paramètre. Ce qu'affiche `scan`, réduit à la
+`temperature` ; la 1.8.0 lève `TypeError` pour ce paramètre. Ce qu'affiche `scan`, réduit à la
 partie anthropic :
 
 ```console
@@ -116,7 +116,7 @@ bloc lui-même, pour qu'une modification à la main se voie) et un en-tête qui 
 date limite et le fichier d'où viennent les versions, explique les étiquettes et précise
 qu'aucun code de bibliothèque n'a été exécuté. Le bloc entier fait environ 420 tokens. Le texte
 hors du bloc garde ses octets, et `since-cutoff unapply` retire le bloc. Après une mise à jour,
-relancez `sync` ; `sync --check` dans la CI et `status` hors ligne vous préviennent quand les
+relancez `sync` ; `sync --check` dans la CI et `status` hors ligne vous préviennent quand les
 notes ne sont plus à jour ([Tenir les notes à jour](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#tenir-les-notes-à-jour-avec-sync-et-status)).
 
 **Essayez-le sur votre projet.** Aucune clé d'API, aucun appel au modèle. À la racine du projet :
@@ -151,7 +151,7 @@ l'IA, c'est le cas de la plupart ([Le problème](https://github.com/MohammadHijj
 
 Ce qu'il ne fait pas :
 
-- appeler un modèle, sauf `run` : `scan`, `sync`, `status`, le serveur MCP, l'action et les hooks
+- appeler un modèle, sauf `run` : `scan`, `sync`, `status`, le serveur MCP, l'action et les hooks
   n'ont besoin d'aucune clé d'API ;
 - exécuter du code de paquet ou du code écrit par le modèle : les paquets sont lus de façon
   statique, et les réponses ne passent que par le vérificateur de types ;
@@ -184,7 +184,7 @@ qui épingle six de ses neuf dépendances sur les versions actuelles (pour les t
 | bibliothèque | version à la date limite | épinglée | ce qui a changé |
 |---|---|---|---|
 | anthropic | 0.60.0 | 1.8.0 | `messages.create(temperature=..., top_p=..., top_k=...)` n'est plus accepté |
-| huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` : retirés de la signature en 1.0 (la 2.0.0 les accepte encore à l'exécution, les ignore et émet un avertissement) |
+| huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` : retirés de la signature en 1.0 (la 2.0.0 les accepte encore à l'exécution, les ignore et émet un avertissement) |
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()` et `llm.predict()` supprimés |
 | openai | 1.98.0 | 3.19.2 | 22 changements incompatibles, 6 nouvelles dépréciations |
 
@@ -479,10 +479,10 @@ signature peut encore être accepté par l'API.
 **AGENTS.md ou CLAUDE.md ?** `sync` écrit dans AGENTS.md ; dans CLAUDE.md si seul ce fichier
 existe ; et dans celui des deux qui a déjà un bloc (`--target` désigne n'importe quel fichier).
 Claude Code lit CLAUDE.md, et AGENTS.md seulement si CLAUDE.md l'importe avec une ligne
-`@AGENTS.md` ; quand les notes vont dans AGENTS.md et que CLAUDE.md ne l'importe pas, `scan` et
+`@AGENTS.md` ; quand les notes vont dans AGENTS.md et que CLAUDE.md ne l'importe pas, `scan` et
 `sync` le signalent. Pour garder une seule copie, ajoutez `@AGENTS.md` à CLAUDE.md. Pour avoir un
 bloc dans les deux fichiers, écrivez le second une fois avec
-`sync --target CLAUDE.md --model <le même modèle>` ; ensuite `sync` met les deux à jour et
+`sync --target CLAUDE.md --model <le même modèle>` ; ensuite `sync` met les deux à jour et
 `status` rend compte des deux. L'écriture dans les deux par défaut fait l'objet de
 [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
 
