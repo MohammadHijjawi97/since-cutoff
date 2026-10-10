@@ -1614,11 +1614,8 @@ INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 
 def default_target(root: Path, explicit: str | None = None) -> Path:
     """The file for a first block: ``explicit`` (``--target``, relative to the project), else
-    AGENTS.md, or CLAUDE.md when only that one exists.
-
-    Claude Code reads only CLAUDE.md when both exist; writing to both, or to AGENTS.md only
-    when CLAUDE.md imports it with ``@AGENTS.md``, is issue #13 (not changed here; see
-    :func:`block_targets`).
+    AGENTS.md, or CLAUDE.md when only that one exists. With both files, :func:`block_targets`
+    adds CLAUDE.md unless it imports AGENTS.md (issue #13).
     """
     if explicit:
         p = Path(explicit)
@@ -1636,19 +1633,41 @@ def block_targets(root: Path, explicit: str | None = None) -> list[Path]:
     2. otherwise each of AGENTS.md and CLAUDE.md that already has a block (or since-cutoff
        markers that cannot be read, which reading it then reports), so that a block stays
        where it was written (``run --apply --target CLAUDE.md``) and none is left behind;
-    3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists.
+    3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists;
+       with both files, AGENTS.md and CLAUDE.md, unless CLAUDE.md imports AGENTS.md
+       (:func:`imports_agents`), which is then the only one (issue #13).
 
-    Issue #13 (a good first issue) is the case of both files and no block yet. Claude Code
-    reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md imports it with
-    ``@AGENTS.md`` (outside code spans and fenced blocks). The plan for it: with that import,
-    AGENTS.md only (removing a block left in CLAUDE.md); without it, both files, with the tip
-    "add `@AGENTS.md` to CLAUDE.md to keep one copy". Until then that case keeps 0.3's
-    choice, AGENTS.md.
+    Claude Code reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md
+    imports it with ``@AGENTS.md``; the agents that read AGENTS.md (Codex, Cursor, Copilot)
+    do not read CLAUDE.md. A block already in one file stays the only one (2.): the tip
+    (:func:`agents_import_tip`) says what Claude Code needs.
     """
     if explicit:
         return [default_target(root, explicit)]
     found = [root / name for name in INSTRUCTION_FILES if has_markers(root / name)]
-    return found or [default_target(root)]
+    if found:
+        return found
+    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
+    if agents.exists() and claude.is_file() and not imports_agents(claude):
+        return [agents, claude]
+    return [default_target(root)]
+
+
+# ``@AGENTS.md`` (or ``@./AGENTS.md``) after a space or at the start of a line: Claude Code's
+# import, which it does not read inside a code span or a fenced block.
+_AGENTS_IMPORT = re.compile(r"(?<!\S)@(?:\./)?AGENTS\.md(?![\w/-])")
+_FENCED = re.compile(r"(?ms)^[ \t]{0,3}(`{3,}|~{3,}).*?(?:^[ \t]{0,3}\1[ \t]*$|\Z)")
+_CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
+
+
+def imports_agents(claude: Path) -> bool:
+    """Whether CLAUDE.md imports AGENTS.md with ``@AGENTS.md``, outside code spans and fenced
+    blocks, as Claude Code reads imports. A file that cannot be read imports nothing."""
+    try:
+        text = _read(claude)
+    except (OSError, UnicodeDecodeError):
+        return False
+    return bool(_AGENTS_IMPORT.search(_CODE_SPAN.sub("", _FENCED.sub("", text))))
 
 
 # What says to add: ``@AGENTS.md`` in CLAUDE.md is how Claude Code reads AGENTS.md too.
@@ -1656,25 +1675,23 @@ AGENTS_IMPORT_TIP = (
     "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md: "
     "add a line `@AGENTS.md` to CLAUDE.md"
 )
+# Both files have the block because CLAUDE.md does not import AGENTS.md (issue #13).
+TWO_COPIES_TIP = (
+    "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one copy, add "
+    "a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target CLAUDE.md`"
+)
 
 
 def agents_import_tip(root: Path, targets: Sequence[Path]) -> str | None:
-    """:data:`AGENTS_IMPORT_TIP` when the notes go to AGENTS.md (``targets``) and not to
-    CLAUDE.md, although a CLAUDE.md exists that does not mention ``@AGENTS.md``: Claude Code
-    then reads only CLAUDE.md. None otherwise.
-
-    A plain text search, so ``@AGENTS.md`` inside a code span counts too: choosing the files
-    for this case (both files, or AGENTS.md alone with the import) is issue #13, which will
-    also read the import as Claude Code does, outside code; this tip is only until then.
+    """What to do when CLAUDE.md does not import AGENTS.md (:func:`imports_agents`) and the
+    notes go to AGENTS.md (``targets``): :data:`TWO_COPIES_TIP` when they go to CLAUDE.md
+    too, :data:`AGENTS_IMPORT_TIP` when they do not (a block already in AGENTS.md alone), as
+    Claude Code then reads only CLAUDE.md. None otherwise.
     """
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents not in targets or claude in targets or not claude.is_file():
+    if agents not in targets or not claude.is_file() or imports_agents(claude):
         return None
-    try:
-        text = _read(claude)
-    except (OSError, UnicodeDecodeError):
-        return None
-    return None if re.search(r"@(?:\./)?AGENTS\.md", text) else AGENTS_IMPORT_TIP
+    return TWO_COPIES_TIP if claude in targets else AGENTS_IMPORT_TIP
 
 
 _MARKER_LINE = re.compile(

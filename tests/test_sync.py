@@ -608,6 +608,14 @@ def test_sync_json_requires_noninteractive_mode(sc, tmp_path, capsys, monkeypatc
     captured = capsys.readouterr()
     assert code == 2 and captured.out == ""
     assert "--yes" in captured.err and "--check" in captured.err and "--dry-run" in captured.err
+    # Any other failure (exit code 1) leaves stdout empty too, as the README says.
+    code = cli.main(["sync", str(tmp_path / "missing"), "--json", "--yes"])
+    captured = capsys.readouterr()
+    assert code == 1 and captured.out == "" and captured.err
+    # And the help says what --json needs.
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["sync", "--help"])
+    assert "JSON (needs --yes, --check or --dry-run)" in " ".join(capsys.readouterr().out.split())
 
 
 def test_sync_asks_before_writing(sc, tmp_path, monkeypatch) -> None:
@@ -880,8 +888,8 @@ def test_targets_are_the_files_that_have_a_block_else_the_first_choice(tmp_path)
     write(root / "CLAUDE.md", "mine\n")
     assert block_targets(root) == [root / "CLAUDE.md"]  # only CLAUDE.md
     write(root / "AGENTS.md", "mine\n")
-    # Both, and no block yet: AGENTS.md, as 0.3 chose (issue #13 is this case).
-    assert block_targets(root) == [root / "AGENTS.md"]
+    # Both, no block yet, and CLAUDE.md does not import AGENTS.md: both (issue #13).
+    assert block_targets(root) == [root / "AGENTS.md", root / "CLAUDE.md"]
     write(root / "CLAUDE.md", f"mine\n{BLOCK_START}\nx\n{BLOCK_END}\n")
     assert block_targets(root) == [root / "CLAUDE.md"]  # where the block is
     write(root / "AGENTS.md", f"{BLOCK_START}\nbroken\n")  # its reader reports it
@@ -908,13 +916,6 @@ def test_sync_updates_the_block_where_it_is(sc, tmp_path) -> None:
     assert "Updated AGENTS.md" in out and "Updated CLAUDE.md" in out
 
 
-ISSUE_13 = pytest.mark.xfail(
-    strict=True,
-    reason="issue #13 (good first issue): both AGENTS.md and CLAUDE.md, and no block yet",
-)
-
-
-@ISSUE_13
 def test_13_with_an_agents_import_only_agents_md_gets_the_block(tmp_path) -> None:
     write(tmp_path / "AGENTS.md", "mine\n")
     write(tmp_path / "CLAUDE.md", "@AGENTS.md\n")
@@ -923,7 +924,6 @@ def test_13_with_an_agents_import_only_agents_md_gets_the_block(tmp_path) -> Non
     assert block_targets(tmp_path) == [tmp_path / "AGENTS.md", tmp_path / "CLAUDE.md"]
 
 
-@ISSUE_13
 def test_13_an_import_inside_code_does_not_count(tmp_path) -> None:
     write(tmp_path / "AGENTS.md", "mine\n")
     write(tmp_path / "CLAUDE.md", "Write `@AGENTS.md` to import it.\n")

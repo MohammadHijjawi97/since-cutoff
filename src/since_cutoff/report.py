@@ -60,6 +60,7 @@ from since_cutoff.engine import (
     ScanResult,
     UsedAPI,
 )
+from since_cutoff.errors import METAPACKAGE
 from since_cutoff.notes import (
     EVIDENCE_LIBRARY,
     EVIDENCE_METADATA,
@@ -402,16 +403,8 @@ def headline(
         new = s["dependencies_newer_than_model"]
         lines.append(Text(f"{_deps(new)} did not exist yet at the cutoff", style="dim"))
     if s["dependencies_skipped"]:
-        skipped, total = s["dependencies_skipped"], s["dependencies_total"]
-        first = next((p.reason for p in scan.skipped if p.reason), "")
-        if first:
-            first = ("; for example: " if skipped > 1 else ": ") + clip(first, REASON_WIDTH)
-        lines.append(
-            Text(
-                f"{skipped} of {_deps(total)} could not be checked{first}",
-                style="yellow",
-            )
-        )
+        not_checked = _not_checked(scan, s["dependencies_total"])
+        lines += [Text(t, style=style) for t, style in not_checked]
     if run is not None and run.probes:
         p = s["probes"]
         text = Text.assemble(
@@ -902,8 +895,7 @@ def scan_lines(
             ),
             at=width,
         )
-        # Issue #13 will choose the files for both AGENTS.md and CLAUDE.md; until then, say
-        # what Claude Code needs to read notes written to AGENTS.md.
+        # Both AGENTS.md and CLAUDE.md, and no `@AGENTS.md` in CLAUDE.md (issue #13).
         tip = agents_import_tip(scan.project.root, block_targets(scan.project.root))
         if tip:
             prose(f"{tip}.", "yellow", at=width)
@@ -920,14 +912,26 @@ def scan_lines(
             out.append(Text(IMPORTED_COMMAND))
         else:
             out.append(Text("No notes to write."))
-    if scan.skipped:
-        skipped = len(scan.skipped)
-        first = next((p.reason for p in scan.skipped if p.reason), "")
-        why = ("; for example: " if skipped > 1 else ": ") + clip(first, REASON_WIDTH)
-        total = _deps(len(scan.packages))
-        prose(f"{skipped} of {total} could not be checked{why if first else ''}", "yellow")
+    for text, style in _not_checked(scan, len(scan.packages)):
+        prose(text, style)
     out += [Text(f"! {w}", "yellow") for w in scan.warnings if w not in shown]
     return out
+
+
+def _not_checked(scan: ScanResult, total: int | None = None) -> list[tuple[str, str]]:
+    """The lines on the dependencies the scan skipped, with their style: "N of M could not be
+    checked" for those it failed on, and each metapackage as information (it has no API of
+    its own, and its parts are dependencies of their own: errors.METAPACKAGE)."""
+    meta = [p.reason for p in scan.skipped if p.reason and METAPACKAGE in p.reason]
+    failed = [p for p in scan.skipped if not (p.reason and METAPACKAGE in p.reason)]
+    lines = []
+    if failed:
+        first = next((p.reason for p in failed if p.reason), "")
+        if first:
+            first = ("; for example: " if len(failed) > 1 else ": ") + clip(first, REASON_WIDTH)
+        of = _deps(len(scan.packages) if total is None else total)
+        lines.append((f"{len(failed)} of {of} could not be checked{first}", "yellow"))
+    return lines + [(reason, "dim") for reason in meta]  # at most three parts: not clipped
 
 
 def _after(scan: ScanResult) -> str:
@@ -2092,7 +2096,8 @@ def _note_detail(run: RunResult, note: Note) -> dict[str, Any]:
 
 def target_names(scan: ScanResult) -> list[str]:
     """The files the notes would be written to, as ``sync`` and ``run --apply`` choose them
-    (:func:`notes.block_targets`; issue #13 is the case of both AGENTS.md and CLAUDE.md)."""
+    (:func:`notes.block_targets`: both AGENTS.md and CLAUDE.md when CLAUDE.md does not import
+    AGENTS.md)."""
     root = scan.project.root
     names = []
     for target in block_targets(root):

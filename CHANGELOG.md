@@ -20,6 +20,42 @@
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
+- With both AGENTS.md and CLAUDE.md and no block yet, `sync` and `run --apply` write the block
+  to both files when CLAUDE.md does not import AGENTS.md, and to AGENTS.md alone when it does
+  (#13): Claude Code reads only CLAUDE.md unless it imports AGENTS.md with `@AGENTS.md`
+  (outside code spans and fenced blocks, as Claude Code reads imports), and Codex, Cursor and
+  Copilot read only AGENTS.md. The block went to AGENTS.md alone, where Claude Code never saw
+  it. `scan`, `sync` and now `status` (its text and `status --json`; `status --hook` stays
+  quiet) say "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one
+  copy, add a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target
+  CLAUDE.md`". A block already in AGENTS.md alone stays the only one, with the tip that
+  Claude Code does not read it, now also from `status`.
+- The model registry takes the first listing of a model id that has a training cutoff, and
+  only among those prefers the requested provider, then the maker's own listing (#87). The
+  maker's entry for a new model often has no cutoff yet while a gateway's or reseller's has,
+  so `opencode/glm-5.1`, Together's and DeepInfra's GLM-5 and the routes of Qwen3.5-397B-A17B
+  stopped with "models.dev has no knowledge cutoff"; a dated snapshot without a cutoff
+  (`claude-sonnet-4-20250514`) takes the model's. A model the maker does not list is found in
+  the gateway's or reseller's own listing by its bare id: Amazon Bedrock's
+  `qwen.qwen3-coder-480b-a35b-v1:0`, Cloudflare's `@cf/meta/llama-3.2-3b-instruct`,
+  OpenRouter's `aion-labs/aion-rp-llama-3.1-8b`. `meta` is no longer an alias of `llama`:
+  models.dev has a provider `meta` of its own (Meta's Muse Spark models); Meta's Llama API
+  stays `llama`.
+- `since-cutoff models` takes `--json` (#25): `{"source": ..., "models": [...]}`, each model
+  with `provider`, `id`, `name`, `family`, `training_cutoff` as models.dev writes it,
+  `cutoff_date` as since-cutoff uses it and `released`, in the table's order, whether or not
+  stdout is a terminal. `--makers` lists only the model makers' own entries, without the
+  gateways and resellers that list the same ids.
+- The MCP tool `api_changes` carries the "older copy from the cache" warning also in its reply
+  that a package had no release by the cutoff: the copy may not know an older release either.
+  That reply was built before the check.
+- A metapackage is reported as information, not as a failure: "llama-index 0.14.25 is a
+  metapackage with no API of its own; its parts are dependencies of their own, checked like
+  any other: llama-index-core, ..." on a line of its own in `scan` and `run`, and with a `•`
+  in `sync`, in place of "1 of 3 dependencies could not be checked: llama-index 0.14.25 is a
+  metapackage without code of its own: it installs ...; check those packages instead".
+- `sync --json`'s help says it needs `--yes`, `--check` or `--dry-run`, and the README that
+  stdout stays empty whenever sync fails, not only on a usage error.
 - `sync --json` reports proposals and write results for scripts, with progress on stderr.
   It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.

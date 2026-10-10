@@ -7,7 +7,7 @@
 - a `[type-checked]` note stays only while the code uses its API;
 - files without a final line break, with a byte order mark, in a folder that is not there;
 - the header and `status` name every file the versions come from;
-- a tip when the notes go to AGENTS.md and CLAUDE.md does not import it (until #13);
+- with AGENTS.md and a CLAUDE.md that does not import it, the block in both, and a tip (#13);
 - smaller wording: the hint without a model setting, `--fail-on` repeated, warnings once.
 
 The fake PyPI and the offline CLI are test_sync.py's.
@@ -38,7 +38,10 @@ from since_cutoff.notes import (
     BLOCK_START,
     NOTE_MODEL,
     TAG_TYPE_CHECKED,
+    TWO_COPIES_TIP,
     Note,
+    block_targets,
+    imports_agents,
     parse_block,
     remove_block,
     render_block,
@@ -382,24 +385,82 @@ def test_status_names_every_file_the_versions_come_from(sc, status, tmp_path) ->
 
 
 # --------------------------------------------- AGENTS.md and CLAUDE.md (issue #13)
-def test_a_tip_when_claude_md_does_not_import_agents_md(sc, tmp_path, cache, pypi) -> None:
-    """Both files, and CLAUDE.md without ``@AGENTS.md``: the notes go to AGENTS.md (which files
-    get them in this case is issue #13), which Claude Code then does not read."""
+def _said(lines: list[Text]) -> str:
+    return " ".join(" ".join(line.plain for line in lines).split())
+
+
+def test_both_files_get_the_block_when_claude_md_does_not_import_agents_md(
+    sc, status, tmp_path, cache, pypi
+) -> None:
+    """Issue #13: both files, and CLAUDE.md without ``@AGENTS.md``. Claude Code reads only
+    CLAUDE.md, Codex, Cursor and Copilot only AGENTS.md, so the block goes to both, and scan,
+    sync in each of its modes (stdout is not a terminal here, as in a pipe) and status say how
+    to keep one copy, until CLAUDE.md imports AGENTS.md."""
     root = make_app(tmp_path)
     write(root / "AGENTS.md", MINE)
     write(root / "CLAUDE.md", "# Claude\n\nUse tabs.\n")
+    tip = f"! {TWO_COPIES_TIP}."
+    code, out = sc("sync", root, *SONNET, "--dry-run")
+    assert code == EXIT_OK and tip in " ".join(out.split()) and "Nothing written" in out
+    assert BLOCK_START not in agents(root) + (root / "CLAUDE.md").read_text()
     code, out = sc("sync", root, *SONNET, "--yes")
-    assert code == EXIT_OK and f"! {AGENTS_IMPORT_TIP}." in " ".join(out.split())
+    assert code == EXIT_OK and tip in " ".join(out.split())
+    assert BLOCK_START in agents(root) and BLOCK_START in (root / "CLAUDE.md").read_text()
+    assert (root / "CLAUDE.md").read_text().startswith("# Claude\n\nUse tabs.\n")
+    code, out = sc("sync", root, "--yes")  # up to date: said again
+    assert code == EXIT_OK and tip in " ".join(out.split())
+    code, out = status(root)
+    assert code == EXIT_OK and f"  ({TWO_COPIES_TIP})" in out.splitlines()
+    code, out = status(root, "--json")
+    targets = {t["file"]: t for t in json.loads(out)["targets"]}
+    assert code == EXIT_OK and sorted(targets) == ["AGENTS.md", "CLAUDE.md"]
+    assert TWO_COPIES_TIP in targets["AGENTS.md"]["notes"]
+    assert {t["state"] for t in targets.values()} == {"current"}
+    assert status(root, "--hook") == (EXIT_OK, "")  # a session start is not nagged
     scan = scan_app(root, cache, pypi, date(2025, 7, 31))
-
-    def said(lines: list[Text]) -> str:
-        return " ".join(" ".join(line.plain for line in lines).split())
-
-    assert f"{AGENTS_IMPORT_TIP}." in said(scan_lines(scan))
-    write(root / "CLAUDE.md", "@AGENTS.md\n")
+    assert "writes them to AGENTS.md and CLAUDE.md" in _said(scan_lines(scan))
+    assert f"{TWO_COPIES_TIP}." in _said(scan_lines(scan))
+    # What the tip says: the import, and the copy in CLAUDE.md removed.
+    write(root / "CLAUDE.md", (root / "CLAUDE.md").read_text() + "\n@AGENTS.md\n")
+    assert sc("unapply", root, "--target", "CLAUDE.md")[0] == EXIT_OK
     code, out = sc("sync", root, "--yes")
     assert code == EXIT_OK and "does not import" not in out
-    assert "does not import" not in said(scan_lines(scan))
+    assert BLOCK_START in agents(root) and BLOCK_START not in (root / "CLAUDE.md").read_text()
+    assert "does not import" not in _said(scan_lines(scan))
+    assert "does not import" not in status(root)[1]
+
+
+def test_with_the_import_only_agents_md_gets_the_block(sc, tmp_path, cache, pypi) -> None:
+    """Issue #13: CLAUDE.md imports AGENTS.md, so Claude Code reads AGENTS.md: one copy. An
+    ``@AGENTS.md`` in a code span or a fenced block is not an import, as Claude Code reads it."""
+    root = make_app(tmp_path)
+    write(root / "AGENTS.md", MINE)
+    write(root / "CLAUDE.md", "# Claude\n\nSee @AGENTS.md for the rules.\n")
+    code, out = sc("sync", root, *SONNET, "--yes")
+    assert code == EXIT_OK and "does not import" not in out
+    assert BLOCK_START in agents(root) and BLOCK_START not in (root / "CLAUDE.md").read_text()
+    assert "writes them to AGENTS.md and keeps them" in _said(
+        scan_lines(scan_app(root, cache, pypi, date(2025, 7, 31)))
+    )
+    for code_only in ("Write `@AGENTS.md` to import it.\n", "```\n@AGENTS.md\n```\n"):
+        write(root / "CLAUDE.md", code_only)
+        assert block_targets(root) == [root / "AGENTS.md"]  # the block stays where it is
+        assert not imports_agents(root / "CLAUDE.md")
+
+
+def test_a_tip_when_a_block_in_agents_md_alone_is_not_imported(sc, status, tmp_path) -> None:
+    """A block written to AGENTS.md alone (before #13, or with ``--target AGENTS.md``) stays
+    the only one; when CLAUDE.md does not import AGENTS.md, Claude Code does not read it."""
+    root = make_app(tmp_path)
+    write(root / "AGENTS.md", MINE)
+    assert sc("sync", root, *SONNET, "--yes")[0] == EXIT_OK
+    write(root / "CLAUDE.md", "# Claude\n\nUse tabs.\n")
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK and f"! {AGENTS_IMPORT_TIP}." in " ".join(out.split())
+    assert BLOCK_START not in (root / "CLAUDE.md").read_text()
+    assert f"  ({AGENTS_IMPORT_TIP})" in status(root)[1].splitlines()
+    code, out = sc("sync", root, *SONNET, "--target", "CLAUDE.md", "--dry-run")
+    assert code == EXIT_OK and "does not import" not in out
 
 
 # ---------------------------------------------------------------- wording

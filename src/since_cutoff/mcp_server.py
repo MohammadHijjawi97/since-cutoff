@@ -296,7 +296,7 @@ class Tools:
             target = self._target(model, cutoff, needs="`from_version`")
             at_cutoff = self.pypi.version_at(name, target.cutoff)
             if at_cutoff is None:
-                return _newer_than_cutoff(name, new, target)
+                return _newer_than_cutoff(name, new, target, self._stale_of(name))
             old = at_cutoff
             old_role = f"the newest release on or before {target.cutoff} ({target.label})"
 
@@ -308,7 +308,7 @@ class Tools:
         ]
         if target is not None and target.note:
             head.append(f"- {target.note}")
-        stale = {k: v for k, v in self.pypi.stale.items() if k == canonicalize_name(name)}
+        stale = self._stale_of(name)
         if stale:  # releases after the cached copy are unknown, so "to" may not be the latest
             head.append(f"- Warning: {stale_warning(stale)}")
         if new.parsed <= old.parsed:
@@ -457,6 +457,11 @@ class Tools:
             reporter=reporter,
             processes=self.processes,
         )
+
+    def _stale_of(self, name: str) -> dict[str, date]:
+        """``name``'s entry in :attr:`PyPI.stale`: the day of the older cached release list a
+        reply rests on when PyPI could not be reached, for its warning."""
+        return {k: v for k, v in self.pypi.stale.items() if k == canonicalize_name(name)}
 
     def _target(self, model: str | None, cutoff: str | None, *, needs: str = "") -> Target:
         model = (model or "").strip() or None
@@ -796,14 +801,22 @@ def _placeholder_note(old: Release, new: Release) -> str:
     )
 
 
-def _newer_than_cutoff(name: str, latest: Release, target: Target) -> str:
-    return (
+def _newer_than_cutoff(
+    name: str, latest: Release, target: Target, stale: dict[str, date] | None = None
+) -> str:
+    """The reply when the package had no release by the cutoff; with ``stale`` (the day of the
+    older cached release list it rests on, see :meth:`Tools._stale_of`), the same warning as
+    the other replies, since a release that copy does not know may be older than the cutoff."""
+    text = (
         f"# {name}: no release on or before the cutoff\n\n"
         f"{name} had no release on or before {target.cutoff.isoformat()} "
         f"({target.label}); {latest.version} was published {_day(latest)}. Its whole API was "
         "released after your reported training cutoff, so it may be missing from your training "
         "data: read its documentation or source before using it.\n"
     )
+    if stale:
+        text += f"\n- Warning: {stale_warning(stale)}\n"
+    return text
 
 
 def _share(changes: list[APIChange], limit: int) -> list[APIChange]:

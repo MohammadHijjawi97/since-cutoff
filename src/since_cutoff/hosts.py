@@ -214,7 +214,8 @@ def hosted_spec(provider: str | None, model: str) -> str:
 
     A provider since-cutoff can call keeps the model as written (``openrouter:anthropic/...``).
     Otherwise the model is named after its maker (``github-copilot/gpt-5.4`` -> ``openai:gpt-5.4``),
-    else after the provider, which the model registry may still know (``groq:...``).
+    else after the provider, which the model registry may still know
+    (``amazon-bedrock:amazon.nova-pro-v1:0``).
     """
     name = (provider or "").strip().lower()
     if name in _CALLABLE:
