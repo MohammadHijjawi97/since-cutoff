@@ -51,6 +51,7 @@ from since_cutoff.pypi import PyPI, SourceTree
 from since_cutoff.report import (
     api_head,
     changes_text,
+    fail_reason,
     github_annotations,
     render_console,
     render_markdown,
@@ -63,6 +64,7 @@ from since_cutoff.report import (
 )
 from since_cutoff.selection import (
     NAME_MATCH,
+    NAME_ONLY,
     OLD_FORM,
     USE_CALL,
     USE_KEYWORD,
@@ -76,6 +78,7 @@ from since_cutoff.selection import (
 )
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
 from tests.test_ci import scan_app
+from tests.test_uses import FRAMES_V1, FRAMES_V2
 
 CUTOFF = ["--model", "anthropic:claude-sonnet-4-5", "--cutoff", "2025-07-31"]
 MAIN = "from toylib import Client, fetch\nClient().send('hi', temperature=0.2)\nfetch('u')\n"
@@ -895,3 +898,75 @@ def test_a_diff_another_griffe_made_is_made_again(app, cache, fake_pypi, monkeyp
     assert diffed("2.3.0")
     assert not diffed("2.3.0")
     assert diffed("2.4.0")
+
+
+# ------------------------------------------------------- name matches (0.6)
+def _frames_pypi(tmp_path: Path, cache: DiskCache) -> FakePyPI:
+    """frames 1.0 -> 2.0 (tests.test_uses): a package whose annotations type its values."""
+    trees = {
+        ("frames", v): SourceTree(
+            "frames", v, write_tree(tmp_path / f"frames-{v}", files), ("frames",)
+        )
+        for v, files in (("1.0", FRAMES_V1), ("2.0", FRAMES_V2))
+    }
+    return FakePyPI(cache, {"frames": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")]}, trees)
+
+
+LOOSE = "import frames\n\ndef tidy(df):\n    df.applymap(str)\n"
+
+
+def test_a_name_match_is_tagged_and_left_out_of_the_notes(tmp_path, cache) -> None:
+    """A member matched by its name alone, on a value whose class the code does not show
+    (selection.NAME_ONLY): tagged in every report, counted as used, but not a note to write
+    unless --include-name-matches asks for it."""
+    pypi = _frames_pypi(tmp_path, cache)
+    root = write_tree(tmp_path / "app", {"requirements.txt": "frames==2.0\n", "main.py": LOOSE})
+    scan = scan_app(root, cache, pypi, date(2025, 7, 31))
+    [used] = scan.used_apis()
+    assert (used.note.api, used.form, used.match) == ("Frame.applymap", OLD_FORM, NAME_ONLY)
+    lines = text_of(scan_lines(scan, width=120))
+    assert "Your code uses 1 API that changed" in lines
+    assert "  Frame.applymap was removed" in lines and "old form [name match]" in lines
+    assert "    main.py   calls applymap [name match]" in lines
+    assert "[name match]: matched by the method's name alone" in lines
+    assert "notes ready" not in lines and report.NAME_MATCHES_ONLY in lines.replace("\n  ", " ")
+    data = to_json(scan)
+    assert data["used_apis"][0]["match"] == "name_only"
+    assert data["used_apis"][0]["locations"][0]["match"] == "name_only"
+    assert data["notes_preview"] in (None, "", [])
+    assert "| old form [name match] |" in render_scan_markdown(scan)
+    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
+    assert "`applymap` [name match]" in tools.project_changes(str(root), cutoff="2025-07")
+    # Not a reason to fail CI, nor a file to annotate: a name alone is a hint, as the notes
+    # treat it.
+    assert fail_reason(scan, {"used", "old-form"}) is None
+    assert github_annotations(scan) == []
+    # Asked for: the note is ready, the block has it, and CI sees it.
+    scan.name_matches = True
+    lines = text_of(scan_lines(scan, width=120))
+    assert "1 note ready" in lines and "old form [name match]" in lines
+    assert "applymap" in (scan.notes_block(scan.diff_notes()) or "")
+    assert fail_reason(scan, {"old-form"}) == (
+        "--fail-on old-form: your code uses 1 changed API in the old form"
+    )
+    assert github_annotations(scan)[0].startswith("::warning file=main.py,title=")
+
+
+def test_include_name_matches_on_scan_and_sync(tmp_path, cache, capsys, monkeypatch) -> None:
+    pypi = _frames_pypi(tmp_path, cache)
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(tmp_path / "cli-cache"))
+    monkeypatch.setattr(cli, "Engine", lambda s, **kw: Engine(s, **{**kw, "pypi": pypi}))
+    root = write_tree(tmp_path / "app", {"requirements.txt": "frames==2.0\n", "main.py": LOOSE})
+    argv = [str(root), "--cutoff", "2025-07-31"]
+    # A name match alone does not fail CI; asked for, it does.
+    assert cli.main(["scan", *argv, "--fail-on", "old-form", "--annotate", "github"]) == 0
+    out = capsys.readouterr().out
+    assert "old form [name match]" in out and "No notes to write: every use is a name match" in out
+    assert "::warning" not in out
+    assert cli.main(["scan", *argv, "--fail-on", "old-form", "--include-name-matches"]) == 3
+    assert "1 note ready" in capsys.readouterr().out
+    assert cli.main(["sync", *argv, "--yes"]) == 0
+    assert "no notes to write" in capsys.readouterr().out and not (root / "AGENTS.md").exists()
+    assert cli.main(["sync", *argv, "--yes", "--include-name-matches"]) == 0
+    block = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "`Frame.applymap` was removed; do not use it." in block

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- A changed method is found when the code never names its class: the receiver of a method
+  call is typed from the pinned release's own annotations, read statically with griffe and
+  cached per release (a new `receivers` folder in the cache). `df = pd.read_csv(...)` is a
+  `DataFrame`, `df.groupby(...).count()` a `DataFrameGroupBy.count`, and a class counts with
+  its base classes across the pinned packages, so `llm.predict(q)` on a `ChatOpenAI` is
+  langchain-core's `BaseChatModel.predict` in a file that never imports langchain-core. With
+  pandas 3.0.6, `df.applymap(str)`, `df.swapaxes(0, 1)` and `df.groupby("key", axis=0)` on a
+  frame from `pd.read_csv` went unflagged; a scratch project pinning pandas 3.0.6 and polars
+  2.0.0 went from 4 APIs used to 10. A method a class defines itself is its own, not its
+  base's: `DataFrame.sum` still takes positional arguments where `NDFrame.sum` no longer does.
+- Where the receiver cannot be typed, a method whose name is exactly one changed API's across
+  the packages the code uses, and not a common Python name, counts by its name alone. The
+  reports tag the use `[name match]`; the notes block, `--fail-on` and `--annotate` count it
+  only with `--include-name-matches` (on `scan` and `sync`).
+- A class that became a function, or the reverse, is no longer "old form" at a call site: with
+  pandas 3.0.6, `with pd.option_context("mode.copy_on_write", True):` was labelled old form
+  although `option_context` is called the same way as a class and as a function. The call is
+  "uses this API", and old form only when it passes a keyword the new signature does not take;
+  a subclass or an `isinstance()` of it stays old form. The note still says to check the new
+  signature.
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.

@@ -12,33 +12,143 @@ package the code does not import.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
-from typing import NamedTuple
+from typing import Any, NamedTuple, Protocol
 
 from since_cutoff.apidiff import (
     DEPENDENCY_SWITCHED,
     DEPRECATED,
+    KIND_CHANGED,
     KIND_PRIORITY,
     MOVED,
     PARAM_KEYWORD_ONLY,
     PARAM_POSITIONAL_ONLY,
     PARAM_REMOVED,
     PARAM_REQUIRED,
+    RECEIVERS_SCHEMA,
     REMOVED,
     APIChange,
+    griffe_version,
     is_beta_segment,
+    keyword_parameters,
+    load_api,
+    receiver_map,
 )
+from since_cutoff.cache import DiskCache, stable_hash
+from since_cutoff.errors import PackageIndexError
 from since_cutoff.notes import library_replacement
-from since_cutoff.project import FileUse
+from since_cutoff.project import ApiTypes, FileUse, Project, typed
+from since_cutoff.pypi import PyPI
 
-# How used_names found a change in the project's code (see match): through one of its paths,
+log = logging.getLogger(__name__)
+
+# How used_names found a change in the project's code (see match): through one of its paths;
 # or, for a change from a diff made before DIFF_SCHEMA 12 (no import paths), by its package
-# and name only, which the "your code uses" mark then says.
+# and name only, which the "your code uses" mark then says; or, for a method or attribute read
+# on a value the file shows nothing of (FileUse.loose), by the member's name alone, when that
+# name is one changed API's in all the packages the code imports or reaches and not a common
+# Python name (NAME_ONLY; the reports tag it "[name match]", and the notes block, --fail-on and
+# --annotate leave it out unless asked: engine.Settings.include_name_matches).
 PATH_MATCH = "path"
 NAME_MATCH = "name"
+NAME_ONLY = "name_only"
 MATCHED_BY_NAME = "matched by name"
+NAME_MATCH_TAG = "[name match]"
+# Member names too common in Python to stand for one package's API on their own (NAME_ONLY):
+# those of dict, list, set and str, of numbers and arrays (``sum``, ``floor``), of files, of
+# queries and sessions (``fetch``, ``execute``, ``commit``), and of every client.
+COMMON_NAMES = frozenset(
+    {
+        "abs",
+        "add",
+        "all",
+        "any",
+        "append",
+        "apply",
+        "bool",
+        "call",
+        "ceil",
+        "clear",
+        "close",
+        "commit",
+        "connect",
+        "copy",
+        "count",
+        "create",
+        "decode",
+        "delete",
+        "diff",
+        "dump",
+        "dumps",
+        "encode",
+        "execute",
+        "explain",
+        "extend",
+        "fetch",
+        "fetchall",
+        "fetchone",
+        "filter",
+        "find",
+        "first",
+        "flatten",
+        "floor",
+        "format",
+        "get",
+        "group",
+        "head",
+        "index",
+        "insert",
+        "items",
+        "iter",
+        "join",
+        "keys",
+        "last",
+        "len",
+        "load",
+        "loads",
+        "map",
+        "match",
+        "max",
+        "mean",
+        "merge",
+        "min",
+        "next",
+        "open",
+        "parse",
+        "pop",
+        "put",
+        "query",
+        "read",
+        "remove",
+        "render",
+        "replace",
+        "reset",
+        "round",
+        "run",
+        "save",
+        "search",
+        "select",
+        "send",
+        "set",
+        "sort",
+        "split",
+        "start",
+        "stop",
+        "strip",
+        "submit",
+        "sum",
+        "tail",
+        "update",
+        "validate",
+        "values",
+        "wait",
+        "where",
+        "write",
+    }
+)
 
 # How the project's code uses a changed API (form): as the release at the cutoff allowed and
 # the pinned one no longer does, or only uses the API (the line is fine today, but an assistant
@@ -79,7 +189,7 @@ class Use(NamedTuple):
     column: int | None
     kind: str  # USE_*
     names: tuple[str, ...]  # as used_names gives them: (callable,) or (callable, parameter)
-    how: str = PATH_MATCH  # PATH_MATCH, or NAME_MATCH for a change without import paths
+    how: str = PATH_MATCH  # PATH_MATCH; NAME_MATCH (no import paths); NAME_ONLY (see above)
     form: str = USES_API  # OLD_FORM when this use is the old form of the change (form())
 
     @property
@@ -359,15 +469,21 @@ def used_names(change: APIChange, files: Sequence[FileUse]) -> tuple[str, ...]:
     ``huggingface_hub.file_download.hf_hub_download``): ``copier.asdict`` is not the
     ``asdict`` of ``from dataclasses import asdict``. A method or attribute counts when a file
     reads it on its class (under one of those paths), on what the file shows is an instance of
-    the class (``app = Starlette(...)`` and ``app.routes``, ``self.routes`` in a subclass), or
-    on an attribute named after the class (``client.messages.create`` for ``Messages.create``);
-    not on any value (``self.middleware`` of the project's own class). A constructor counts
-    when a file calls the class. A changed parameter counts only when it is
-    passed by keyword to its callable: ``resume_download=`` passed to ``hf_hub_download`` says
-    nothing about ``snapshot_download(resume_download=...)``.
+    the class (``app = Starlette(...)`` and ``app.routes``, ``self.routes`` in a subclass; and
+    what the packages' own annotations show is one, ``df = pd.read_csv(...)`` and
+    ``df.applymap``, ``llm = ChatOpenAI(...)`` and ``llm.predict`` of its base class:
+    :func:`type_project`), or on an attribute named after the class (``client.messages.create``
+    for ``Messages.create``); not on any value (``self.middleware`` of the project's own
+    class). A constructor counts when a file calls the class. A changed parameter counts only
+    when it is passed by keyword to its callable: ``resume_download=`` passed to
+    ``hf_hub_download`` says nothing about ``snapshot_download(resume_download=...)``.
 
     A change from a diff made before DIFF_SCHEMA 12 has no import paths; for it, a path of the
-    same package with the same last name counts too (:func:`match` says "name").
+    same package with the same last name counts too (:func:`match` says "name"). Last, a
+    method or attribute read on a value the file shows nothing of counts by its name alone
+    when :func:`type_project` kept that name (FileUse.loose: one changed API's, in all the
+    packages the code imports or reaches, and not a common Python name): :func:`match` says
+    NAME_ONLY, and the reports tag the use "[name match]".
     """
     return _best(change, files)[0]
 
@@ -375,7 +491,8 @@ def used_names(change: APIChange, files: Sequence[FileUse]) -> tuple[str, ...]:
 def match(change: APIChange, files: Sequence[FileUse]) -> str | None:
     """How :func:`used_names` found the change in the project's code: PATH_MATCH (through one
     of its paths), NAME_MATCH (only by its package and name, for a change without import
-    paths), or None when the code does not use it."""
+    paths), NAME_ONLY (a member's name alone, on a value the file shows nothing of), or None
+    when the code does not use it."""
     return _best(change, files)[1]
 
 
@@ -396,7 +513,7 @@ def _best(change: APIChange, files: Sequence[FileUse]) -> tuple[tuple[str, ...],
         return (), None
     merged = _with_paths(change)
     found = [_in_file(merged, f) for f in files]
-    for how in (PATH_MATCH, NAME_MATCH):
+    for how in (PATH_MATCH, NAME_MATCH, NAME_ONLY):
         best: tuple[str, ...] = ()
         for _, names, matched in found:
             if matched == how and _weight(change, names) > _weight(change, best):
@@ -423,8 +540,9 @@ def _in_file(
     merged: list[tuple[APIChange, frozenset[str]]], f: FileUse
 ) -> tuple[APIChange | None, tuple[str, ...], str | None]:
     """The names of a change that one file uses, the merged change they are of, and how they
-    were matched: through a path (PATH_MATCH), else, for a change without import paths, by its
-    package and name (NAME_MATCH)."""
+    were matched: through a path (PATH_MATCH); else, for a change without import paths, by its
+    package and name (NAME_MATCH); else, for a member read on a value the file shows nothing
+    of, by its name alone (NAME_ONLY, :func:`_loose_names`)."""
     best: tuple[APIChange | None, tuple[str, ...]] = (None, ())
     for c, by_path in merged:
         names = _used_in(c, f, by_path)
@@ -438,7 +556,26 @@ def _in_file(
         names = _used_in(c, f, frozenset(_same_name(c, f)))
         if len(names) > len(best[1]):
             best = (c, names)
-    return best[0], best[1], NAME_MATCH if best[1] else None
+    if best[1]:
+        return best[0], best[1], NAME_MATCH
+    for c, _ in merged:
+        names = _loose_names(c, f)
+        if len(names) > len(best[1]):
+            best = (c, names)
+    return best[0], best[1], NAME_ONLY if best[1] else None
+
+
+def _loose_names(change: APIChange, f: FileUse) -> tuple[str, ...]:
+    """The names of a member change that a file uses on a value it shows nothing of
+    (FileUse.loose, kept by :func:`type_project` for the names that are one changed API's):
+    ``(name,)``, or ``(name, parameter)`` when the file also passes the changed parameter to a
+    call of that name."""
+    if not change.owner or change.kind == DEPENDENCY_SWITCHED or change.name not in f.loose:
+        return ()
+    parameter = change.parameter
+    if parameter and not parameter.startswith("__") and (change.name, parameter) in f.keywords:
+        return (change.name, parameter)
+    return (change.name,)
 
 
 def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
@@ -457,7 +594,7 @@ def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
         c, names, how = _in_file(merged, f)
         if c is not None and how is not None:
             kind = _use_kind(c, f, names)
-            found.append(Use(f.file, None, None, kind, names, how, form(change, names)))
+            found.append(Use(f.file, None, None, kind, names, how, form(change, names, kind)))
     return ordered(found)
 
 
@@ -480,12 +617,17 @@ def _use_kind(change: APIChange, f: FileUse, names: tuple[str, ...]) -> str:
     return USE_MEMBER if change.owner else USE_REFERENCE
 
 
-def form(change: APIChange, names: tuple[str, ...]) -> str:
+def form(change: APIChange, names: tuple[str, ...], kind: str | None = None) -> str:
     """Whether code that uses these names of a change (:func:`used_names`) uses it in the
-    old form (OLD_FORM) or only uses the API (USES_API).
+    old form (OLD_FORM) or only uses the API (USES_API); ``kind`` is the use's (USE_*), when
+    known.
 
     Old form: it reads or imports what was removed, moved (its old path) or changed kind, uses
     what is deprecated, or passes a removed or deprecated parameter by keyword to its callable.
+    A class that became a function, or the reverse (:func:`same_call_shape`), is called the
+    same way: a call of it is "uses this API" unless it passes a keyword the new signature
+    does not take; a read of it without a call (a subclass, an ``isinstance()``: USE_REFERENCE
+    or USE_MEMBER) is the old form, since a function is no type and a class no function.
     A parameter that is now required, keyword-only or positional-only is always "uses this
     API": whether a call passes it the new way is not something a name match can tell. So is a
     function whose deprecation covers one of its call forms (an ``@overload``) only.
@@ -504,9 +646,21 @@ def form(change: APIChange, names: tuple[str, ...]) -> str:
         return OLD_FORM if handed else USES_API
     if not names or change.kind in _NEVER_OLD_FORM or change.call_form:
         return USES_API
-    if change.parameter:
+    if same_call_shape(change) and kind in (USE_MEMBER, USE_REFERENCE):
+        return OLD_FORM
+    if change.parameter or same_call_shape(change):
         return OLD_FORM if len(names) == 2 else USES_API
     return OLD_FORM
+
+
+def same_call_shape(change: APIChange) -> bool:
+    """A kind change between a class and a function (pandas 3's ``option_context``): a call
+    of it is the same code either way, so a call site is the old form only when it passes a
+    keyword the new signature does not take (:func:`_used_in` adds it to the names)."""
+    return change.kind == KIND_CHANGED and {change.old_kind, change.new_kind} == {
+        "class",
+        "function",
+    }
 
 
 def _same_name(change: APIChange, f: FileUse) -> list[str]:
@@ -539,6 +693,9 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
         # The name the file imports it under (a package may re-export it under another).
         callable_name = found[0].rsplit(".", 1)[-1]
         passed = wanted is not None and any((p, wanted) in f.keyword_paths for p in by_path)
+        if same_call_shape(change):
+            refused = _refused_keywords(change, f, by_path)
+            return (callable_name, refused[0]) if refused else (callable_name,)
     elif name == "__init__":
         named = {path.rsplit(".", 1)[0] for path in by_path} & f.paths
         if not named:
@@ -568,6 +725,15 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
     if passed and parameter:
         return (callable_name, parameter)
     return (callable_name,)
+
+
+def _refused_keywords(change: APIChange, f: FileUse, by_path: frozenset[str]) -> list[str]:
+    """The keywords a file passes to a callable, under any of its paths, that the new
+    signature does not take (none when it takes ``**kwargs``, or is not recorded whole)."""
+    accepted = keyword_parameters(change.new_signature)
+    if accepted is None:
+        return []
+    return sorted(k for p, k in f.keyword_paths if p in by_path and k not in accepted)
 
 
 def dependency_names(change: APIChange, f: FileUse) -> tuple[str, ...]:
@@ -685,7 +851,8 @@ def used_name(change: APIChange, files: Sequence[FileUse]) -> str | None:
 
 def uses_text(change: APIChange, files: Sequence[FileUse]) -> str | None:
     """The names for a "your code uses ..." mark, as Markdown code (None if it uses none),
-    with ", matched by name" when only the package and name matched (:func:`match`)."""
+    with ", matched by name" when only the package and name matched, and "[name match]" when
+    only a member's name did, on a value the file shows nothing of (:func:`match`)."""
     names, how = _best(change, files)
     if not names:
         return None
@@ -693,7 +860,9 @@ def uses_text(change: APIChange, files: Sequence[FileUse]) -> str | None:
         shown = [f"`{n}`" for n in names[1:] or names]
         return ", ".join(shown[:-1]) + f" and {shown[-1]}" if len(shown) > 1 else shown[0]
     text = " and ".join(f"`{n}`" for n in names)
-    return f"{text}, {MATCHED_BY_NAME}" if how == NAME_MATCH else text
+    if how == NAME_MATCH:
+        return f"{text}, {MATCHED_BY_NAME}"
+    return f"{text} {NAME_MATCH_TAG}" if how == NAME_ONLY else text
 
 
 def project_rank(change: APIChange, files: Sequence[FileUse]) -> tuple[int, bool, float, str]:
@@ -842,3 +1011,109 @@ def select(
             if queues[package] and len(picked) < budget:
                 picked.append(queues[package].pop(0))
     return picked
+
+
+# ------------------------------------------------ receiver typing (Engine.scan)
+class Scanned(Protocol):
+    """What :func:`type_project` reads of a package the scan looked at (engine.PackageScan)."""
+
+    name: str
+    locked: str | None
+    import_names: list[str]
+    changes: list[APIChange]
+    imported: bool | None
+
+
+def type_project(
+    project: Project, scans: Iterable[Scanned], pypi: PyPI, store: DiskCache
+) -> Project:
+    """The project with its files typed from the pinned releases' own annotations
+    (:func:`since_cutoff.project.typed`), for :func:`used_names`: a copy; the project given
+    keeps the files as the scan read them.
+
+    The releases read are those whose source tree the scan has: every package newer than its
+    release at the cutoff (the diff read its pinned tree), and a package the model knows whose
+    pinned tree an earlier run left in the cache (nothing is downloaded for this). Each tree's
+    :func:`apidiff.receiver_map` is kept in ``store`` per release and griffe. A tree griffe
+    cannot read types nothing.
+
+    The names kept for the name-only tier (FileUse.loose; :data:`NAME_ONLY`) are the member
+    names that are one changed API's in all the changed packages the code imports or reaches
+    (FileUse.reaches: a file's loose names are matched against both), and not
+    :data:`COMMON_NAMES`.
+    """
+    scans = list(scans)
+    maps: list[dict[str, Any]] = []
+    for s in scans:
+        if not s.locked:
+            continue
+        tree = _tree(pypi, s.name, s.locked, cached_only=not s.import_names)
+        if tree is None:
+            continue
+        for import_name in tree.import_names:
+            key = stable_hash(
+                "receivers", RECEIVERS_SCHEMA, griffe_version(), s.name, s.locked, import_name
+            )
+            found = store.get("receivers", key)
+            if found is None:
+                try:
+                    found = receiver_map(load_api(import_name, tree.root))
+                except Exception as exc:  # griffe fails in many ways on unusual code
+                    log.debug("cannot type from %s %s: %s", s.name, s.locked, exc)
+                    found = {}
+                store.set("receivers", key, found)
+            if isinstance(found, dict) and found:
+                maps.append(found)
+    api = ApiTypes(maps)
+    owners = changed_owners(scans, api)
+    files = [typed(f, api, (), owners) for f in project.files]
+    used = [s for s in scans if s.imported or any(f.reaches_any(s.import_names) for f in files)]
+    keep = unique_member_names(used)
+    if keep:
+        files = [typed(f, api, keep, owners) for f in project.files]
+    return replace(project, files=files)
+
+
+def changed_owners(scans: Iterable[Scanned], api: ApiTypes) -> dict[str, set[str]]:
+    """For each member name a diff changed, the classes it changed it on (canonical paths):
+    what :func:`since_cutoff.project.typed` reads a member up to, so that ``llm.predict`` on a
+    ``ChatOpenAI`` is ``BaseChatModel.predict`` and not also ``BaseLanguageModel.predict``,
+    which the diff reports on its own."""
+    owners: dict[str, set[str]] = {}
+    for s in scans:
+        for c in s.changes:
+            if c.owner and c.kind != DEPENDENCY_SWITCHED:
+                owners.setdefault(c.name, set()).update(
+                    api.canon(p.rsplit(".", 1)[0]) for p in paths(c)
+                )
+    return owners
+
+
+def _tree(pypi: PyPI, name: str, version: str, *, cached_only: bool) -> Any:
+    """The extracted sources of a release, or None: never a download when ``cached_only``."""
+    if cached_only and not pypi.is_cached(name, version):
+        return None
+    try:
+        return pypi.source(name, version)
+    except PackageIndexError:
+        return None
+
+
+def unique_member_names(scans: Iterable[Scanned]) -> frozenset[str]:
+    """The member names that one changed API of these packages has, and no other changed API
+    of theirs (a module-level ``melt`` removed next to ``DataFrame.melt`` makes the name two
+    APIs'); never a dunder or one of :data:`COMMON_NAMES`. :func:`type_project` gives it the
+    changed packages the code imports or reaches."""
+    apis: dict[str, set[str]] = {}
+    for s in scans:
+        for c in collapse(s.changes):
+            if c.kind == DEPENDENCY_SWITCHED or c.name.startswith("__"):
+                continue
+            apis.setdefault(c.name, set()).add(f"{s.name}:{c.api_key}")
+            if not c.owner:
+                apis[c.name].add("module-level")
+    return frozenset(
+        name
+        for name, keys in apis.items()
+        if len(keys) == 1 and name not in COMMON_NAMES and not name.startswith("_")
+    )

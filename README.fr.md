@@ -842,12 +842,18 @@ mesuré le test sur les tâches réservées ; `verified` est conservé et signi
   `__getattr__`, mais `run` ne les sonde pas.
 - Le diff couvre l'API publique : les noms `_private`, ainsi que les suites de tests, benchmarks
   et exemples livrés dans un paquet, sont ignorés.
-- « Your code uses » (votre code utilise) est une correspondance statique de noms, fichier par
-  fichier : imports (noms réexportés compris), appels, lectures d'attributs et arguments nommés.
-  Il ne suit pas les accès dynamiques comme `getattr`, et il indique pour l'instant des fichiers,
-  pas des lignes ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Un paramètre
-  devenu obligatoire, nommé seulement ou positionnel seulement est toujours marqué « uses this
-  API », jamais « old form », pour l'instant.
+- « Your code uses » (votre code utilise) est une correspondance statique, fichier par
+  fichier : imports (noms réexportés compris), appels, lectures d'attributs et arguments nommés ;
+  le receveur d'un appel de méthode est typé d'après les annotations du paquet lui-même
+  (`df = pd.read_csv(...)` est un `DataFrame` ; une classe compte avec ses classes de base, à
+  travers vos paquets épinglés). Il ne suit pas les accès dynamiques comme `getattr`, et il
+  indique pour l'instant des fichiers, pas des lignes
+  ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Une méthode lue sur une
+  valeur dont le code ne montre pas la classe ne compte que par son nom, quand ce nom
+  n'appartient qu'à une seule API modifiée et n'est pas un nom courant : elle est étiquetée
+  `[name match]` et reste hors des notes, de `--fail-on` et de `--annotate` sauf avec
+  `--include-name-matches`. Un paramètre devenu obligatoire, nommé seulement ou positionnel
+  seulement est toujours marqué « uses this API », jamais « old form », pour l'instant.
 - Une note ne nomme un remplaçant que si le texte de dépréciation de la bibliothèque elle-même
   l'énonce. Un conseil qui ne figure que dans un guide de migration (le
   [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md)
