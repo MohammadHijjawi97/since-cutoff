@@ -15,7 +15,7 @@ l'ancienne forme.**
 
 since-cutoff est un outil en ligne de commande et un serveur MCP pour les projets Python. `scan`
 lit votre fichier de verrouillage, prend pour chaque dépendance la dernière version publiée au
-plus tard à la date limite d'entraînement de votre modèle de code, compare l'API publique de
+moins 30 jours avant la date limite d'entraînement de votre modèle de code (par défaut), compare l'API publique de
 cette version à celle que vous épinglez, de façon statique, et montre lesquelles des API modifiées
 votre code utilise, où, avec une note pour chacune. `sync` écrit les notes dans AGENTS.md ou
 CLAUDE.md et les tient à jour avec le fichier de verrouillage ; `status`, des hooks pre-commit et
@@ -128,8 +128,8 @@ uvx since-cutoff scan
 ```
 
 Il détecte votre modèle de code (ou passez `--model`), lit votre fichier de verrouillage, prend
-pour chaque dépendance la dernière version publiée au plus tard à la date limite d'entraînement
-du modèle et compare l'API publique de cette version à celle que vous épinglez, de façon
+pour chaque dépendance la dernière version publiée au moins 30 jours avant la date limite
+d'entraînement du modèle (par défaut) et compare l'API publique de cette version à celle que vous épinglez, de façon
 statique : aucun code de paquet n'est exécuté. La date limite sert seulement à choisir les
 changements à examiner ; elle ne dit rien de ce que le modèle a mémorisé. Si votre modèle se
 trompe vraiment sur ces changements, et si les notes l'aident, c'est ce que mesure
@@ -207,8 +207,8 @@ un changement incompatible de l'API publique de 20 des 36
 
 Pour y remédier, since-cutoff fait trois choses :
 
-1. **`scan`** trouve, pour chaque dépendance, la version la plus récente publiée au plus tard à
-   la date limite du modèle, compare son API publique à celle de la version que vous épinglez, et
+1. **`scan`** trouve, pour chaque dépendance, la version la plus récente publiée au moins 30 jours
+   avant la date limite du modèle (par défaut), compare son API publique à celle de la version que vous épinglez, et
    montre lesquelles des API modifiées votre code utilise, où, avec une note pour chacune. Aucun
    appel au modèle, aucune clé d'API.
 2. **`sync`** écrit ces notes dans un bloc balisé d'AGENTS.md (ou de CLAUDE.md) après vous avoir
@@ -271,7 +271,7 @@ même dans tous les cas.
 Relancez `sync` quand vous modifiez le fichier de verrouillage ou le code. Il ajoute des notes
 pour les API que votre code se met à utiliser, vérifie à nouveau un paquet mis à jour, et retire
 les notes d'un paquet quand il n'est plus une dépendance, n'est plus plus récent que la version
-à la date limite, ou quand votre code n'utilise plus ses API modifiées, en disant pourquoi. Il
+de comparaison, ou quand votre code n'utilise plus ses API modifiées, en disant pourquoi. Il
 conserve le modèle et la date limite pour lesquels le bloc a été écrit (pour que des collègues
 dont les agents utilisent d'autres modèles ne le réécrivent pas sans cesse), sauf si vous passez
 `--model` ou `--cutoff` ; `--model a,b` prend la plus ancienne de leurs dates limites. Si rien n'a
@@ -635,7 +635,7 @@ Il propose trois outils en lecture seule :
 
 | outil | répond à |
 |---|---|
-| `api_changes(package, model, symbol=...)` | ce qui a changé dans une bibliothèque entre la version à la date limite du modèle et la dernière version (ou une version donnée), incompatibilités franches en premier |
+| `api_changes(package, model, symbol=...)` | ce qui a changé dans une bibliothèque entre la version publiée au moins 30 jours avant la date limite du modèle (par défaut) et la dernière version (ou une version donnée), incompatibilités franches en premier |
 | `project_changes(project_dir, model)` | la même chose pour chaque dépendance d'un projet, à sa version épinglée, en commençant par les API modifiées qu'utilise votre code : pour chacune, les fichiers qui l'utilisent (3 au plus), sa note, la mise en garde sur l'exécution et les noms qui lui ressemblent, non confirmés comme remplaçants |
 | `model_cutoff(model)` | la date limite d'entraînement d'un modèle, d'après [models.dev](https://models.dev) |
 
@@ -868,7 +868,7 @@ note rédigée par le modèle :
 
 | résultat | signification |
 |---|---|
-| **stale** | le code est valide pour la version de comparaison (celle de la date limite du modèle) et invalide pour la vôtre, et l'erreur porte sur une API qui a changé |
+| **stale** | le code est valide pour la version de comparaison (par défaut, la plus récente publiée au moins 30 jours avant la date limite du modèle) et invalide pour la vôtre, et l'erreur porte sur une API qui a changé |
 | **wrong** | invalide pour votre version, sans que cela s'explique par un changement (API inventée ou mal utilisée) |
 | **deprecated** | valide, mais utilise une API marquée `@deprecated` dans votre version |
 | **correct** | valide pour votre version, et utilise effectivement l'API modifiée |
@@ -904,7 +904,7 @@ since-cutoff n'emploie jamais le mot « verified » (vérifié) sans précisio
 
 | étiquette | ce qui a été vérifié | ce qui ne l'a pas été |
 |---|---|---|
-| `[diff]` | Le changement figure dans une comparaison statique (griffe) des API publiques de deux versions : la plus récente publiée au plus tard à la date limite d'entraînement du modèle, et la version qu'épingle votre projet. Les sources sont lues, pas importées. Avec `[diff]` seul, aucun remplaçant n'est nommé : la note rapporte ce que dit le texte de dépréciation de la bibliothèque elle-même (« there is no replacement for `resume_download` », il n'y a pas de remplaçant), ou que since-cutoff n'y en a trouvé aucun. | Le comportement, et si un appel fonctionne encore : la version épinglée peut encore accepter un paramètre supprimé avec un avertissement, comme huggingface-hub 2.0.0 le fait pour `resume_download`. Le terminal, report.md, les outils MCP et le JSON ajoutent une ligne « Runtime: » quand le code source épinglé en traite encore un ; le bloc non, puisque le conseil est le même. Si votre modèle se trompe dessus. |
+| `[diff]` | Le changement figure dans une comparaison statique (griffe) des API publiques de deux versions : la plus récente publiée au moins 30 jours avant la date limite d'entraînement du modèle (par défaut), et la version qu'épingle votre projet. Les sources sont lues, pas importées. Avec `[diff]` seul, aucun remplaçant n'est nommé : la note rapporte ce que dit le texte de dépréciation de la bibliothèque elle-même (« there is no replacement for `resume_download` », il n'y a pas de remplaçant), ou que since-cutoff n'y en a trouvé aucun. | Le comportement, et si un appel fonctionne encore : la version épinglée peut encore accepter un paramètre supprimé avec un avertissement, comme huggingface-hub 2.0.0 le fait pour `resume_download`. Le terminal, report.md, les outils MCP et le JSON ajoutent une ligne « Runtime: » quand le code source épinglé en traite encore un ; le bloc non, puisque le conseil est le même. Si votre modèle se trompe dessus. |
 | `[diff + library]` | Comme `[diff]`, et le texte de dépréciation de la bibliothèque elle-même (une docstring, l'entrée d'un paramètre dans la docstring, un message `@deprecated` ou un texte `warnings.warn`, dans l'ancienne version ou, pour une dépréciation, dans la version épinglée) énonce le remplaçant (« Use `stop` instead »), et ce nom existe dans votre version épinglée. Un texte qui ne mentionne un nom qu'à titre de conseil est cité sous `[diff]` ; il n'est pas pris pour un remplaçant. | Que le remplaçant se comporte de la même façon. |
 | `[diff + move checked]` | Comme `[diff]`, et l'objet au nouveau chemin est le même objet, autant qu'on puisse le compter : une classe ou un module garde au moins la moitié des noms publics de l'ancien, une fonction garde ses paramètres, une valeur est la même. | Le comportement. |
 | `[diff + metadata]` | Le Requires-Dist de l'ancienne version (le METADATA de sa wheel) liste une bibliothèque que la version épinglée ne liste plus, et les endroits de l'API publique qui nommaient des types de cette bibliothèque (paramètres, types de retour, attributs, classes de base, réexportations) nomment des types d'une autre bibliothèque que la version épinglée requiert, ou d'une copie de l'ancienne qu'elle embarque, sans qu'il reste aucun de l'ancienne : openai 3.x, anthropic 1.8, huggingface-hub 2.0 et mcp 2.2 prennent des objets `httpx2` là où ils prenaient des objets `httpx`. | Le comportement : si la version épinglée accepte encore les objets de l'ancienne bibliothèque (openai 3 en convertit certains, anthropic 1.8 lève `TypeError`, d'après leur code source). Le terminal, report.md, les outils MCP et le JSON ajoutent une ligne « Installed: » (votre projet, environnement virtuel compris, a-t-il encore l'ancienne bibliothèque) et une ligne « Runtime: » qui indique où le code source épinglé la nomme encore. |
@@ -951,7 +951,7 @@ modifiée et ne présente aucune erreur de « connaissance » attribuée au pa
 Les remarques de pure rigueur de typage sont ignorées. Aucune réponse n'est exécutée.
 
 Le bloc d'AGENTS.md contient les puces avec leurs étiquettes et, pour chaque paquet, la version à
-laquelle s'appliquent ses notes et la version à la date limite. Le reste se trouve dans
+laquelle s'appliquent ses notes et la version de comparaison. Le reste se trouve dans
 `scan --json` et `results.json` : `used_apis[]` (chaque API modifiée qu'utilise votre code, où,
 ses changements, ses remplaçants avec leur source, et sa note avec `tags`, `applies_to` et
 `checks`) et, après `run`, `notes_detail[]` (chaque note avec l'exemple du modèle et ce qu'a

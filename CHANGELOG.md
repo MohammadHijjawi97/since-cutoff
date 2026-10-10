@@ -49,6 +49,10 @@
   and the MCP server) and ai-stack.md's counts come from a re-run with 0.5.0; a nav bar links
   the pages and the GitHub docs (#67); the link-preview text no longer says "verified AGENTS.md
   notes" (#51); benchmark.md says it is the study as run with 0.4.1's notes.
+- README (all four languages) and how-it-works.md: the intro, the Quick start, "The problem",
+  the MCP and `[diff]` tables, the `sync` and block descriptions describe the comparison release
+  as the latest release published at least 30 days before the model's training cutoff by
+  default; they still said "on or before the cutoff".
 - `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
   default in all four READMEs (the Spanish and French pins and the translated action tables
   were not checked).
