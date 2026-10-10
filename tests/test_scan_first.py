@@ -158,6 +158,17 @@ def test_the_first_section_fits_a_narrow_terminal(scan: ScanResult) -> None:
     assert "          do not pass it. since-cutoff found no replacement" in lines
 
 
+def test_internal_implies_all(
+    app: Path, capsys: pytest.CaptureFixture[str], fake_cli: None, cache: DiskCache, fake_pypi: Any
+) -> None:
+    """``scan --internal`` without ``--all`` printed the same as ``scan``, and said nothing: the
+    changes it asks for are listed under ``--all``, so it implies it."""
+    assert cli.main(["scan", str(app), *CUTOFF, "--internal", "--limit", "3"]) == 0
+    out = capsys.readouterr().out
+    # 0.3's layout, as with --all: the summary panel and the per-package list.
+    assert "since-cutoff · claude-sonnet-4-5" in out and "5 breaking, 1 deprecated" in out
+
+
 def test_the_cli_prints_the_project_first_and_all_adds_0_3_layout(
     app: Path, capsys: pytest.CaptureFixture[str], fake_cli: None, cache: DiskCache, fake_pypi: Any
 ) -> None:

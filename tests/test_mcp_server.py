@@ -452,6 +452,7 @@ def test_server_speaks_mcp_and_turns_failures_into_tool_errors(tools: Tools) -> 
                 "to_version",
                 "symbol",
                 "limit",
+                "include_internal",
                 "cutoff_margin",
             }
             assert (api.description or "").startswith("List the public API changes")
@@ -851,10 +852,10 @@ def test_the_tools_compare_names_from_a_sibling_distribution_or_say_so(
         "- Warning: mcplike 2.0: changes to mcplike.types are not reported (re-exported from "
         f"mcplike-types 2.0, which could not be downloaded: {SIBLING_LIMIT_ERROR})"
     )
-    out = tools.api_changes("mcplike", cutoff="2025-07")
+    out = tools.api_changes("mcplike", cutoff="2025-07", include_internal=True)
     assert ("mcplike.types.Tool.inputSchema" in out) is sibling
     assert (warning in out.splitlines()) is not sibling
     app = make_app(tmp_path, "mcplike==2.0", "from mcplike.types import Tool\n")
-    out = tools.project_changes(str(app), cutoff="2025-07")
+    out = tools.project_changes(str(app), cutoff="2025-07", include_internal=True)
     assert ("inputSchema" in out) is sibling
     assert (warning in out.splitlines()) is not sibling

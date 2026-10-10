@@ -50,12 +50,14 @@ from since_cutoff.apidiff import (
     PARAM_POSITIONAL_ONLY,
     PARAM_REMOVED,
     PARAM_REQUIRED,
+    TIER_INTERNAL,
     APIChange,
     dependency_module,
     diff_sources_with_unread,
     griffe_version,
     load_api,
     requirements,
+    unread_text,
 )
 from since_cutoff.apidiff import (
     DEPRECATED as CHANGE_DEPRECATED,
@@ -338,7 +340,8 @@ class PackageScan:
     first_released: str | None = None
     # CHANGED: modules the pinned release ships compiled, without a source or a stub, that hid
     # something the release at the cutoff had: the diff did not report its removal, and could
-    # not compare it (issue #52; diff_sources_with_unread).
+    # not compare it (issue #52; diff_sources_with_unread); and classes whose attributes a
+    # base outside the package may set, which were not compared (apidiff.UNREAD_BASE).
     unread: list[str] = field(default_factory=list)
     # CHANGED: modules of the pinned release that take their names from another distribution
     # (mcp 2.3's ``mcp/types/__init__.py`` is ``from mcp_types import *``) which could not be
@@ -369,10 +372,16 @@ class PackageScan:
 
     @property
     def counts(self) -> tuple[int, int]:
-        """``(breaking, deprecated)``, counted as in :attr:`distinct`."""
-        distinct = self.distinct
+        """``(breaking, deprecated)``, counted as in :attr:`distinct`, for the changes to
+        public APIs (APIChange.tier); :attr:`internal` counts the others."""
+        distinct = [c for c in self.distinct if c.tier != TIER_INTERNAL]
         deprecated = sum(c.kind == CHANGE_DEPRECATED for c in distinct)
         return len(distinct) - deprecated, deprecated
+
+    @property
+    def internal(self) -> int:
+        """The distinct changes to internal APIs (APIChange.tier), breaking or deprecated."""
+        return sum(c.tier == TIER_INTERNAL for c in self.distinct)
 
     def to_dict(self) -> dict[str, Any]:
         d = {k: v for k, v in self.__dict__.items() if k != "changes" and not k.startswith("_")}
@@ -428,16 +437,9 @@ def stale_warning(stale: dict[str, date]) -> str:
 
 
 def unread_warning(s: PackageScan) -> str:
-    """The scan's warning for a package whose pinned release ships compiled modules that hid
-    something the release at the cutoff had (:attr:`PackageScan.unread`)."""
-    one = len(s.unread) == 1
-    what = "is a compiled module" if one else "are compiled modules"
-    it = "it" if one else "them"
-    return (
-        f"{s.name} {s.locked}: {', '.join(s.unread)} {what} without a .py source or a .pyi "
-        f"stub, unlike in {s.cutoff_version}; since-cutoff does not run code, so changes to "
-        f"{it} and to the names taken from {it} are not reported"
-    )
+    """The scan's warning for a package whose diff could not compare everything
+    (:attr:`PackageScan.unread`: compiled modules, classes with a base outside the package)."""
+    return unread_text(s.name, s.locked or "?", s.cutoff_version or "?", s.unread)
 
 
 def reexport_warning(s: PackageScan) -> str:

@@ -30,6 +30,7 @@ from since_cutoff.apidiff import (
     PARAM_REMOVED,
     PARAM_REQUIRED,
     REMOVED,
+    TIER_INTERNAL,
     APIChange,
     griffe_version,
 )
@@ -130,6 +131,11 @@ IMPORTED = "imported by your code"
 REASON_WIDTH = 120
 # How every report counts: each change once, under its shortest public path.
 COUNTING_NOTE = "A change reachable under several import paths is counted once."
+# And only the changes to public APIs (APIChange.tier); the internal ones are counted apart.
+INTERNAL_NOTE = (
+    "Changes to internal APIs (not reached from the package's top level, named in an __all__ "
+    'or documented) are counted apart, as "+N internal".'
+)
 # How held-out answers are counted (RunResult.pairing, ChangePairs.outcome).
 PAIRING_RULE = (
     "A held-out task counts as a pair when its answer without the notes is scorable and its "
@@ -173,6 +179,39 @@ ARMS_NOTE = (
 )
 
 
+# ------------------------------------------------------------------- tiers
+def is_internal(change: APIChange) -> bool:
+    """Whether the change is to an internal API (APIChange.tier): counted apart, and listed
+    only with ``scan --internal`` or the MCP tools' ``include_internal``."""
+    return change.tier == TIER_INTERNAL
+
+
+def public_changes(changes: Sequence[APIChange]) -> list[APIChange]:
+    """The changes to public APIs, in the given order."""
+    return [c for c in changes if not is_internal(c)]
+
+
+def internal_changes(changes: Sequence[APIChange]) -> list[APIChange]:
+    """The changes to internal APIs, in the given order."""
+    return [c for c in changes if is_internal(c)]
+
+
+def counts_text(p: PackageScan) -> str:
+    """``5 breaking, 1 deprecated``, with `` (+3 internal)`` when the package also changed
+    internal APIs (PackageScan.counts, PackageScan.internal)."""
+    breaking, deprecated = p.counts
+    return f"{breaking} breaking, {deprecated} deprecated{_internal_suffix(p.internal)}"
+
+
+def _internal_suffix(internal: int) -> str:
+    return f" (+{internal} internal)" if internal else ""
+
+
+def _not_listed(hidden: int, flag: str) -> str:
+    """``3 internal changes not listed; --internal lists them``."""
+    return f"{_plural(hidden, 'internal change')} not listed; {flag} lists them"
+
+
 # ------------------------------------------------------------------ summary
 def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]:
     rows = []
@@ -191,6 +230,7 @@ def per_package(scan: ScanResult, run: RunResult | None) -> list[dict[str, Any]]
                 "imported": p.imported,
                 "breaking_changes": breaking,
                 "deprecations": deprecations,
+                "internal_changes": p.internal,
                 "probed": len(valid),
                 "stale": sum(a.outcome == STALE for a in valid),
                 "wrong": sum(a.outcome == WRONG for a in valid),
@@ -226,6 +266,7 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "dependencies_newer_than_model": sum(p.status == NEW for p in scan.packages),
         "breaking_changes": sum(r["breaking_changes"] for r in packages),
         "deprecations": sum(r["deprecations"] for r in packages),
+        "internal_changes": sum(r["internal_changes"] for r in packages),
         "warnings": list(scan.warnings),
         "settings": {
             "tool_version": __version__,
@@ -393,11 +434,12 @@ def headline(
             "after the cutoff",
         )
     )
-    if s["breaking_changes"] or s["deprecations"]:
+    internal = s.get("internal_changes", 0)
+    if s["breaking_changes"] or s["deprecations"] or internal:
         lines.append(
             Text(
                 f"Static diff: {_plural(s['breaking_changes'], 'breaking change')}, "
-                f"{_plural(s['deprecations'], 'new deprecation')}",
+                f"{_plural(s['deprecations'], 'new deprecation')}{_internal_suffix(internal)}",
                 style="dim",
             )
         )
@@ -763,26 +805,34 @@ def _fold_at_hyphens(name: str, width: int) -> str:
 
 
 def _count_cells(row: dict[str, Any]) -> list[str]:
-    """The breaking and deprecated cells of a changed dependency (``0`` included); blank for
-    the others, which were not diffed or have nothing to count."""
+    """The breaking and deprecated cells of a changed dependency (``0`` included), the
+    breaking one with `` (+N)`` for its changes to internal APIs (``0 (+3)`` says why a
+    package with no public change is "API changed"); blank for the others, which were not
+    diffed or have nothing to count."""
     if row["status"] != CHANGED:
         return ["", ""]
-    return [str(row["breaking_changes"]), str(row["deprecations"])]
+    internal = row.get("internal_changes") or 0
+    breaking = (
+        f"{row['breaking_changes']} (+{internal})" if internal else str(row["breaking_changes"])
+    )
+    return [breaking, str(row["deprecations"])]
 
 
-def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> None:
+def render_scan_changes(
+    console: Console, scan: ScanResult, limit: int = 8, *, internal: bool = False
+) -> None:
+    """The top ``limit`` changes of each changed dependency (``scan --all``): those to public
+    APIs, and with ``internal`` (``--internal``) the internal ones too."""
     limit = max(0, limit)
     for p in scan.changed:
-        breaking, deprecated = p.counts
         console.print()
         console.print(
-            Text(
-                f"{p.name} {p.cutoff_version} -> {p.locked}: {breaking} breaking, "
-                f"{deprecated} deprecated",
-                style="bold",
-            )
+            Text(f"{p.name} {p.cutoff_version} -> {p.locked}: {counts_text(p)}", style="bold")
         )
         ranked, files = scan.ranked(p, scope=SCOPE_IMPORTED), scan.uses(p)
+        hidden = 0 if internal else len(internal_changes(ranked))
+        if not internal:
+            ranked = public_changes(ranked)
         for c in ranked[:limit]:
             uses = uses_text(c, files)
             line = change_text(c, short=True)
@@ -796,6 +846,8 @@ def render_scan_changes(console: Console, scan: ScanResult, limit: int = 8) -> N
                 console.print(Text(f"    Runtime: {runtime}".replace("`", ""), style="dim"))
         if len(ranked) > limit:
             console.print(Text(f"  ... {len(ranked) - limit} more in the report", style="dim"))
+        if hidden:
+            console.print(Text(f"  {_not_listed(hidden, '--internal')}", style="dim"))
 
 
 # ------------------------------------------------------ scan: the project first
@@ -821,12 +873,14 @@ def render_scan(
     verbose: bool = False,
     limit: int = 8,
     shown: Collection[str] = (),
+    internal: bool = False,
 ) -> None:
     """What ``since-cutoff scan`` prints: the changed APIs the project's code uses first
     (:func:`scan_lines`), each with where the code uses it and its note, then one line for the
     rest. With ``show_all`` (``--all``), the rest in full: 0.3's summary panel, dependency
-    table and the top ``limit`` changes of each changed dependency. Each of the scan's
-    warnings is printed once, and not at all when it is in ``shown`` (printed already)."""
+    table and the top ``limit`` changes of each changed dependency, to public APIs unless
+    ``internal`` (``--internal``). Each of the scan's warnings is printed once, and not at all
+    when it is in ``shown`` (printed already)."""
     lines = scan_lines(
         scan,
         width=min(console.width, USED_WIDTH),
@@ -840,7 +894,7 @@ def render_scan(
     if show_all:
         console.print()
         render_console(console, scan, verbose=verbose, shown=scan.warnings)
-        render_scan_changes(console, scan, limit=limit)
+        render_scan_changes(console, scan, limit=limit, internal=internal)
 
 
 def scan_lines(
@@ -1225,19 +1279,25 @@ def _form_legend(used: Sequence[UsedAPI]) -> list[str]:
 
 
 def other_changes(scan: ScanResult, used: Sequence[UsedAPI]) -> dict[str, int]:
-    """The changes (each once, PackageScan.distinct) the project's code does not use, per
-    changed dependency, most first."""
+    """The changes to public APIs (each once, PackageScan.distinct) the project's code does
+    not use, per changed dependency, most first."""
     taken = {c.id for u in used for c in u.changes}
-    counts = {p.name: sum(c.id not in taken for c in p.distinct) for p in scan.changed}
+    counts = {
+        p.name: sum(c.id not in taken for c in public_changes(p.distinct)) for p in scan.changed
+    }
     return dict(sorted(((k, v) for k, v in counts.items() if v), key=lambda kv: -kv[1]))
 
 
 def _others_text(scan: ScanResult, used: Sequence[UsedAPI]) -> str | None:
     counts = other_changes(scan, used)
-    if not counts:
+    taken = {c.id for u in used for c in u.changes}
+    internal = sum(c.id not in taken for p in scan.changed for c in internal_changes(p.distinct))
+    if not counts and not internal:
         return None
     total = sum(counts.values())
-    if len(counts) == 1:
+    if not counts:
+        where = f"in {_plural(len(scan.changed), 'package')}"
+    elif len(counts) == 1:
         where = f"in {next(iter(counts))}"
     else:
         top = ", ".join(f"{name} {n}" for name, n in list(counts.items())[:3])
@@ -1248,7 +1308,8 @@ def _others_text(scan: ScanResult, used: Sequence[UsedAPI]) -> str | None:
         if used
         else "Changed in your dependencies, not seen in your code"
     )
-    return f"{lead}: {_plural(total, 'change')} {where}. `--all` lists them."
+    lists = "`--all` lists them" + (" (`--internal` the internal ones)" if internal else "")
+    return f"{lead}: {_plural(total, 'change')}{_internal_suffix(internal)} {where}. {lists}."
 
 
 def _old_form_count(used: Sequence[UsedAPI]) -> str:
@@ -1453,21 +1514,20 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
             "",
             "## All changes found",
             "",
-            f"{COUNTING_NOTE} results.json lists every path.",
+            f"{COUNTING_NOTE} {INTERNAL_NOTE} results.json lists every path.",
             "",
         ]
         for p in scan.changed:
-            breaking, deprecated = p.counts
-            out += [
-                f"### {p.name} {p.cutoff_version} -> {p.locked}: {breaking} breaking, "
-                f"{deprecated} deprecated",
-                "",
-            ]
+            out += [f"### {p.name} {p.cutoff_version} -> {p.locked}: {counts_text(p)}", ""]
             files = scan.uses(p)
+            ranked = scan.ranked(p, scope=SCOPE_IMPORTED)
             out += [
-                _md_change(c, files, example=True, used_in=True)
-                for c in scan.ranked(p, scope=SCOPE_IMPORTED)
+                _md_change(c, files, example=True, used_in=True) for c in public_changes(ranked)
             ]
+            internal = internal_changes(ranked)
+            if internal:
+                out += ["", f"Internal APIs ({len(internal)}):", ""]
+                out += [_md_change(c, files, example=True, used_in=True) for c in internal]
             out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -1836,19 +1896,17 @@ def render_scan_markdown(
     for p in changed:
         ranked, files = scan.ranked(p, scope=SCOPE_IMPORTED), scan.uses(p)
         hits = sum(uses_text(c, files) is not None for c in ranked)
-        breaking, deprecated = p.counts
-        detail = f"{breaking} breaking, {deprecated} deprecated" + (
-            f", {hits} touching names your code uses" if hits else ""
-        )
+        detail = counts_text(p) + (f", {hits} touching names your code uses" if hits else "")
         out += [
             "",
             f"<details><summary><b>{p.name}</b> "
             f"{p.cutoff_version} -> {p.locked}: {detail}</summary>",
             "",
         ]
-        out += [_md_change(c, files) for c in ranked[:limit]]
-        if len(ranked) > limit:
-            out.append(f"- ... and {len(ranked) - limit} more in the full report")
+        listed = public_changes(ranked)  # the full report lists the internal ones
+        out += [_md_change(c, files) for c in listed[:limit]]
+        if len(listed) > limit:
+            out.append(f"- ... and {len(listed) - limit} more in the full report")
         out += ["", "</details>"]
     out += [
         "",

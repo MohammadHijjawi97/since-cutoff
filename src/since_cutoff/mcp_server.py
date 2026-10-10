@@ -83,8 +83,11 @@ from since_cutoff.report import (
     LOCATIONS_SHOWN,
     api_display,
     changes_text,
+    counts_text,
     installed_text,
+    internal_changes,
     places,
+    public_changes,
     use_text,
 )
 from since_cutoff.selection import FORM_LABELS, OLD_FORM, other_paths_text, uses_text
@@ -251,6 +254,7 @@ class Tools:
         to_version: str | None = None,
         symbol: str | None = None,
         limit: int = 40,
+        include_internal: bool = False,
         cutoff_margin: int | None = None,
         *,
         progress: ProgressFn | None = None,
@@ -292,6 +296,9 @@ class Tools:
                 matches too. Separate several symbols with commas.
             limit: the most changes to list, e.g. 100 (default 40), shared between the kinds
                 of change.
+            include_internal: also list changes to internal APIs (not reached from the
+                package's top level, named in an `__all__` or documented), which the counts
+                give apart as "+N internal" (default false).
             cutoff_margin: compare from the newest release published this many days before
                 the cutoff (default 30, or SINCE_CUTOFF_CUTOFF_MARGIN); 0 compares from the
                 newest release at the cutoff itself.
@@ -370,31 +377,52 @@ class Tools:
             raise PackageIndexError(scan.reason or f"could not diff {name}")
         if scan.status == NEW:  # the release at the cutoff was an empty placeholder
             return "\n".join([*head, "", _placeholder_note(old, new)]) + "\n"
-        if scan.unread:  # compiled modules: no changes found there is not the same as none
+        if scan.unread:  # compiled modules, unread bases: no changes found is not the same as none
             head.append(f"- Warning: {unread_warning(scan)}")
         if scan.reexported:  # names from another distribution that could not be read
             head.append(f"- Warning: {reexport_warning(scan)}")
         changes = scan.distinct
         head.append(f"- {_counts(changes)}")
-        if not changes:
-            return "\n".join([*head, "", "No breaking changes or new deprecations found."]) + "\n"
-
         wanted = (symbol or "").strip()
         if wanted and _names_package(wanted, name, changes):
             head.append(f'- symbol "{wanted}" names the package itself, so no filter was applied')
-        elif wanted:
-            total = len(changes)
+            wanted = ""
+        internal = len(internal_changes(changes))
+        if not wanted and not include_internal:
+            changes = public_changes(changes)
+        if not changes:
+            none = "No breaking changes or new deprecations found"
+            if internal:
+                none += f" in the public API; include_internal=true lists the {internal} internal"
+            return "\n".join([*head, "", f"{none}."]) + "\n"
+
+        if wanted:
+            # The symbol is matched against every change, the internal ones included: a
+            # question about an API asks for its changes, whichever tier they are.
+            total = len(changes if include_internal else public_changes(changes))
             changes, loose = _matching(changes, wanted)
+            listed = changes if include_internal else public_changes(changes)
+            hidden = len(changes) - len(listed)
             if loose and changes:
                 bare = _symbol_terms(wanted)[0][-1]
                 head.append(
                     f'- nothing names "{wanted}" exactly; showing the {len(changes)} changes '
                     f"to any `{bare}`, which may be unrelated"
                 )
+            elif changes and not listed:
+                head.append(
+                    f'- {len(changes)} of them match symbol "{wanted}", in internal APIs '
+                    "(listed since the symbol asks for them)"
+                )
             else:
-                head.append(f'- {len(changes)} of them match symbol "{wanted}"')
+                more = f"; {hidden} more in internal APIs (include_internal=true lists them)"
+                head.append(
+                    f'- {len(listed)} of them match symbol "{wanted}"{more if hidden else ""}'
+                )
             if not changes:
                 return "\n".join([*head, "", _no_match(wanted, old, new, total)]) + "\n"
+            if listed:
+                changes = listed
         shown = _share(changes, max(1, limit))
         out = [*head, *_sections(shown)]
         if len(shown) < len(changes):
@@ -411,6 +439,7 @@ class Tools:
         cutoff: str | None = None,
         only: list[str] | None = None,
         limit_per_package: int = 10,
+        include_internal: bool = False,
         cutoff_margin: int | None = None,
         *,
         progress: ProgressFn | None = None,
@@ -446,6 +475,9 @@ class Tools:
             only: check only these dependencies (PyPI names), e.g. ["openai", "pydantic"].
             limit_per_package: changes listed per dependency, e.g. 20 (default 10);
                 api_changes lists the rest.
+            include_internal: also list changes to internal APIs (not reached from the
+                package's top level, named in an `__all__` or documented), which the counts
+                give apart as "+N internal" (default false).
             cutoff_margin: compare from the newest release published this many days before
                 the cutoff (default 30, or SINCE_CUTOFF_CUTOFF_MARGIN); 0 compares from the
                 newest release at the cutoff itself.
@@ -485,7 +517,9 @@ class Tools:
         # Two stages: look every dependency up, then diff the ones that changed.
         reporter = _Progress(progress, stages=2) if progress else None
         scan = self._engine(settings, reporter).scan(project, model_target)
-        return _render_project(scan, target, settings.include, max(1, limit_per_package))
+        return _render_project(
+            scan, target, settings.include, max(1, limit_per_package), include_internal
+        )
 
     # --------------------------------------------------------------- helpers
     def _now(self) -> date:
@@ -657,7 +691,9 @@ def _sections(
     return out
 
 
-def _render_project(scan: ScanResult, target: Target, only: list[str], limit: int) -> str:
+def _render_project(
+    scan: ScanResult, target: Target, only: list[str], limit: int, internal: bool = False
+) -> str:
     project = scan.project
     by_status: dict[str, list[PackageScan]] = {}
     for p in scan.packages:
@@ -729,7 +765,7 @@ def _render_project(scan: ScanResult, target: Target, only: list[str], limit: in
     room = PROJECT_BUDGET - _size(out) - _size(tail)
     shown = 0
     for i, p in enumerate(changed):
-        section = _package_section(scan, p, limit)
+        section = _package_section(scan, p, limit, internal)
         if _size(section) + _size(_brief(changed[i + 1 :])) > room:
             break
         out += section
@@ -827,34 +863,38 @@ def _brief(packages: list[PackageScan]) -> list[str]:
     ]
 
 
-def _package_section(scan: ScanResult, p: PackageScan, limit: int) -> list[str]:
-    """One changed dependency in project_changes: its versions, counts and top changes."""
+def _package_section(
+    scan: ScanResult, p: PackageScan, limit: int, internal: bool = False
+) -> list[str]:
+    """One changed dependency in project_changes: its versions, counts and top changes (to
+    public APIs, and with ``internal`` to internal ones too)."""
     uses = " Your code imports it." if p.imported else ""
     ranked = scan.ranked(p, scope=SCOPE_IMPORTED)
-    breaking, deprecated = p.counts
+    hidden = 0 if internal else len(internal_changes(ranked))
+    if not internal:
+        ranked = public_changes(ranked)
     out = [
         "",
         f"## {p.name} {p.cutoff_version} ({p.cutoff_version_date}) -> {p.locked} ({p.locked_date})",
         "",
-        f"{breaking} breaking, {deprecated} deprecated.{uses}",
+        f"{counts_text(p)}.{uses}",
         *_sections(ranked[:limit], scan.uses(p), level="###"),
     ]
-    if len(ranked) > limit:
+    more = [f"{len(ranked) - limit} more"] if len(ranked) > limit else []
+    if hidden:
+        more.append(f"{hidden} internal (include_internal=true)")
+    if more:
         out += [
             "",
-            f'{len(ranked) - limit} more: api_changes("{p.name}", '
+            f'{" and ".join(more)}: api_changes("{p.name}", '
             f'from_version="{p.cutoff_version}", to_version="{p.locked}", symbol="...")',
         ]
     return out
 
 
 def _package_line(p: PackageScan) -> str:
-    breaking, deprecated = p.counts
     uses = "; your code imports it" if p.imported else ""
-    return (
-        f"- {p.name} {p.cutoff_version} -> {p.locked}: {breaking} breaking, "
-        f"{deprecated} deprecated{uses}"
-    )
+    return f"- {p.name} {p.cutoff_version} -> {p.locked}: {counts_text(p)}{uses}"
 
 
 def _capped(lines: list[str]) -> list[str]:
@@ -908,18 +948,24 @@ def _share(changes: list[APIChange], limit: int) -> list[APIChange]:
 
 
 def _counts(changes: list[APIChange]) -> str:
-    breaking = sum(c.kind != DEPRECATED for c in changes)
+    """``5 breaking changes, 1 new deprecation (removed or moved 3, parameters removed 2, +4
+    internal)``, counting the changes to public APIs, with ``+N internal`` last for the others
+    among ``changes``."""
+    public = public_changes(changes)
+    breaking = sum(c.kind != DEPRECATED for c in public)
     per_section = [0] * len(_SECTIONS)
-    for c in changes:
+    for c in public:
         per_section[_section_of(c)] += 1
-    detail = ", ".join(
+    parts = [
         f"{title.split(' (')[0].lower()} {n}"
         for (title, _), n in zip(_SECTIONS, per_section, strict=True)
         if n
-    )
-    deprecations = len(changes) - breaking
+    ]
+    if internal := len(changes) - len(public):
+        parts.append(f"+{internal} internal")
+    deprecations = len(public) - breaking
     total = f"{_plural(breaking, 'breaking change')}, {_plural(deprecations, 'new deprecation')}"
-    return f"{total} ({detail})" if detail else total
+    return f"{total} ({', '.join(parts)})" if parts else total
 
 
 _CALL = re.compile(r"\([^()]*\)")
