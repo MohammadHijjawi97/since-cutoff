@@ -8,6 +8,11 @@ description: 360 Claude Code sessions on 24 Python tasks, 17 of them on library 
 [benchmark repository](https://github.com/MohammadHijjawi97/since-cutoff-benchmark) ·
 [since-cutoff on GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
 
+*This page reports the study as it was run in September 2026, with the notes that since-cutoff
+0.4.1 wrote. Later versions write different notes (0.5.0, for example, adds dependency switches
+such as `httpx` to `httpx2`), so these numbers belong to 0.4.1; a run with a later version would
+be a separate, labelled study.*
+
 ## Summary
 
 In 360 headless Claude Code sessions (model `claude-opus-5-5`) on 24 small Python tasks, putting
@@ -417,11 +422,13 @@ unless noted.
    passed 34 of 34, and the session-level C/E ratios (bootstrap over sessions, seed 20261001) were
    turns 0.79 [0.71, 0.89], cost 0.86 [0.69, 1.04] and wall time 0.81. A re-run of the affected
    B/D/E sessions with a Context7 key would be reported as a separate, labelled study.
-10. **Robustness check not run yet (not in `PROTOCOL.md`):** the logistic mixed model
-    `y ~ condition + (1|task)` that section 7 lists as run outside the harness has not been fitted.
-11. **Protocol text not updated (not in `PROTOCOL.md`):** its title still says "DRAFT, not yet
-    tagged", and it refers to the author's unpublished planning documents (plan B, `bench.md`); the
-    file is left as it was at the tag plus sections 12.v and 12.u.
+10. **Robustness check not run (not in `PROTOCOL.md`):** the logistic mixed model
+    `y ~ condition + (1|task)` that section 7 lists as run outside the harness was not fitted for
+    this report. The pre-registered contrasts above do not depend on it.
+11. **Protocol text left as frozen (not in `PROTOCOL.md`):** its title still says "DRAFT, not
+    yet tagged", and it refers to the author's unpublished planning documents (plan B, `bench.md`).
+    The file is as it was at the tag, plus sections 12.v and 12.u; it was not rewritten after the
+    run, so that the frozen text and the published text are the same.
 12. **Edits made while preparing publication (not in `PROTOCOL.md`):** after the reports were
     written, a prefix of the same token, quoted in the final message of `hf04_D_r1_d017`, was
     redacted in that run's files and its line in `runs.jsonl`; dummy credentials in the harness

@@ -98,10 +98,13 @@ def test_model_cutoff_takes_ids_from_any_vendor_the_registry_knows(
 
 def test_the_change_tools_take_openai_and_google_ids(tools: Tools) -> None:
     out = tools.api_changes("toylib", model="google:gemini-2.5-pro")
-    assert "the newest release on or before 2025-01-31" in out and "gemini-2.5-pro" in out
+    # 30 days before gemini-2.5-pro's cutoff (2025-01-31): the comparison release is 0.9.
+    assert "the newest release on or before 2025-01-01, 30 days before the cutoff 2025-01-31" in out
+    assert "gemini-2.5-pro" in out and out.startswith("# toylib 0.9 -> 2.0\n")
     assert "5 breaking changes, 1 new deprecation" in out
     out = tools.api_changes("toylib", model="openai:gpt-5.4")
-    assert "the newest release on or before 2025-08-31" in out and "gpt-5.4" in out
+    assert "the newest release on or before 2025-08-01, 30 days before the cutoff 2025-08-31" in out
+    assert "gpt-5.4" in out
 
 
 def test_model_cutoff_maps_claude_aliases_and_says_so(tools: Tools) -> None:
@@ -166,7 +169,10 @@ def test_the_tools_say_when_a_release_list_is_an_older_copy(tmp_path, tools, fak
 def test_api_changes_lists_hard_breaks_first_with_replacements(tools: Tools) -> None:
     out = tools.api_changes("toylib", model="claude-sonnet-4-5")
     assert out.startswith("# toylib 1.0 -> 2.0\n")
-    assert "From 1.0 (2025-01-10): the newest release on or before 2025-07-31" in out
+    assert (
+        "From 1.0 (2025-01-10): the newest release on or before 2025-07-01, 30 days before the "
+        "cutoff 2025-07-31 (training cutoff of claude-sonnet-4-5, from"
+    ) in out
     assert "To 2.0 (2025-10-01): the latest release on PyPI" in out
     assert "5 breaking changes, 1 new deprecation" in out
     sections = [
@@ -276,7 +282,14 @@ def test_api_changes_with_explicit_versions(tools: Tools) -> None:
 def test_api_changes_for_a_package_newer_than_the_model(tools: Tools) -> None:
     out = tools.api_changes("toylib", cutoff="2024-01")
     assert "no release on or before the cutoff" in out
-    assert "Its whole API was released after your reported training cutoff" in out
+    assert (
+        "toylib had no release on or before 2024-01-01, 30 days before the cutoff 2024-01-31" in out
+    )
+    assert (
+        "Its whole API was released after, or shortly before, your reported training cutoff" in out
+    )
+    out = tools.api_changes("toylib", cutoff="2024-01", cutoff_margin=0)
+    assert "toylib had no release on or before 2024-01-31 (cutoff given as 2024-01)" in out
 
 
 def test_api_changes_errors_are_clear(tools: Tools) -> None:
@@ -440,6 +453,7 @@ def test_server_speaks_mcp_and_turns_failures_into_tool_errors(tools: Tools) -> 
                 "symbol",
                 "limit",
                 "include_internal",
+                "cutoff_margin",
             }
             assert (api.description or "").startswith("List the public API changes")
             # Every parameter is described, with an example, in the input schema.
@@ -820,3 +834,28 @@ def test_a_class_named_like_its_package_is_a_filter() -> None:
 def test_naming_the_package_as_symbol_applies_no_filter(tools: Tools) -> None:
     out = tools.api_changes("toylib", cutoff="2025-07", symbol="toylib")
     assert "names the package itself, so no filter was applied" in out
+
+
+@pytest.mark.parametrize("sibling", [True, False], ids=["read", "not-downloaded"])
+def test_the_tools_compare_names_from_a_sibling_distribution_or_say_so(
+    tmp_path, cache, sibling
+) -> None:
+    """Audit item 6 (mcp 2.3.0 and mcp-types): with the sibling distribution, the renamed field
+    is reported under the path that re-exports it; without, the agent is told that changes to
+    that module are not reported."""
+    from tests.test_engine import SIBLING_LIMIT_ERROR, mcplike_pypi
+
+    registry = ModelRegistry(cache, offline=True)
+    pypi = mcplike_pypi(tmp_path / "lib", cache, sibling=sibling)
+    tools = Tools(cache, registry=registry, pypi=pypi, today=date(2026, 9, 1))
+    warning = (
+        "- Warning: mcplike 2.0: changes to mcplike.types are not reported (re-exported from "
+        f"mcplike-types 2.0, which could not be downloaded: {SIBLING_LIMIT_ERROR})"
+    )
+    out = tools.api_changes("mcplike", cutoff="2025-07", include_internal=True)
+    assert ("mcplike.types.Tool.inputSchema" in out) is sibling
+    assert (warning in out.splitlines()) is not sibling
+    app = make_app(tmp_path, "mcplike==2.0", "from mcplike.types import Tool\n")
+    out = tools.project_changes(str(app), cutoff="2025-07", include_internal=True)
+    assert ("inputSchema" in out) is sibling
+    assert (warning in out.splitlines()) is not sibling

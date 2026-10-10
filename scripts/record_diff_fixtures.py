@@ -6,7 +6,10 @@
 
 Each fixture names its package and its two versions. Both releases are downloaded with
 `PyPI.source()` into the since-cutoff cache (`SINCE_CUTOFF_CACHE` puts it elsewhere) and diffed
-with `diff_sources()`, as `since-cutoff scan` does; no model is called. The file keeps its shape:
+with `diff_sources()`, as `since-cutoff scan` does, except that no distribution a release
+star-imports is read next to it (`engine.Sibling`: a scan reads mcp-types next to mcp 2.2.0 and
+reports its renames under `mcp.types` too, more than the fixture's size allows); no model is
+called. The file keeps its shape:
 `schema` (the current DIFF_SCHEMA), `package`, `from_version`, `to_version`, `import_names` and
 `changes`, and a fixture with `kinds` keeps only the changes of those kinds
 (`openai-2.44.0-3.19.2-switch.json` keeps the `dependency_switched` one of its diff).

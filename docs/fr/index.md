@@ -7,23 +7,25 @@ image:
   path: https://mohammadhijjawi97.github.io/since-cutoff/img/og.png
   width: 1200
   height: 630
-  alt: "since-cutoff : trouvez sur quelles API de vos dépendances votre modèle de code se trompe, et corrigez ces erreurs avec des notes AGENTS.md vérifiées"
+  alt: "since-cutoff : trouvez quelles API de vos dépendances ont changé après la date limite d'entraînement de votre modèle de code, et rédigez de courtes notes AGENTS.md à partir du diff d'API, chacune avec sa source"
 ---
 
 [English](../index.md) · [Español](../es/index.md) · **Français**
 
-*Mohammad Hijjawi · septembre 2026 · [since-cutoff sur GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
+*Mohammad Hijjawi · septembre 2026, mis à jour en octobre 2026 · [since-cutoff sur GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
 
 <p align="center"><img src="../img/hero.fr.svg" width="640" alt="Votre modèle de code a appris vos bibliothèques avant qu'elles ne changent. Claude Opus 4.6 sur un seul projet d'exemple, mesuré avec since-cutoff 0.1.0 : sur 7 des 16 changements d'API sondés, il a utilisé un nom ou un paramètre supprimé depuis ; avec les notes, la part de tâches réservées correctes est passée de 5 % à 65 % (20 tâches). Essayez : uvx since-cutoff scan (aucun appel au modèle, aucune clé d'API)."></p>
 
 **since-cutoff** est un outil open source, utilisable en ligne de commande et comme serveur MCP,
-pour les projets Python écrits avec des agents de code. Il liste les changements d'API publique
-survenus dans vos dépendances épinglées depuis la date limite d'entraînement du modèle et montre
-où votre code utilise les API qui ont changé ; il rédige de courtes notes AGENTS.md sur ces
-changements à partir du diff d'API et les tient à jour avec votre fichier de verrouillage, et
-peut mesurer ceux sur lesquels le modèle se trompe et si les notes l'aident. Chaque note porte une
-étiquette qui dit ce qui a été vérifié : énoncée à partir du diff d'API, ou rédigée par le modèle
-et conservée seulement si son exemple passe le vérificateur de types pour votre version.
+pour les projets Python écrits avec des agents de code. `scan` montre où votre code utilise une
+API d'une dépendance qui a changé après la date limite d'entraînement du modèle, avec pour chacune
+une note tirée du diff d'API ; `sync` écrit les notes dans AGENTS.md ou CLAUDE.md et les tient à
+jour avec votre fichier de verrouillage ; `status`, des hooks pre-commit et une action GitHub vous
+préviennent quand elles ne le sont plus ; le serveur MCP permet à un agent de demander ce qui a
+changé dans une bibliothèque avant d'écrire du code. Seul `run`, facultatif, appelle un modèle :
+il mesure sur lesquels des changements le modèle se trompe et si les notes l'aident. Chaque note
+porte une étiquette qui dit ce qui a été vérifié : énoncée à partir du diff d'API, ou rédigée par
+le modèle et conservée seulement si son exemple passe le vérificateur de types pour votre version.
 
 ```bash
 # les API modifiées qu'utilise votre code, avec une note pour chacune (aucun appel au modèle, aucune clé d'API)
@@ -32,15 +34,18 @@ uvx since-cutoff scan
 # écrire les notes dans AGENTS.md et les tenir à jour (aucun appel au modèle)
 uvx since-cutoff sync
 
-# mesurer le modèle, rédiger des notes, les ajouter à AGENTS.md
-uvx since-cutoff run --apply
+# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle)
+uvx since-cutoff run
 ```
 
 [Documentation en français et code source sur GitHub](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md) ·
 [PyPI](https://pypi.org/project/since-cutoff/) ·
 [Le fonctionnement en détail (en anglais)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md)
 
-La suite de cette page raconte l'origine du projet et présente les premières mesures.
+La suite de cette page raconte l'origine du projet et présente les premières mesures, faites
+avec since-cutoff 0.1.0 en septembre 2026. Des mesures plus récentes (en anglais) :
+[Ce que votre modèle n'a pas vu](../ai-stack.md) (36 bibliothèques, 21 modèles, aucun appel au
+modèle) et [le benchmark avec un agent de code](../benchmark.md) (360 sessions de Claude Code).
 
 ---
 
@@ -72,8 +77,8 @@ et **Claude Opus 4.6** (mai 2025). Les tâches et les notes ont été rédigées
    ou déplacés, les paramètres supprimés ou devenus obligatoires, les passages en paramètres
    nommés uniquement ou positionnels uniquement (keyword-only, positional-only) et les nouveaux
    marqueurs de dépréciation. Pour ce projet et la date limite de
-   Claude Haiku 4.5, 7 des 9 dépendances ont changé ; le diff actuel (0.2.0) signale 491
-   changements incompatibles et 50 nouvelles dépréciations, dont une partie concerne des éléments
+   Claude Haiku 4.5, 7 des 9 dépendances ont changé ; le diff actuel (0.5.0) signale 475
+   changements incompatibles et 48 nouvelles dépréciations, dont une partie concerne des éléments
    internes.
 2. **Des tâches qui nécessitent le changement.** Pour les changements les mieux classés, un
    rédacteur de tâches produit de courtes tâches de programmation réalistes, qui exigent la
@@ -184,16 +189,18 @@ uvx since-cutoff scan
 # écrire les notes dans AGENTS.md et les tenir à jour (aucun appel au modèle)
 uvx since-cutoff sync
 
-# mesurer, rédiger des notes, les appliquer à AGENTS.md
-uvx since-cutoff run --apply
+# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle)
+uvx since-cutoff run
 ```
 
-since-cutoff fonctionne avec Claude Code (sous forme de plugin), Anthropic, OpenAI, OpenRouter,
-DeepSeek, Ollama et tout serveur compatible OpenAI. `since-cutoff mcp` permet à n'importe quel
-client MCP (Codex, Cursor, VS Code, Gemini CLI) de consulter les changements d'une bibliothèque
-avant d'écrire du code, et une
-[action GitHub](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#github-action)
-lance le scan sur les pull requests et peut vérifier que les notes sont à jour. Il ne prend en charge que Python pour l'instant ; TypeScript
+`run` fonctionne avec Claude Code (sous forme de plugin), Anthropic, OpenAI, OpenRouter, DeepSeek,
+Ollama et tout serveur compatible OpenAI ; `scan`, `sync` et `status` n'ont besoin que de la date
+limite du modèle. `since-cutoff status` (hors ligne), `sync --check`, les
+[hooks pre-commit](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#pre-commit)
+et une [action GitHub](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#github-action)
+préviennent quand les notes ne sont plus à jour ; `since-cutoff mcp` permet à n'importe quel
+client MCP (Claude Code, Codex, Cursor, VS Code, Gemini CLI) de consulter les changements d'une
+bibliothèque avant d'écrire du code. Il ne prend en charge que Python pour l'instant ; TypeScript
 est la prochaine étape. Vos retours sur la méthode sont les bienvenus dans les
 [issues](https://github.com/MohammadHijjawi97/since-cutoff/issues), tout comme les résultats
 obtenus sur vos propres projets dans

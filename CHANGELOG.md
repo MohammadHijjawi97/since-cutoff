@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+- The comparison release is the latest release published at least 30 days before the model's
+  training cutoff, not at the cutoff itself. A model's training data lags its stated cutoff, so
+  it knows the last weeks before the cutoff least: llama-index-core 0.13.0, which removed
+  `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on 2025-07-30, the day before
+  claude-sonnet-4-5's cutoff, and a scan of a project pinning 0.14.25 said the code used none
+  of the APIs that changed; it now reports both removals. `--cutoff-margin DAYS`,
+  `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and the action's `cutoff-margin`
+  input set the margin; 0 compares from the cutoff itself, as before. The model line says both
+  days ("training cutoff 2025-07-31, comparing from releases up to 2025-07-01"), and so do the
+  reports, `results.json` (`compare_from`, `settings.cutoff_margin`, also in `sync --json` and
+  `status --json`) and the notes block's header and meta line, so `status` and `sync --check`
+  report a block compared from another day as out of date. A block written by an earlier
+  since-cutoff compared from the cutoff itself and is reported out of date until `since-cutoff
+  sync` rewrites it (`--cutoff-margin 0` keeps the old comparison). The block's package line
+  says which release the notes compare from, `**anthropic 1.8.0** (compared from 0.56.0)`; it
+  said "0.56.0 at the cutoff", which the margin made false, and both forms are read. A
+  dependency first released within the margin counts as new to the model, and the scan, the
+  MCP tools and `sync` say it was "first released 2025-07-15, within 30 days of the cutoff", not
+  "after the cutoff"; one the model knows is "the latest release 30 days before the cutoff".
+- A module that takes its names from another distribution with `from x import *` is compared
+  with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
+  mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under
+  `mcp.types` while mcp-types had renamed every field to snake_case, so
+  `types.Tool(name=..., inputSchema=...)` broke unreported. The sibling distribution is
+  downloaded at the version the project locks (or the newest its requirement allows on the
+  comparison date, for the release at the cutoff), under the usual download limit and cache, and
+  its names are compared under the paths that re-export them (`mcp.types.Tool.inputSchema`
+  removed). Only a star import that runs counts: not one in a docstring, a function or an `if
+  TYPE_CHECKING:` block. An object a release only re-exports from elsewhere is now compared too,
+  where griffe stops at the alias: a class's members (inherited ones included), a function's
+  parameters and a change of kind, reported under the re-exporting path. When the sibling cannot be downloaded,
+  the scan, the report and the MCP tools warn that changes to those modules are not reported.
+  Cached diffs are keyed on the siblings read, and on the source schema, with the diff schema;
+  which distributions each release star-imports is kept in the cache, so a cached diff is still
+  served from the pinned release alone, with nothing else to download.
+- README: a newcomer now sees, in order, what it is, how to install it (uvx, pipx, pip), a
+  Quick start on the sample project with the real `scan` output and the block `sync` writes,
+  when to use it and what it does not do, then the existing sections. New FAQ: the training
+  cutoff against the release date, what is sent where, why some notes name no replacement,
+  AGENTS.md and CLAUDE.md, the notes' cost in tokens, offline use. The counts come from 0.5.0's
+  scan (307 breaking changes and 23 new deprecations in the sample project). The Chinese,
+  Spanish and French READMEs follow the same structure, and now also describe the Gemini CLI
+  model detection and `sync --json`, which only the English README had.
+- Docs site: index.md and ai-stack.md describe 0.5.0 (scan, sync, status, pre-commit, the Action
+  and the MCP server) and ai-stack.md's counts come from a re-run with 0.5.0; a nav bar links
+  the pages and the GitHub docs (#67); the link-preview text no longer says "verified AGENTS.md
+  notes" (#51); benchmark.md says it is the study as run with 0.4.1's notes.
+- README (all four languages) and how-it-works.md: the intro, the Quick start, "The problem",
+  the MCP and `[diff]` tables, the `sync` and block descriptions describe the comparison release
+  as the latest release published at least 30 days before the model's training cutoff by
+  default; they still said "on or before the cutoff".
+- `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
+  default in all four READMEs (the Spanish and French pins and the translated action tables
+  were not checked).
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
@@ -41,8 +95,10 @@
   stub), is no longer reported as removed, nor is what it defines or a name a readable
   module still imports from it (#52). Since only sources are extracted, the diff could not
   tell it from a removal. A name a readable module stopped importing from it is still
-  removed, and a package whose `__init__` is compiled hides only its own names, not its
-  readable submodules. The source tree now records the compiled modules (extension modules
+  removed. A top-level package whose `__init__` is compiled hides only the names it defines; a
+  compiled subpackage `__init__` hides that subpackage, since griffe cannot enter a directory
+  without an `__init__.py` inside a regular package, and the scan warns. The source tree now
+  records the compiled modules (extension modules
   in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
   and the scan, the report and the MCP tools warn that changes to such a module, private
   ones included, and to the names taken from it are not reported. After upgrading, cached

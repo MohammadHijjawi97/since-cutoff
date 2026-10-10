@@ -85,7 +85,10 @@ the sdist, so keep them small (the test allows 300 KB for all of them).
 `tests/fixtures/diffs` holds real API diffs that tests read instead of PyPI: mcp 1.28.1 -> 2.2.0,
 the `dependency_switched` change of openai 2.44.0 -> 3.19.2, and httpx 0.27.2 -> 0.28.1 and
 click 8.1.8 -> 8.2.0, whose changelogs `tests/test_golden_diffs.py` checks them against (each
-file at most 150 KB: the fixtures ship in the sdist). After a `DIFF_SCHEMA` bump, or
+file at most 150 KB: the fixtures ship in the sdist). They are diffed from the two releases
+alone, without the distributions a release star-imports (`engine.Sibling`): a scan reads
+mcp-types next to mcp 2.2.0 and reports its renames under `mcp.types` too, which the fixture
+would not hold within its size. After a `DIFF_SCHEMA` bump, or
 an `apidiff.py` change that changes what they report, re-record them from PyPI with
 `python scripts/record_diff_fixtures.py` (`--check` writes nothing and exits with code 1 when one
 would change; `pytest -m network` runs the same check), then read the fixtures' diff and update
@@ -133,8 +136,9 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
      `gemini-extension.json`, and the skill's `metadata.version` in
      `skills/since-cutoff/SKILL.md`;
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
-   - the README pins: the pre-commit `rev: vX.Y.Z` in `README.md` and `README.zh-CN.md`, and
-     the `since-cutoff-version` default in the action's input table;
+   - the README pins, in each of the four READMEs (`README.md`, `README.zh-CN.md`,
+     `README.es.md` and `README.fr.md`): the pre-commit `rev: vX.Y.Z` and the
+     `since-cutoff-version` default in the action's input table;
    - for 0.4.0 only: rename `hooks/hooks.json.in` to `hooks/hooks.json` (the plugin's
      SessionStart hook runs `since-cutoff status`, which 0.4.0 added), and from then on keep
      its `since-cutoff==X.Y.Z` pin current;

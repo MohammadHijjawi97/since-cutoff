@@ -122,7 +122,7 @@ def text_of(lines: list[Any]) -> str:
 GOLDEN = """\
 Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31)
 
-toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml pins 2.0)
+toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; pyproject.toml pins 2.0)
   Client.send: temperature was removed; stream is now keyword-only                          old form
     main.py        passes temperature to send
     sub/other.py   calls send
@@ -660,7 +660,10 @@ def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
         "Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff "
         "(2025-07-31), 1 of them in the old form. Old form: valid for 1.0;" in md
     )
-    assert "### toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml" in md
+    assert (
+        "### toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; "
+        "pyproject.toml"
+    ) in md
     assert (
         "- **`Client.send`: `temperature` was removed; `stream` is now keyword-only** · old form"
         in md

@@ -823,7 +823,7 @@ def test_scan_all_lists_the_changes_in_the_imported_order(tmp_path) -> None:
     console = Console(record=True, width=200, force_terminal=False, color_system=None)
     render_scan_changes(console, scan, limit=3)
     text = console.export_text()
-    assert "mcp 1.28.1 -> 2.2.0: 73 breaking, 9 deprecated (+23 internal)" in text
+    assert "mcp 1.28.1 -> 2.2.0: 73 breaking, 9 deprecated (+25 internal)" in text
     lines = [line.strip() for line in text.splitlines() if line.strip().startswith("- ")]
     assert lines == [
         "- mcp requires httpx2 instead of httpx (23 places in its public API that named httpx "
@@ -852,7 +852,7 @@ def test_project_changes_lists_a_package_in_the_imported_order(tmp_path) -> None
     text = "\n".join(_package_section(scan, package, 4))
     assert (
         "## mcp 1.28.1" in text
-        and "73 breaking, 9 deprecated (+23 internal). Your code imports it." in text
+        and "73 breaking, 9 deprecated (+25 internal). Your code imports it." in text
     )
     assert _bullets(text, "### Dependencies switched")[0].startswith(
         "mcp requires `httpx2` instead of `httpx`; its Requires-Dist lists `httpx2>=2.5.0` and "
@@ -876,13 +876,13 @@ def test_the_markdown_reports_list_a_package_in_the_imported_order(tmp_path) -> 
     package, _ = _fixture("mcp-1.28.1-2.2.0")
     scan = _scan(tmp_path, package, "import mcp\n")
     full = render_markdown(scan)
-    items = _bullets(full, "### mcp 1.28.1 -> 2.2.0: 73 breaking, 9 deprecated (+23 internal)")
+    items = _bullets(full, "### mcp 1.28.1 -> 2.2.0: 73 breaking, 9 deprecated (+25 internal)")
     # The switch's counts and places are an item of their own under it ("Places:").
     places = (
         "Places: its Requires-Dist lists `httpx2>=2.5.0` and no `httpx`; 23 places in its "
         "public API that named `httpx` types name the `httpx2` types of the same name: "
     )
-    assert len(items) == 106 and items[1].startswith(places)
+    assert len(items) == 108 and items[1].startswith(places)
     assert [i.split(" (")[0] for i in [items[0], *items[2:5]]] == [
         "mcp requires `httpx2` instead of `httpx`",
         "`mcp.McpError` moved to `mcp.MCPError`",

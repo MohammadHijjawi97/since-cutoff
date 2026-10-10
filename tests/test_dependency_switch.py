@@ -1252,7 +1252,7 @@ def test_the_sync_block_puts_the_switch_under_its_package(tmp_path) -> None:
     change = _switch(tmp_path / "diff")
     scan = _scan(tmp_path, change, OLD_FORM_CODE)
     block = scan.notes_block(scan.scope_notes(SCOPE_USED)) or ""
-    assert "\n**pkg 2** (1 at the cutoff)\n- pkg 2 requires `newhttp` instead of `oldhttp`" in block
+    assert "\n**pkg 2** (compared from 1)\n- pkg 2 requires `newhttp` instead of `oldhttp`" in block
     assert block.count("[diff + metadata]") == 1
 
 

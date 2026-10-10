@@ -255,6 +255,8 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
         "effort": scan.target.effort,
         "cutoff": scan.target.cutoff.isoformat(),
         "cutoff_source": scan.target.cutoff_source,
+        # The day the comparison releases were published by: ``cutoff_margin`` days earlier.
+        "compare_from": scan.target.compare_date.isoformat(),
         "project": str(scan.project.root),
         "version_source": scan.project.version_source,
         "dependencies_total": len(scan.packages),
@@ -270,6 +272,7 @@ def summary(scan: ScanResult, run: RunResult | None = None) -> dict[str, Any]:
             "tool_version": __version__,
             "diff_schema": DIFF_SCHEMA,
             "griffe_version": griffe_version(),
+            "cutoff_margin": scan.target.margin,
             "date": now.date().isoformat(),
             **(run.settings if run is not None else {}),
         },
@@ -442,7 +445,10 @@ def headline(
         )
     if s["dependencies_newer_than_model"]:
         new = s["dependencies_newer_than_model"]
-        lines.append(Text(f"{_deps(new)} did not exist yet at the cutoff", style="dim"))
+        # A dependency first released within the margin existed at the cutoff.
+        within = any(scan.target.released_within_margin(p) for p in scan.packages)
+        when = scan.target.compare_when if within else "at the cutoff"
+        lines.append(Text(f"{_deps(new)} did not exist yet {when}", style="dim"))
     if s["dependencies_skipped"]:
         skipped, total = s["dependencies_skipped"], s["dependencies_total"]
         first = next((p.reason for p in scan.skipped if p.reason), "")
@@ -943,7 +949,7 @@ def scan_lines(
         if used:
             out.append(Text(""))
         for p in new:
-            prose(_new_package_text(p))
+            prose(_new_package_text(scan, p))
     other = None if show_all else _others_text(scan, used)
     if used:
         out.append(Text(""))
@@ -1009,8 +1015,8 @@ def versions_text(scan: ScanResult, p: PackageScan) -> str:
     else:
         pins = f"{source}: {locked}"
     return (
-        f"{p.name} {p.cutoff_version} -> {locked} ({p.cutoff_version} was the latest release at "
-        f"the cutoff; {pins})"
+        f"{p.name} {p.cutoff_version} -> {locked} ({p.cutoff_version} was the latest release "
+        f"{scan.target.compare_when}; {pins})"
     )
 
 
@@ -1224,14 +1230,20 @@ def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[
     return out
 
 
-def _new_package_text(p: PackageScan) -> str:
+def _new_package_text(scan: ScanResult, p: PackageScan) -> str:
+    name = f"{p.name} {p.locked}" if p.locked else p.name
+    if scan.target.released_within_margin(p):  # before the cutoff, after the comparison day
+        return (
+            f"Your code imports {name} (first released {p.first_released}, within "
+            f"{scan.target.margin} days of the cutoff): its whole API is newer than the "
+            "releases the scan compares from."
+        )
     if p.cutoff_version:  # the release at the cutoff was an empty placeholder
         when = p.reason or "empty at the cutoff"
     elif p.first_released:
         when = f"first released {p.first_released}, after the cutoff"
     else:
         when = "first released after the cutoff"
-    name = f"{p.name} {p.locked}" if p.locked else p.name
     return f"Your code imports {name} ({when}): its whole API is newer than the cutoff."
 
 
@@ -1565,7 +1577,7 @@ def _used_report_md(scan: ScanResult) -> list[str]:
                 f"  - Similar names in {u.package.locked}, not confirmed as replacements: {names}"
             )
     if new:
-        out += ["", *(f"- {_new_package_text(p)}" for p in new)]
+        out += ["", *(f"- {_new_package_text(scan, p)}" for p in new)]
     return out
 
 
@@ -1778,9 +1790,14 @@ def _heldout_cells(h: dict[str, Any], role: str = "heldout") -> list[tuple[str, 
 
 
 def _cutoff_md(s: dict[str, Any]) -> str:
+    margin = s["settings"].get("cutoff_margin") or 0
+    from_day = f", comparing from releases up to **{s['compare_from']}**" if margin else ""
     if not s["model"]:
-        return f"Custom cutoff **{s['cutoff']}** (given with --cutoff, no model)"
-    return f"Model `{s['model']}`, training cutoff **{s['cutoff']}** (source: {s['cutoff_source']})"
+        return f"Custom cutoff **{s['cutoff']}**{from_day} (given with --cutoff, no model)"
+    return (
+        f"Model `{s['model']}`, training cutoff **{s['cutoff']}**{from_day} "
+        f"(source: {s['cutoff_source']})"
+    )
 
 
 def _md_change(
@@ -1953,7 +1970,7 @@ def _used_markdown(scan: ScanResult, env: Mapping[str, str] | None) -> list[str]
     elif scan.changed:
         out.append("**Your code uses none of the APIs that changed after the cutoff**")
     for p in new:
-        out += ["", _new_package_text(p)]
+        out += ["", _new_package_text(scan, p)]
     block = scan.notes_block(scan.diff_notes()) if used else None
     if block:
         count = _plural(len(used), "note")

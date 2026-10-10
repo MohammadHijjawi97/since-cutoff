@@ -25,15 +25,17 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import re
-from collections.abc import Callable, Iterable
+import sys
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from packaging.markers import InvalidMarker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -50,9 +52,11 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     TIER_INTERNAL,
     APIChange,
+    dependency_module,
     diff_sources_with_unread,
     griffe_version,
     load_api,
+    requirements,
     unread_text,
 )
 from since_cutoff.apidiff import (
@@ -68,7 +72,13 @@ from since_cutoff.baselines import (
 from since_cutoff.cache import DiskCache, stable_hash
 from since_cutoff.checker import Checker, CheckResult, Diagnostic, extract_code
 from since_cutoff.errors import CheckerError, NoCodeError, PackageIndexError, ProviderError
-from since_cutoff.models import PROVIDER_ALIASES, ModelInfo, ModelRegistry
+from since_cutoff.models import (
+    DEFAULT_CUTOFF_MARGIN,
+    PROVIDER_ALIASES,
+    ModelInfo,
+    ModelRegistry,
+    compare_date,
+)
 from since_cutoff.notes import (
     IMPORTED_APIS,
     NOTE_MODEL,
@@ -133,6 +143,17 @@ SKIPPED = "skipped"
 # A release at the cutoff with files this small and nothing in its modules only reserved the
 # name (see Engine._placeholder); a compiled extension would not fit.
 _PLACEHOLDER_BYTES = 64 * 1024
+# Distributions a release's modules take their names from with ``from x import *`` (mcp 2.3's
+# ``mcp/types/__init__.py`` is ``from mcp_types import *``: see star_imports_from_outside),
+# fetched per release at most; a package that re-exports more than this is a bundle.
+SIBLING_LIMIT = 4
+# ``from mcp_types import *``, at the start of a line (not a relative import): how a module that
+# does not parse is read (_star_imported).
+_STAR_IMPORT = re.compile(r"^[ \t]*from[ \t]+([A-Za-z_]\w*(?:\.\w+)*)[ \t]+import[ \t]+\*", re.M)
+# The statements with blocks a star import may run under (_module_level); ``try*`` is 3.11's.
+_TRY: tuple[type[ast.stmt], ...] = tuple(
+    getattr(ast, name) for name in ("Try", "TryStar") if hasattr(ast, name)
+)
 # ``sync --scope imported``: the APIs noted per changed package the code imports (at least all
 # those it uses), in the order of ScanResult.ranked.
 # A class whose fields mirror a callable's parameters (the SDKs' ``MessageCreateParamsBase``).
@@ -236,6 +257,9 @@ class Settings:
     # agent (:func:`since_cutoff.hosts.detect_model`) or ``hosts.DEFAULT_SOURCE``.
     model_source: str | None = None
     cutoff: date | None = None
+    # Days before the cutoff the comparison release must have been published (--cutoff-margin,
+    # SINCE_CUTOFF_CUTOFF_MARGIN; 0: the latest release at the cutoff itself).
+    cutoff_margin: int = DEFAULT_CUTOFF_MARGIN
     task_model: str | None = None
     max_probes: int = 30
     heldout: int = 2
@@ -263,11 +287,35 @@ class ModelTarget:
     cutoff_source: str
     info: ModelInfo | None = None
     effort: str | None = None
+    # Days before the cutoff the comparison release must have been published (Settings.cutoff_margin).
+    margin: int = DEFAULT_CUTOFF_MARGIN
 
     @classmethod
-    def cutoff_only(cls, cutoff: date, source: str = "--cutoff") -> ModelTarget:
+    def cutoff_only(
+        cls, cutoff: date, source: str = "--cutoff", *, margin: int = DEFAULT_CUTOFF_MARGIN
+    ) -> ModelTarget:
         """A cutoff date with no model behind it (``scan --cutoff`` without ``--model``)."""
-        return cls("", "", cutoff, source)
+        return cls("", "", cutoff, source, margin=margin)
+
+    @property
+    def compare_date(self) -> date:
+        """The day the comparison release of each dependency must have been published by:
+        ``margin`` days before the cutoff (:func:`since_cutoff.models.compare_date`)."""
+        return compare_date(self.cutoff, self.margin)
+
+    @property
+    def compare_when(self) -> str:
+        """When the release a scan compares from was the latest one, in words: ``30 days
+        before the cutoff``, or ``at the cutoff`` with a margin of 0."""
+        return f"{self.margin} days before the cutoff" if self.margin else "at the cutoff"
+
+    def released_within_margin(self, p: PackageScan) -> bool:
+        """Was ``p``, a dependency the scan counts as new (NEW), first released within the
+        margin: after the day the scan compares from, but not after the cutoff, which is what
+        a text about a new dependency says otherwise."""
+        if p.status != NEW or not p.first_released:
+            return False
+        return self.compare_date.isoformat() < p.first_released <= self.cutoff.isoformat()
 
 
 @dataclass
@@ -295,6 +343,11 @@ class PackageScan:
     # not compare it (issue #52; diff_sources_with_unread); and classes whose attributes a
     # base outside the package may set, which were not compared (apidiff.UNREAD_BASE).
     unread: list[str] = field(default_factory=list)
+    # CHANGED: modules of the pinned release that take their names from another distribution
+    # (mcp 2.3's ``mcp/types/__init__.py`` is ``from mcp_types import *``) which could not be
+    # read, with why (``"mcp-types 2.3.0, which could not be downloaded: ..."``): changes to
+    # them are not reported (Engine._siblings, reexport_warning).
+    reexported: dict[str, str] = field(default_factory=dict)
 
     @property
     def breaking(self) -> list[APIChange]:
@@ -387,6 +440,155 @@ def unread_warning(s: PackageScan) -> str:
     """The scan's warning for a package whose diff could not compare everything
     (:attr:`PackageScan.unread`: compiled modules, classes with a base outside the package)."""
     return unread_text(s.name, s.locked or "?", s.cutoff_version or "?", s.unread)
+
+
+def reexport_warning(s: PackageScan) -> str:
+    """The scan's warning for a package whose pinned release fills modules with another
+    distribution's names (``from mcp_types import *``) that could not be read
+    (:attr:`PackageScan.reexported`): ``mcp 2.3.0: changes to mcp.types are not reported
+    (re-exported from mcp-types 2.3.0, which could not be downloaded: ...)``."""
+    by_reason: dict[str, list[str]] = {}
+    for module, why in s.reexported.items():
+        by_reason.setdefault(why, []).append(module)
+    parts = [
+        f"changes to {_listed(modules)} are not reported (re-exported from {why})"
+        for why, modules in by_reason.items()
+    ]
+    return f"{s.name} {s.locked}: " + "; ".join(parts)
+
+
+def _listed(items: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+@dataclass(frozen=True)
+class Sibling:
+    """A distribution that a release's modules take their names from with ``from x import *``
+    and that its Requires-Dist names (mcp 2.3.0's ``mcp/types/__init__.py`` is ``from mcp_types
+    import *``, and it requires ``mcp-types==2.3.0``): read next to the release, so that the
+    diff compares those names too (:meth:`Engine._siblings`)."""
+
+    name: str  # the distribution, canonical: "mcp-types"
+    package: str  # the top-level package star-imported: "mcp_types"
+    modules: tuple[str, ...]  # the release's modules that star-import it: "mcp.types", ...
+    requirement: str  # as the release's Requires-Dist lists it: "mcp-types==2.3.0"
+    version: str | None = None  # the release it resolves to; None when none matches
+    problem: str | None = None  # why there is no version (PyPI could not say)
+
+    def tag(self, side: str) -> str:
+        """How a diff's cache key names this sibling, read next to the ``"old"`` or the
+        ``"new"`` release: ``new:mcp-types==2.3.0`` (:meth:`Engine._diff_key`)."""
+        return f"{side}:{self.name}=={self.version}"
+
+    def record(self) -> dict[str, Any]:
+        """What the store keeps of a sibling (:meth:`Engine._wanted_siblings`): everything but
+        the version, which each scan resolves."""
+        return {
+            "name": self.name,
+            "package": self.package,
+            "modules": list(self.modules),
+            "requirement": self.requirement,
+        }
+
+    @classmethod
+    def from_record(cls, data: Mapping[str, Any]) -> Sibling:
+        return cls(data["name"], data["package"], tuple(data["modules"]), data["requirement"])
+
+
+def star_imports_from_outside(tree: SourceTree) -> dict[str, list[str]]:
+    """For each top-level package outside ``tree`` that a module of the tree star-imports when
+    it runs (``from mcp_types import *``: :func:`_star_imported`), the dotted names of the
+    modules that do, in the order of their files. Not the standard library, and not a module
+    the tree ships itself."""
+    own = {n.split(".")[0].removesuffix("-stubs") for n in tree.import_names}
+    out: dict[str, list[str]] = {}
+    for top in sorted(own):
+        base = tree.root / top
+        files = sorted(base.rglob("*.py")) if base.is_dir() else [base.with_suffix(".py")]
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "import *" not in text:
+                continue
+            parts = list(path.relative_to(tree.root).with_suffix("").parts)
+            if parts[-1] == "__init__":
+                parts.pop()
+            module = ".".join(parts)
+            for package in _star_imported(text):
+                shipped = (tree.root / package).exists() or (tree.root / f"{package}.py").exists()
+                if package in own or package in sys.stdlib_module_names or shipped:
+                    continue
+                modules = out.setdefault(package, [])
+                if module not in modules:
+                    modules.append(module)
+    return out
+
+
+def _star_imported(text: str) -> list[str]:
+    """The top-level packages a module's text star-imports when it runs, in order: ``from x
+    import *`` at module level, under an ``if``, a ``try`` or a ``with`` too, but not inside a
+    function or a class, in a docstring, or under ``if TYPE_CHECKING:``, whose names a type
+    checker sees and a program does not. A text that does not parse (another Python's syntax)
+    is read line by line instead (``_STAR_IMPORT``)."""
+    try:
+        module = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return [m.group(1).split(".")[0] for m in _STAR_IMPORT.finditer(text)]
+    out: list[str] = []
+    for node in _module_level(module.body):
+        if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
+            continue
+        if any(alias.name == "*" for alias in node.names):
+            out.append(node.module.split(".")[0])
+    return out
+
+
+def _module_level(body: list[ast.stmt]) -> Iterator[ast.stmt]:
+    """The statements that run when a module is imported: ``body`` and the blocks in it, but
+    not a function's or a class's body, nor the ``TYPE_CHECKING`` side of an ``if``."""
+    for node in body:
+        yield node
+        if isinstance(node, ast.If):
+            checking = _type_checking(node.test)
+            if checking is not True:
+                yield from _module_level(node.body)
+            if checking is not False:
+                yield from _module_level(node.orelse)
+        elif isinstance(node, _TRY):
+            tried = cast(ast.Try, node)  # ast.TryStar (3.11) has the same blocks
+            handlers = [handler.body for handler in tried.handlers]
+            for block in (tried.body, *handlers, tried.orelse, tried.finalbody):
+                yield from _module_level(block)
+        elif isinstance(node, ast.With):
+            yield from _module_level(node.body)
+
+
+def _sibling_tags(pair: tuple[list[Sibling], list[Sibling]]) -> tuple[str, ...]:
+    """How a diff's cache key names the siblings of its old and new release, when every one
+    with a version is read (:meth:`Engine._diff_key`): ``("new:mcp-types==2.3.0",)``."""
+    old, new = pair
+    return tuple(
+        sib.tag(side)
+        for side, found in (("old", old), ("new", new))
+        for sib in found
+        if sib.version
+    )
+
+
+def _type_checking(test: ast.expr) -> bool | None:
+    """True for ``TYPE_CHECKING`` (``typing.TYPE_CHECKING`` too), False for ``not
+    TYPE_CHECKING``, None for any other test."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _type_checking(test.operand)
+        return None if inner is None else not inner
+    if isinstance(test, ast.Name):
+        return True if test.id == "TYPE_CHECKING" else None
+    if isinstance(test, ast.Attribute):
+        return True if test.attr == "TYPE_CHECKING" else None
+    return None
 
 
 @dataclass
@@ -595,6 +797,7 @@ class ScanResult:
             version_source=self.project.version_source,
             deps=self.deps_hash(),
             scope=scope,
+            margin=self.target.margin,
         )
 
 
@@ -1004,6 +1207,7 @@ class Engine:
         if self.settings.model_source:
             source_note = f", model from {self.settings.model_source}{source_note}"
         effort = self.settings.effort if provider_name in ("claude-code", "claude") else None
+        margin = self.settings.cutoff_margin
         if self.settings.cutoff is not None:
             return ModelTarget(
                 spec,
@@ -1011,10 +1215,13 @@ class Engine:
                 self.settings.cutoff,
                 "--cutoff" + source_note,
                 effort=effort,
+                margin=margin,
             )
         info = self.registry.require(model_id, provider_name or None)
         assert info.knowledge is not None
-        return ModelTarget(spec, info.id, info.knowledge, "models.dev" + source_note, info, effort)
+        return ModelTarget(
+            spec, info.id, info.knowledge, "models.dev" + source_note, info, effort, margin
+        )
 
     def _check_spec(self, allow_calls: bool) -> None:
         """:func:`check_spec` for the tested model, with the vendors the registry knows (read
@@ -1078,9 +1285,9 @@ class Engine:
         queried = [d for d in deps if not d.non_pypi]
         deps_text = f"{len(queried)} dependenc{'y' if len(queried) == 1 else 'ies'}"
         self.reporter.stage(f"Checking {deps_text} on PyPI", len(queried))
-        found = self._map(lambda d: self._scan_versions(d, target.cutoff, project), queried, jobs=8)
+        found = self._map(lambda d: self._scan_versions(d, target, project), queried, jobs=8)
         by_key = {s.name: s for s in found}
-        scans = [by_key.get(d.key) or self._scan_versions(d, target.cutoff, project) for d in deps]
+        scans = [by_key.get(d.key) or self._scan_versions(d, target, project) for d in deps]
 
         to_diff = [s for s in scans if s.status == CHANGED]
         if to_diff:
@@ -1088,11 +1295,15 @@ class Engine:
             one = len(to_diff) == 1
             what = f"{len(to_diff)} package{'' if one else 's'} released after {'its' if one else 'their'}"
             self.reporter.stage(f"Diffing the API of {what} cutoff version", len(to_diff))
-            self._diff_all(to_diff)
+            locked = {d.key: d.version for d in project.dependencies if d.version}
+            self._diff_all(to_diff, locked=locked, when=target.compare_date)
         self.reporter.done()
         for s in to_diff:
             if s.unread:
                 warnings.append(unread_warning(s))
+                self.reporter.warn(warnings[-1])
+            if s.reexported:
+                warnings.append(reexport_warning(s))
                 self.reporter.warn(warnings[-1])
         # Only this scan's packages: a PyPI object outlives a scan in the MCP server.
         names = {s.name for s in scans}
@@ -1109,7 +1320,9 @@ class Engine:
         )
         return ScanResult(project, target, scans, warnings, stale)
 
-    def _scan_versions(self, dep: Dependency, cutoff: date, project: Project) -> PackageScan:
+    def _scan_versions(self, dep: Dependency, target: ModelTarget, project: Project) -> PackageScan:
+        """Which release of ``dep`` the model is compared from: the newest published by
+        ``target.compare_date`` (:attr:`ModelTarget.margin` days before the cutoff)."""
         scan = PackageScan(dep.key, dep.version, dep.source, dep.direct)
         if dep.non_pypi:
             scan.reason = dep.non_pypi_reason
@@ -1121,12 +1334,17 @@ class Engine:
             assert scan.locked is not None
             locked = self.pypi.release(dep.key, scan.locked)
             scan.locked_date = locked.uploaded.date().isoformat()
-            at_cutoff = self.pypi.version_at(dep.key, cutoff)
+            at_cutoff = self.pypi.version_at(dep.key, target.compare_date)
             if at_cutoff is None:
                 scan.status, scan.reason = NEW, "first released after the cutoff"
                 # From the release list version_at just read (cached): no request of its own.
                 first = min((r.uploaded for r in self.pypi.releases(dep.key)), default=None)
                 scan.first_released = first.date().isoformat() if first else None
+                if first is not None and target.compare_date < first.date() <= target.cutoff:
+                    scan.reason = (
+                        f"first released within {target.margin} days of the cutoff "
+                        f"({scan.first_released})"
+                    )
                 return scan
             scan.cutoff_version = at_cutoff.version
             scan.cutoff_version_date = at_cutoff.uploaded.date().isoformat()
@@ -1162,47 +1380,138 @@ class Engine:
         Sets ``import_names``, ``changes`` and ``status`` (CHANGED, UNCHANGED, or SKIPPED with
         a ``reason``) exactly as :meth:`scan` does for each changed dependency.
         """
-        self._diff_all([scan])
+        cutoff = self.settings.cutoff
+        when = compare_date(cutoff, self.settings.cutoff_margin) if cutoff is not None else None
+        self._diff_all([scan], when=when)
         return scan
 
-    def _diff_all(self, scans: list[PackageScan]) -> None:
-        cached: dict[int, list[dict[str, Any]]] = {}
+    def _diff_all(
+        self,
+        scans: list[PackageScan],
+        *,
+        locked: Mapping[str, str] | None = None,
+        when: date | None = None,
+    ) -> None:
+        """Diff each scan's two releases. ``locked`` (the project's dependencies by canonical
+        name) and ``when`` (the comparison date) pick the versions of the distributions each
+        side takes names from (:meth:`_siblings`): the locked one for the pinned release, the
+        newest allowed on ``when`` for the release at the cutoff.
+
+        The pinned release is always read: a cached diff still needs its import names. The
+        release at the cutoff is read when the diff is not cached, and once to learn which
+        distributions it takes names from (the diff's key names them: :meth:`_diff_key`), which
+        the store then keeps (:meth:`_wanted_siblings`), so that a later scan serves the cached
+        diff from the pinned release alone, with nothing else to download."""
+        locked = locked or {}
         wanted: list[tuple[str, str]] = []
         for s in scans:
             assert s.cutoff_version and s.locked
-            result = self.store.get("diffs", self._diff_key(s))
-            if result is not None:
-                cached[id(s)] = result
-            wanted.append((s.name, s.locked))  # a cached diff still needs the import names
-            if result is None:
+            wanted.append((s.name, s.locked))
+            if self._wanted_siblings(s.name, s.cutoff_version) is None:
                 wanted.append((s.name, s.cutoff_version))
         trees = self._fetch_sources(wanted)
 
-        pending: list[tuple[PackageScan, SourceTree, SourceTree, list[str]]] = []
+        # Served from the cache, or in need of the release at the cutoff after all.
+        served: set[int] = set()
+        missing: list[tuple[str, str]] = []
         for s in scans:
             assert s.cutoff_version and s.locked
             new = trees[(s.name, s.locked)]
-            old = new if id(s) in cached else trees[(s.name, s.cutoff_version)]
-            if isinstance(new, SourceTree) and self._placeholder(s, old):
+            if (s.name, s.cutoff_version) in trees or isinstance(new, PackageIndexError):
+                continue
+            old_wanted = self._wanted_siblings(s.name, s.cutoff_version)
+            if old_wanted is None:  # the store lost it since: read the release after all
+                missing.append((s.name, s.cutoff_version))
+                continue
+            pair = (
+                self._siblings(old_wanted, when=when),
+                self._siblings(self._wanted_siblings(s.name, s.locked, new) or [], locked=locked),
+            )
+            key = self._diff_key(s, _sibling_tags(pair))
+            cached = self.store.get("diffs", key)
+            if cached is None:
+                missing.append((s.name, s.cutoff_version))
+                continue
+            s.import_names = list(new.import_names)
+            unread = self.store.get("diffs", self._unread_key(s)) or []
+            self._finish(s, (cached, unread), key, store=False)
+            served.add(id(s))
+        trees.update(self._fetch_sources(missing))
+
+        ready: list[tuple[PackageScan, SourceTree, SourceTree]] = []
+        for s in scans:
+            if id(s) in served:
+                continue
+            assert s.cutoff_version and s.locked
+            new = trees[(s.name, s.locked)]
+            if isinstance(new, PackageIndexError):
+                s.status, s.reason = SKIPPED, str(new)
+                self.reporter.advance(label=s.name)
+                continue
+            old = trees[(s.name, s.cutoff_version)]
+            if self._placeholder(s, old):
                 # Nothing to compare with: the model has never seen this API.
                 s.status, s.import_names = NEW, list(new.import_names)
                 s.reason = f"{s.cutoff_version} at the cutoff was an empty placeholder"
                 self.reporter.advance(label=s.name)
                 continue
-            if isinstance(new, PackageIndexError) or isinstance(old, PackageIndexError):
-                s.status, s.reason = SKIPPED, str(new if isinstance(new, Exception) else old)
+            if isinstance(old, PackageIndexError):
+                s.status, s.reason = SKIPPED, str(old)
                 self.reporter.advance(label=s.name)
                 continue
             s.import_names = list(new.import_names)
-            if id(s) in cached:
+            ready.append((s, old, new))
+
+        # The distributions either release takes names from, read next to it (Sibling).
+        siblings = {
+            id(s): (
+                self._siblings(self._wanted_siblings(s.name, old.version, old) or [], when=when),
+                self._siblings(
+                    self._wanted_siblings(s.name, new.version, new) or [], locked=locked
+                ),
+            )
+            for s, old, new in ready
+        }
+        sibling_trees = self._fetch_sources(
+            (sib.name, sib.version)
+            for pair in siblings.values()
+            for side in pair
+            for sib in side
+            if sib.version
+        )
+
+        pending: list[
+            tuple[PackageScan, SourceTree, SourceTree, list[str], list[Path], list[Path], str]
+        ] = []
+        for s, old, new in ready:
+            roots: dict[str, list[Path]] = {"old": [], "new": []}
+            fetched: list[str] = []
+            for side, found in zip(("old", "new"), siblings[id(s)], strict=True):
+                for sib in found:
+                    tree = sibling_trees.get((sib.name, sib.version)) if sib.version else None
+                    if isinstance(tree, SourceTree):
+                        roots[side].append(tree.root)
+                        fetched.append(sib.tag(side))
+                        continue
+                    if sib.problem:
+                        why = f"{sib.name}, whose releases could not be listed: {sib.problem}"
+                    elif sib.version is None:
+                        why = f"{sib.name}, of which no release matches {sib.requirement}"
+                    else:
+                        why = f"{sib.name} {sib.version}, which could not be downloaded: {tree}"
+                    for module in sib.modules:
+                        s.reexported.setdefault(module, why)
+            key = self._diff_key(s, tuple(fetched))
+            cached = self.store.get("diffs", key)
+            if cached is not None:
                 unread = self.store.get("diffs", self._unread_key(s)) or []
-                self._finish(s, (cached[id(s)], unread), self._diff_key(s), store=False)
+                self._finish(s, (cached, unread), key, store=False)
                 continue
             names = sorted(set(old.import_names) | set(new.import_names))
-            pending.append((s, old, new, names))
+            pending.append((s, old, new, names, roots["old"], roots["new"], key))
 
         if len(pending) <= 1 or not self.processes or os.environ.get("SINCE_CUTOFF_NO_PROCESSES"):
-            for s, old, new, names in pending:
+            for s, old, new, names, old_roots, new_roots, key in pending:
                 result = diff_sources_with_unread(
                     s.name,
                     old.version,
@@ -1213,8 +1522,10 @@ class Engine:
                     old_requires=old.requires,
                     new_requires=new.requires,
                     new_compiled=list(new.compiled),
+                    old_roots=old_roots,
+                    new_roots=new_roots,
                 )
-                self._finish(s, result, self._diff_key(s))
+                self._finish(s, result, key)
             return
         workers = max(1, min(len(pending), (os.cpu_count() or 2) - 1, 6))
         pool = ProcessPoolExecutor(max_workers=workers)
@@ -1231,13 +1542,15 @@ class Engine:
                     old_requires=old.requires,
                     new_requires=new.requires,
                     new_compiled=list(new.compiled),
-                ): s
-                for s, old, new, names in pending
+                    old_roots=old_roots,
+                    new_roots=new_roots,
+                ): (s, key)
+                for s, old, new, names, old_roots, new_roots, key in pending
             }
             for fut in as_completed(futs):
-                s = futs[fut]
+                s, key = futs[fut]
                 try:
-                    self._finish(s, fut.result(), self._diff_key(s))
+                    self._finish(s, fut.result(), key)
                 except Exception as exc:  # a crash in one package must not sink the run
                     s.status, s.reason = SKIPPED, f"API diff failed: {exc}"
                     self.reporter.advance(label=s.name)
@@ -1246,6 +1559,73 @@ class Engine:
             raise
         pool.shutdown()
 
+    def _wanted_siblings(
+        self, name: str, version: str, tree: SourceTree | None = None
+    ) -> list[Sibling] | None:
+        """The distributions the release ``name==version`` takes names from with ``from x
+        import *`` (:func:`star_imports_from_outside`) and that its Requires-Dist names, with
+        no version yet (:meth:`_siblings` resolves one per scan). Read from ``tree`` once and
+        kept in the store, so that a later scan knows them without the release's sources: a
+        cached diff is then served from the pinned release alone. None when the store has
+        nothing and there is no ``tree`` to read. A star import of a package no requirement
+        names is left as it is: griffe keeps a placeholder for it, and the module's names are
+        not compared, as before.
+
+        mcp 2.3.0's ``mcp/types/__init__.py`` is ``from mcp_types import *`` and it requires
+        ``mcp-types==2.3.0``: without mcp-types, the report had no entry under ``mcp.types``
+        while its fields had been renamed to snake_case."""
+        key = self._siblings_key(name, version)
+        kept = self.store.get("diffs", key)
+        if isinstance(kept, list):
+            return [Sibling.from_record(r) for r in kept]
+        if tree is None:
+            return None
+        out: list[Sibling] = []
+        found = star_imports_from_outside(tree)
+        if found:
+            listed = requirements(tree.requires)
+            texts = {**listed.extra_text, **listed.base}
+            for package, modules in sorted(found.items()):
+                dist = next((n for n in texts if dependency_module(n) == package), None)
+                if dist is None:
+                    log.debug("%s %s: no requirement provides %s", name, version, package)
+                    continue
+                try:
+                    Requirement(texts[dist])
+                except InvalidRequirement:
+                    continue
+                out.append(Sibling(dist, package, tuple(modules), texts[dist]))
+        self.store.set("diffs", key, [s.record() for s in out])
+        return out
+
+    def _siblings(
+        self,
+        wanted: list[Sibling],
+        *,
+        when: date | None = None,
+        locked: Mapping[str, str] | None = None,
+    ) -> list[Sibling]:
+        """``wanted`` (:meth:`_wanted_siblings`), each with the version this side is compared
+        at: the project's locked version (``locked``, for the pinned release), else the newest
+        release the requirement allows on ``when`` (the comparison date, for the release at the
+        cutoff; today without one). At most SIBLING_LIMIT of them."""
+        out: list[Sibling] = []
+        for sibling in wanted[:SIBLING_LIMIT]:
+            specifier = str(Requirement(sibling.requirement).specifier)
+            version = (locked or {}).get(sibling.name)
+            try:
+                if version is None:
+                    release = self.pypi.best_match(
+                        sibling.name, specifier, when
+                    ) or self.pypi.best_match(
+                        sibling.name, specifier, when, prereleases=True, dev=False
+                    )
+                    version = release.version if release else None
+            except PackageIndexError as exc:
+                sibling = replace(sibling, problem=str(exc))
+            out.append(replace(sibling, version=version))
+        return out
+
     def _placeholder(self, s: PackageScan, old: SourceTree | PackageIndexError) -> bool:
         """Is the release at the cutoff one that only reserved the name: no modules at all
         (nvidia-cuda-runtime's sdist) or modules with nothing in them (zensical 0.0.0)?
@@ -1253,8 +1633,6 @@ class Engine:
         Only for a release of small pure-Python files: a compiled extension (ujson has no
         ``.py`` file) is code the sources do not show.
         """
-        if isinstance(old, SourceTree) and old.version != s.cutoff_version:
-            return False  # the diff is cached, so ``old`` is the new tree
         if not isinstance(old, (SourceTree, NoCodeError)):
             return False
         try:
@@ -1271,11 +1649,21 @@ class Engine:
         return isinstance(old, NoCodeError) or is_placeholder(old)
 
     @staticmethod
-    def _diff_key(s: PackageScan) -> str:
-        # griffe is a range dependency: after an upgrade that reads sources differently, the
-        # diffs the old one made are not served again.
+    def _diff_key(s: PackageScan, siblings: tuple[str, ...] = ()) -> str:
+        """Where a diff is cached. griffe is a range dependency: after an upgrade that reads
+        sources differently, the diffs the old one made are not served again. SOURCE_SCHEMA is
+        in the key with DIFF_SCHEMA because the diff reads what the source trees record (the
+        compiled modules): a change to either must bump its schema. ``siblings`` are the
+        distributions read next to each release (``"new:mcp-types==2.3.0"``), when any."""
         return stable_hash(
-            "diff", DIFF_SCHEMA, griffe_version(), s.name, s.cutoff_version, s.locked
+            "diff",
+            DIFF_SCHEMA,
+            SOURCE_SCHEMA,
+            griffe_version(),
+            s.name,
+            s.cutoff_version,
+            s.locked,
+            *siblings,
         )
 
     @staticmethod
@@ -1283,6 +1671,13 @@ class Engine:
         """Where a diff's :attr:`PackageScan.unread` is kept next to it. It also depends on
         what the source trees record as compiled (SOURCE_SCHEMA)."""
         return stable_hash("unread", DIFF_SCHEMA, SOURCE_SCHEMA, s.name, s.cutoff_version, s.locked)
+
+    @staticmethod
+    def _siblings_key(name: str, version: str) -> str:
+        """Where the distributions a release takes names from are kept
+        (:meth:`_wanted_siblings`). They are read from its sources as extracted (SOURCE_SCHEMA)
+        by star_imports_from_outside, a change to which moves DIFF_SCHEMA with the diff's."""
+        return stable_hash("siblings", DIFF_SCHEMA, SOURCE_SCHEMA, name, version)
 
     def _finish(
         self,
@@ -1332,6 +1727,7 @@ class Engine:
             "prompt_version": prompts.PROMPT_VERSION,
             "diff_schema": DIFF_SCHEMA,
             "griffe_version": griffe_version(),
+            "cutoff_margin": scan.target.margin,
             "max_probes": s.max_probes,
             "heldout": s.heldout,
             "regression": s.regression,
@@ -1395,6 +1791,7 @@ class Engine:
             version_source=scan.project.version_source,
             deps=scan.deps_hash(),
             scope=SCOPE_FAILURES,
+            margin=scan.target.margin,
         )
 
         # Test on held-out tasks ----------------------------------------------
@@ -1647,7 +2044,7 @@ class Engine:
             try:
                 new_tree, new_deps = self._check_env(pkg, ps.locked, None, scan)
                 old_tree, old_deps = self._check_env(
-                    pkg, ps.cutoff_version, scan.target.cutoff, scan
+                    pkg, ps.cutoff_version, scan.target.compare_date, scan
                 )
                 # Both runs attribute against the union of import names, so a top-level module
                 # that only the old version has still counts as the package.

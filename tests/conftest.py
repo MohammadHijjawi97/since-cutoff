@@ -317,10 +317,16 @@ def compiled_fastlib(
 @pytest.fixture
 def fake_pypi(cache: DiskCache, toylib: tuple[SourceTree, SourceTree]) -> FakePyPI:
     v1, v2 = toylib
+    # 0.9 has 1.0's API: the comparison release of a scan whose comparison date (the cutoff
+    # minus --cutoff-margin) falls before 2025-01-10.
     return FakePyPI(
         cache,
         {"toylib": [("0.9", "2024-06-01"), ("1.0", "2025-01-10"), ("2.0", "2025-10-01")]},
-        {("toylib", "1.0"): v1, ("toylib", "2.0"): v2},
+        {
+            ("toylib", "0.9"): SourceTree("toylib", "0.9", v1.root, ("toylib",)),
+            ("toylib", "1.0"): v1,
+            ("toylib", "2.0"): v2,
+        },
     )
 
 
