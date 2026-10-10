@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- README: a newcomer now sees, in order, what it is, how to install it (uvx, pipx, pip), a
+  Quick start on the sample project with the real `scan` output and the block `sync` writes,
+  when to use it and what it does not do, then the existing sections. New FAQ: the training
+  cutoff against the release date, what is sent where, why some notes name no replacement,
+  AGENTS.md and CLAUDE.md, the notes' cost in tokens, offline use. The counts come from 0.5.0's
+  scan (307 breaking changes and 23 new deprecations in the sample project). The Chinese,
+  Spanish and French READMEs follow the same structure, and now also describe the Gemini CLI
+  model detection and `sync --json`, which only the English README had.
+- Docs site: index.md and ai-stack.md describe 0.5.0 (scan, sync, status, pre-commit, the Action
+  and the MCP server) and ai-stack.md's counts come from a re-run with 0.5.0; a nav bar links
+  the pages and the GitHub docs (#67); the link-preview text no longer says "verified AGENTS.md
+  notes" (#51); benchmark.md says it is the study as run with 0.4.1's notes.
+- `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
+  default in all four READMEs (the Spanish and French pins and the translated action tables
+  were not checked).
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
