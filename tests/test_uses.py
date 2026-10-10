@@ -1036,9 +1036,14 @@ def test_a_name_alone_counts_when_it_is_one_changed_apis_and_not_common(tmp_path
             """,
         },
     )
-    # ``applymap``: one changed API's, and not a common name: a name match, tagged. ``count``
-    # (``Grouped.count``) is too common a name; ``melt`` is two changed APIs' (``Frame`` and
-    # ``Lazy``): neither counts.
+    frames = scan.package("frames")
+    applymap = next(c for c in frames.distinct if c.name == "applymap")
+    # Hidden from every report by default.
+    assert _found(scan) == {} and uses_text(applymap, scan.uses(frames)) is None
+    # Asked for: ``applymap``, one changed API's and not a common name, is a name match,
+    # tagged. ``count`` (``Grouped.count``) is too common a name; ``melt`` is two changed
+    # APIs' (``Frame`` and ``Lazy``): neither counts.
+    scan.name_matches = True
     assert _found(scan) == {
         "Frame.applymap": (
             OLD_FORM,
@@ -1046,10 +1051,9 @@ def test_a_name_alone_counts_when_it_is_one_changed_apis_and_not_common(tmp_path
             [("main.py", USE_CALL, ("applymap",), NAME_ONLY)],
         )
     }
-    frames = scan.package("frames")
-    applymap = next(c for c in frames.distinct if c.name == "applymap")
     assert uses_text(applymap, scan.uses(frames)) == "`applymap` [name match]"
     # Out of the notes (and the block) by default; in with --include-name-matches.
+    scan.name_matches = False
     assert scan.diff_notes() == [] and scan.used_changes(frames) == []
     assert scan.notes_block(scan.diff_notes()) is None
     assert [n.api for n in scan.diff_notes(name_matches=True)] == ["Frame.applymap"]
@@ -1115,6 +1119,75 @@ def test_the_files_own_return_annotations_type_what_they_give(tmp_path, cache):
     }
 
 
+def test_a_methods_return_types_self_in_its_own_class_only(tmp_path, cache):
+    # ``self.make()`` in ``B`` is B's ``make`` (a dict), not A's ``fr.Frame``; and a method
+    # ``A.load`` says nothing of a module-level ``load()``, which has no annotation.
+    files = {
+        "two_classes.py": """
+            import frames as fr
+
+            class A:
+                def make(self) -> fr.Frame:
+                    return fr.Frame()
+
+            class B:
+                def make(self) -> dict:
+                    return {}
+
+                def go(self):
+                    self.make().swapaxes(0, 1)
+        """,
+        "method_and_function.py": """
+            import frames as fr
+
+            class A:
+                def load(self) -> fr.Frame:
+                    return fr.Frame()
+
+            def load():
+                return {}
+
+            df = load()
+            df.applymap(str)
+        """,
+        "subclass.py": """
+            import frames as fr
+
+            class A:
+                def make(self) -> fr.Frame:
+                    return fr.Frame()
+
+            class C(A):
+                def go(self):
+                    self.make().swapaxes(0, 1)
+        """,
+    }
+    scan = _typed_scan(tmp_path, cache, {"frames": (FRAMES_V1, FRAMES_V2)}, files)
+    # The in-file subclass reads A's ``make``: still typed.
+    assert _found(scan) == {
+        "NDFrame.swapaxes": (
+            OLD_FORM,
+            PATH_MATCH,
+            [("subclass.py", USE_CALL, ("swapaxes",), PATH_MATCH)],
+        ),
+    }
+
+
+def test_only_the_receivers_own_class_shadows_a_base_member(tmp_path, cache):
+    # An unrelated module-level ``def predict`` does not make ``self.predict()`` in
+    # ``class Mine(ChatX)`` the file's own; a ``predict`` that ``Mine`` defines does.
+    libs = {"core": (CORE_V1, CORE_V2), "plugins": (PLUGINS, PLUGINS)}
+    mine = "from plugins import ChatX\n\nclass Mine(ChatX):\n    def go(self, q):\n"
+    mine += "        return self.predict(q)\n"
+    for name, extra, expected in (
+        ("plain", "", True),
+        ("unrelated", "\ndef predict(q):\n    return q\n", True),
+        ("own", "\n    def predict(self, q):\n        return q\n", False),
+    ):
+        scan = _typed_scan(tmp_path / name, cache, libs, {"main.py": mine + extra})
+        assert ("BaseChat.predict" in _found(scan)) is expected, name
+
+
 def test_a_value_of_the_files_own_code_is_no_name_match(tmp_path, cache):
     # The name-only tier is for values the file shows nothing of. An instance of its own class,
     # of a class it imports relatively or of a builtin, and what its own method returns, are not
@@ -1149,8 +1222,55 @@ def test_a_value_of_the_files_own_code_is_no_name_match(tmp_path, cache):
                         df.applymap(str)
             """,
             "param.py": "import frames\n\ndef tidy(df):\n    df.applymap(str)\n",
+            # What the file assigns from such a value, through an alias, an attribute of
+            # ``self``, tuple unpacking, the walrus, or ``except ... as``, is not unknown either.
+            "alias.py": """
+                import frames
+
+                class Local:
+                    pass
+
+                loc = Local()
+                alias = loc
+                alias.swapaxes(0, 1)
+            """,
+            "attribute.py": """
+                import frames
+
+                class Store:
+                    pass
+
+                class App:
+                    def __init__(self):
+                        self.store = Store()
+
+                    def go(self):
+                        store = self.store
+                        store.swapaxes(0, 1)
+            """,
+            "unpack.py": """
+                import frames
+
+                def pair():
+                    return 1, 2
+
+                a, b = str(1), {}
+                a.applymap(str)
+                c, d = pair()
+                d.swapaxes(0, 1)
+            """,
+            "walrus.py": "import frames\n\nif (w := str(1)):\n    w.applymap(str)\n",
+            "caught.py": """
+                import frames
+
+                try:
+                    pass
+                except (ValueError, KeyError) as err:
+                    err.applymap(str)
+            """,
         },
     )
+    scan.name_matches = True
     assert _found(scan) == {
         "Frame.applymap": (OLD_FORM, NAME_ONLY, [("param.py", USE_CALL, ("applymap",), NAME_ONLY)])
     }
@@ -1167,10 +1287,13 @@ def test_a_name_alone_is_one_apis_across_the_reached_packages_too(tmp_path, cach
     )
     scan = _typed_scan(tmp_path / "reached", cache, libs, {"main.py": reached})
     assert "core" in next(iter(scan.project.files)).reaches
+    scan.name_matches = True
     assert _found(scan) == {}
     # Without the reach, ``predict`` is plugins' alone.
     alone = "from plugins import Helper\n\ndef ask(model, q):\n    return model.predict(q)\n"
     scan = _typed_scan(tmp_path / "alone", cache, libs, {"main.py": alone})
+    assert _found(scan) == {}  # hidden unless asked for
+    scan.name_matches = True
     assert _found(scan) == {
         "Helper.predict": (OLD_FORM, NAME_ONLY, [("main.py", USE_CALL, ("predict",), NAME_ONLY)])
     }
@@ -1210,6 +1333,16 @@ def test_a_class_that_became_a_function_is_the_old_form_only_with_a_refused_keyw
     ):
         [use] = uses(kind, code(text))
         assert (use.kind, use.names, use.form) == (USE_REFERENCE, ("option_context",), OLD_FORM)
+    # A bare reference is valid with the function too, and so is an attribute a function has;
+    # an ``issubclass()`` of it, or an attribute only the class had, is not.
+    for text, expected in (
+        ("import frames as fr\nctx = fr.option_context\n", USES_API),
+        ("import frames as fr\nfr.option_context.__name__\n", USES_API),
+        ("from frames import option_context\nissubclass(x, (int, option_context))\n", OLD_FORM),
+        ("import frames as fr\nfr.option_context.__enter__\n", OLD_FORM),
+    ):
+        [use] = uses(kind, code(text))
+        assert use.form == expected, text
     # Any other kind change stays the old form.
     kind.new_kind = "attribute"
     [use] = uses(kind, same)

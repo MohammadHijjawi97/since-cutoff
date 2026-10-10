@@ -12,8 +12,13 @@ package the code does not import.
 
 from __future__ import annotations
 
+import argparse
+import datetime
+import io
 import logging
 import math
+import pathlib
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, NamedTuple, Protocol
@@ -50,8 +55,8 @@ log = logging.getLogger(__name__)
 # and name only, which the "your code uses" mark then says; or, for a method or attribute read
 # on a value the file shows nothing of (FileUse.loose), by the member's name alone, when that
 # name is one changed API's in all the packages the code imports or reaches and not a common
-# Python name (NAME_ONLY; the reports tag it "[name match]", and the notes block, --fail-on and
-# --annotate leave it out unless asked: engine.Settings.include_name_matches).
+# Python name (NAME_ONLY; tagged "[name match]", and left out of every report, the notes,
+# --fail-on and --annotate unless asked: engine.Settings.include_name_matches).
 PATH_MATCH = "path"
 NAME_MATCH = "name"
 NAME_ONLY = "name_only"
@@ -147,7 +152,48 @@ COMMON_NAMES = frozenset(
         "wait",
         "where",
         "write",
+        # Names that arrays, configs and parsed arguments have as often as any one package.
+        "labels",
+        "rank",
+        "shape",
+        "to_dict",
+        "to_json",
+        "verbose",
+        "view",
     }
+)
+# The members of the built-in and standard-library types code holds most often: on a value the
+# file shows nothing of, ``union`` is far more likely a set's than polars' ``Enum.union``, and
+# ``fromisoformat`` a datetime's than pandas' ``Timestamp.fromisoformat``. From this Python's
+# own types, at import.
+BUILTIN_MEMBERS = frozenset(
+    name
+    for kind in (
+        dict,
+        list,
+        str,
+        set,
+        frozenset,
+        bytes,
+        bytearray,
+        int,
+        float,
+        complex,
+        tuple,
+        datetime.date,
+        datetime.datetime,
+        datetime.time,
+        datetime.timedelta,
+        pathlib.Path,
+        re.Pattern,
+        re.Match,
+        logging.Logger,
+        io.TextIOWrapper,
+        argparse.Namespace,
+        argparse.ArgumentParser,
+    )
+    for name in dir(kind)
+    if not name.startswith("_")
 )
 
 # How the project's code uses a changed API (form): as the release at the cutoff allowed and
@@ -594,8 +640,31 @@ def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
         c, names, how = _in_file(merged, f)
         if c is not None and how is not None:
             kind = _use_kind(c, f, names)
-            found.append(Use(f.file, None, None, kind, names, how, form(change, names, kind)))
+            shape = form(change, names, kind)
+            if shape == OLD_FORM and kind in (USE_MEMBER, USE_REFERENCE) and _same_kind(c, f):
+                shape = USES_API
+            found.append(Use(f.file, None, None, kind, names, how, shape))
     return ordered(found)
+
+
+# What a function has as an attribute (``__name__``, ``__doc__``), and what only a function
+# has, not a class: for a class that became a function, or the reverse (same_call_shape).
+_FUNCTION_ATTRS = frozenset(dir(lambda: None))
+_FUNCTION_ONLY = _FUNCTION_ATTRS - frozenset(dir(type))
+
+
+def _same_kind(change: APIChange, f: FileUse) -> bool:
+    """Whether a read of a class that became a function (or the reverse) without a call is
+    valid with the new kind too: a bare reference (``ctx = option_context``) is; a subclass,
+    an ``isinstance()`` or ``issubclass()`` of it, or an attribute only the old kind has, is
+    not."""
+    if not same_call_shape(change):
+        return False
+    own = set(paths(change))
+    read = {attr for owner, attr in f.members if owner in own}
+    if change.new_kind == "function":
+        return not own & f.type_refs and read <= _FUNCTION_ATTRS
+    return not read & _FUNCTION_ONLY
 
 
 def ordered(found: Iterable[Use]) -> list[Use]:
@@ -627,7 +696,9 @@ def form(change: APIChange, names: tuple[str, ...], kind: str | None = None) -> 
     A class that became a function, or the reverse (:func:`same_call_shape`), is called the
     same way: a call of it is "uses this API" unless it passes a keyword the new signature
     does not take; a read of it without a call (a subclass, an ``isinstance()``: USE_REFERENCE
-    or USE_MEMBER) is the old form, since a function is no type and a class no function.
+    or USE_MEMBER) is the old form, since a function is no type and a class no function;
+    :func:`uses`, which sees the file, keeps a bare reference (``ctx = option_context``) as
+    "uses this API" (:func:`_same_kind`).
     A parameter that is now required, keyword-only or positional-only is always "uses this
     API": whether a call passes it the new way is not something a name match can tell. So is a
     function whose deprecation covers one of its call forms (an ``@overload``) only.
@@ -1102,7 +1173,8 @@ def _tree(pypi: PyPI, name: str, version: str, *, cached_only: bool) -> Any:
 def unique_member_names(scans: Iterable[Scanned]) -> frozenset[str]:
     """The member names that one changed API of these packages has, and no other changed API
     of theirs (a module-level ``melt`` removed next to ``DataFrame.melt`` makes the name two
-    APIs'); never a dunder or one of :data:`COMMON_NAMES`. :func:`type_project` gives it the
+    APIs'); never a dunder, one of :data:`COMMON_NAMES` or a member of a built-in or standard
+    library type (:data:`BUILTIN_MEMBERS`). :func:`type_project` gives it the
     changed packages the code imports or reaches."""
     apis: dict[str, set[str]] = {}
     for s in scans:
@@ -1115,5 +1187,8 @@ def unique_member_names(scans: Iterable[Scanned]) -> frozenset[str]:
     return frozenset(
         name
         for name, keys in apis.items()
-        if len(keys) == 1 and name not in COMMON_NAMES and not name.startswith("_")
+        if len(keys) == 1
+        and name not in COMMON_NAMES
+        and name not in BUILTIN_MEMBERS
+        and not name.startswith("_")
     )

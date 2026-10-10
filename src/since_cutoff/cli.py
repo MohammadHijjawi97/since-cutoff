@@ -340,10 +340,10 @@ def _at_least_one(value: str) -> int:
 
 # ``scan`` and ``sync`` --include-name-matches (selection.NAME_ONLY).
 _NAME_MATCHES_HELP = (
-    "also count the APIs matched by a method's name alone, on a value whose class the code "
-    "does not show (tagged [name match] in the reports): their notes are written, and scan's "
-    "--fail-on and --annotate see them. Off by default, and not kept by the block: give it on "
-    "every sync"
+    "also show the uses matched by a method's name alone, on a value whose class the code "
+    "does not show (tagged [name match]): the reports list them, their notes are written, and "
+    "scan's --fail-on and --annotate see them. Off by default (no report has them), and not "
+    "kept by the block: give it on every sync"
 )
 
 

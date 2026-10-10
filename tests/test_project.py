@@ -515,6 +515,9 @@ def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_pat
                     def make(self, df: F) -> F:
                         self.frame = F()
                         return self.frame.T
+
+                    def go(self):
+                        return self.make(None)
                 """
             )
         ),
@@ -523,7 +526,7 @@ def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_pat
     assert dict(use.bound) == {"re": "re", "pd": "pandas", "F": "frames.Frame"}
     # The file's own classes and functions, and a relative import: a value of theirs is the
     # project's own, not a package's left untyped.
-    assert use.defined == {"load", "App", "make", "Store"}
+    assert use.defined == {"load", "App", "make", "go", "Store"}
     assert use.accesses >= {
         "pd.read_csv",
         "df.groupby",
@@ -547,12 +550,12 @@ def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_pat
         ("self.frame", "F()"),
     }
     # Annotations: parameters, variables (a string one parsed), the file's own functions'
-    # returns (``load()``) and methods' (``self.make()``).
+    # returns (``load()``) and methods' as read on ``self`` in their class (``self.make()``),
+    # never under the method's bare name (``make()``).
     assert use.annotated == {
         ("load()", "pd.DataFrame"),
         ("frame", "F"),
         ("df", "F"),
-        ("make()", "F"),
         ("self.make()", "F"),
     }
     assert use.chain_keywords >= {

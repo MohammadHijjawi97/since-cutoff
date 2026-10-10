@@ -374,6 +374,7 @@ class Tools:
         cutoff: str | None = None,
         only: list[str] | None = None,
         limit_per_package: int = 10,
+        include_name_matches: bool = False,
         *,
         progress: ProgressFn | None = None,
     ) -> str:
@@ -407,6 +408,9 @@ class Tools:
             only: check only these dependencies (PyPI names), e.g. ["openai", "pydantic"].
             limit_per_package: changes listed per dependency, e.g. 20 (default 10);
                 api_changes lists the rest.
+            include_name_matches: also list the methods matched by their name alone, on a
+                value whose class the code does not show (tagged "[name match]"); left out by
+                default, as most are another library's method of the same name.
 
         One of `model` or `cutoff` is required.
 
@@ -435,6 +439,7 @@ class Tools:
             include=[s for s in (only or []) if s.strip()],
             python_version=project.python_version,
             today=self._now(),
+            include_name_matches=include_name_matches,
         )
         model_target = ModelTarget(settings.model, target.model or "", target.cutoff, target.label)
         # Two stages: look every dependency up, then diff the ones that changed.

@@ -6,6 +6,7 @@ import json
 import re
 import textwrap
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
@@ -807,11 +808,6 @@ IMPORTED_HINT = (
     "No notes to write. For the changes most likely to matter in the packages your code imports:"
 )
 IMPORTED_COMMAND = "  since-cutoff sync --scope imported"
-# When every API the code uses is matched by a method's name alone (selection.NAME_ONLY).
-NAME_MATCHES_ONLY = (
-    "No notes to write: every use is a name match. `since-cutoff sync --include-name-matches` "
-    "writes them anyway."
-)
 
 
 def render_scan(
@@ -898,22 +894,17 @@ def scan_lines(
         for p in new:
             prose(_new_package_text(p))
     other = None if show_all else _others_text(scan, used)
-    # What `sync` writes: not the APIs matched by a method's name alone, unless asked.
-    ready = [u for u in used if u.match != NAME_ONLY or scan.name_matches]
     if used:
         out.append(Text(""))
-        if ready:
-            prose(
-                NOTES_READY.format(
-                    count=_plural(len(ready), "note"),
-                    them="it" if len(ready) == 1 else "them",
-                    target=_target_name(scan),
-                    versions=scan.project.versions_word,
-                ),
-                at=width,
-            )
-        else:
-            prose(NAME_MATCHES_ONLY, at=width)
+        prose(
+            NOTES_READY.format(
+                count=_plural(len(used), "note"),
+                them="it" if len(used) == 1 else "them",
+                target=_target_name(scan),
+                versions=scan.project.versions_word,
+            ),
+            at=width,
+        )
         # Issue #13 will choose the files for both AGENTS.md and CLAUDE.md; until then, say
         # what Claude Code needs to read notes written to AGENTS.md.
         tip = agents_import_tip(scan.project.root, block_targets(scan.project.root))
@@ -1228,8 +1219,8 @@ def _form_legend(used: Sequence[UsedAPI]) -> list[str]:
     if any(u.match == NAME_ONLY for u in used):
         out.append(
             f"{NAME_MATCH_TAG}: matched by the method's name alone, on a value whose class the "
-            "code does not show; not written to the notes, nor counted by --fail-on or "
-            "--annotate, unless --include-name-matches is given"
+            "code does not show; shown, written to the notes and counted by --fail-on and "
+            "--annotate only because --include-name-matches was given"
         )
     return out
 
@@ -1275,10 +1266,16 @@ def place_form(uses: Sequence[Use]) -> str:
 
 
 def counted(scan: ScanResult) -> list[UsedAPI]:
-    """The used APIs that ``--fail-on`` and ``--annotate`` count: not those matched by a
-    member's name alone (selection.NAME_ONLY; the reports tag them), unless
-    ``--include-name-matches`` asked for them, as for the notes."""
-    return [u for u in scan.used_apis() if u.match != NAME_ONLY or scan.name_matches]
+    """The used APIs that ``--fail-on`` and ``--annotate`` count, each with the uses they
+    count: not a use matched by a member's name alone (selection.NAME_ONLY; the reports tag
+    it), unless ``--include-name-matches`` asked for them, as for the notes. Per use: an API
+    with one path match does not bring its name-only places along."""
+    out: list[UsedAPI] = []
+    for u in scan.used_apis():
+        kept = [x for x in u.uses if x.how != NAME_ONLY or scan.name_matches]
+        if kept:
+            out.append(u if len(kept) == len(u.uses) else replace(u, uses=kept))
+    return out
 
 
 def fail_reason(scan: ScanResult, conditions: set[str]) -> str | None:

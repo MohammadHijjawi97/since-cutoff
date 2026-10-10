@@ -172,13 +172,24 @@ Last, a method or attribute read on a bare name the file shows nothing of (a par
 an annotation, a loop variable; not a literal, nor a value of the file's own classes and
 functions, of a relative import, of a builtin or of a package the scan did not read) counts by
 its name alone, when that name belongs to exactly one changed API across the changed packages
-the code imports or reaches and is not a common Python name (`get`, `set`, `run`, `create`,
-`close`, `update`, `count`, `sum`, `any`, `fetch`, ...). The reports tag such a use `[name
-match]`: the terminal next to its label and its place, the Markdown summary in the form column,
-the JSON as `"match": "name_only"`. Unless `--include-name-matches` is given, `sync` leaves its
-note out of the block, and `scan` leaves it out of `--fail-on` and `--annotate github` (the
-flag also counts it among the notes ready; the block does not keep the choice, so give the flag
-on every sync).
+the code imports or reaches, is not a common Python name (`get`, `set`, `run`, `create`,
+`close`, `update`, `count`, `sum`, `shape`, `view`, `to_dict`, ...) and is no member of a
+built-in or standard-library type (`union` of a set, `fromisoformat` of a datetime, `is_integer`
+of a float: every name `dir()` gives for dict, list, str, set, bytes, the numbers, tuple, the
+`datetime` types, `pathlib.Path`, `re` patterns and matches, `logging.Logger`, text files and
+`argparse`). A name the file assigns from a value of its own or of a builtin is not unknown
+either: an alias (`alias = loc`), `store = self.store` after `self.store = Store()`, tuple
+unpacking, `:=` and `except ... as err`.
+
+Such a name match is hidden by default: no report (the terminal, report.md, the JSON lists, the
+MCP answers), no note and no count of `--fail-on` or `--annotate github` has it, as on ordinary
+code most of them are another library's method of the same name. `--include-name-matches` (on
+`scan` and `sync`; `include_name_matches` for the MCP `project_changes`) shows them: the
+reports tag each such use `[name match]` (the terminal next to its label and its place, the
+Markdown summary in the form column, the JSON as `"match": "name_only"`), its note is written,
+and CI counts it. CI counts per use: an API matched through a path in one file does not bring
+its name-only places in other files along. The block does not keep the choice, so give the flag
+on every sync.
 
 Each use is one of two **forms**:
 

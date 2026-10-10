@@ -35,7 +35,16 @@ from since_cutoff.engine import (
 )
 from since_cutoff.notes import SCOPE_IMPORTED, diff_notes
 from since_cutoff.project import Project, scan_file
-from since_cutoff.selection import OLD_FORM, USES_API, collapse, form, used_names
+from since_cutoff.selection import (
+    BUILTIN_MEMBERS,
+    COMMON_NAMES,
+    OLD_FORM,
+    USES_API,
+    collapse,
+    form,
+    unique_member_names,
+    used_names,
+)
 from tests.conftest import write_tree
 from tests.test_ci import scan_app
 
@@ -402,3 +411,15 @@ def test_the_real_scan_still_finds_what_the_code_uses(tmp_path, cache, fake_pypi
     scan = scan_app(root, cache, fake_pypi, date(2025, 7, 31))
     forms = {u.note.api: u.form for u in scan.used_apis()}
     assert forms == {"Client.send": OLD_FORM, "toylib.fetch": USES_API}
+
+
+def test_a_builtin_types_member_is_never_a_name_match() -> None:
+    # On ordinary code, ``a_set.union()`` was polars' ``Enum.union`` and ``dt.fromisoformat()``
+    # pandas' ``Timestamp.fromisoformat`` by name alone; ``arr.shape`` and ``args.verbose``
+    # were a package's too.
+    names = ("union", "fromisoformat", "is_integer", "shape", "verbose", "swapaxes")
+    scanned = PackageScan("pkg", "2", "lock", True)
+    scanned.changes = [change(REMOVED, f"pkg.Thing.{n}", n, "Thing", None) for n in names]
+    assert {"union", "fromisoformat", "is_integer"} <= BUILTIN_MEMBERS
+    assert {"shape", "view", "to_dict", "to_json", "labels", "verbose", "rank"} <= COMMON_NAMES
+    assert unique_member_names([scanned]) == {"swapaxes"}

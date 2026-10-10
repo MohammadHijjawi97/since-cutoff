@@ -1036,6 +1036,13 @@ class FileUse:
     annotated: frozenset[tuple[str, str]] = frozenset()
     chain_keywords: frozenset[tuple[str, str]] = frozenset()
     defined: frozenset[str] = frozenset()
+    # ``(base, member)`` for each member a class of the file defines (in itself or an in-file
+    # base) over an imported base: ``self.predict()`` in a ``class Mine(ChatX)`` that has its
+    # own ``predict`` is not ``ChatX``'s; an unrelated ``def predict`` elsewhere does not count.
+    shadowed: frozenset[tuple[str, str]] = frozenset()
+    # The imported paths the file uses as types: a class statement's bases, the classes an
+    # ``isinstance()`` or ``issubclass()`` checks. A function in their place is an error.
+    type_refs: frozenset[str] = frozenset()
     # Set by :func:`typed`. ``reaches``: the paths (with their prefixes, as ``paths``) of the
     # classes the file's typed values derive from in packages the file does not import:
     # ``llm = ChatOpenAI(...)`` from langchain-openai is a langchain-core ``BaseChatModel``, so
@@ -1418,7 +1425,8 @@ _BUILTINS = frozenset(dir(builtins))
 
 def receiver_evidence(nodes: Sequence[ast.AST]) -> dict[str, frozenset[Any]]:
     """The fields of :class:`FileUse` that :func:`typed` reads (``bound``, ``accesses``,
-    ``assigned``, ``annotated``, ``chain_keywords``, ``defined``), from a parsed file's nodes."""
+    ``assigned``, ``annotated``, ``chain_keywords``, ``defined``, ``shadowed``), and
+    ``type_refs``, from a parsed file's nodes."""
     bound: dict[str, str] = {}
     defined: set[str] = set()
     for node in nodes:
@@ -1436,14 +1444,107 @@ def receiver_evidence(nodes: Sequence[ast.AST]) -> dict[str, frozenset[Any]]:
                     defined.add(alias.asname or alias.name)
         elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             defined.add(node.name)
+    classes = {n.name: n for n in nodes if isinstance(n, ast.ClassDef)}
+    methods = {
+        id(m)
+        for c in classes.values()
+        for m in c.body
+        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def lineage(name: str) -> list[ast.ClassDef]:
+        """The file's class and its in-file bases, all the way up, nearest first."""
+        out: list[ast.ClassDef] = []
+        queue = [name]
+        while queue and len(out) < 64:
+            cls = classes.get(queue.pop(0))
+            if cls is None or cls in out:
+                continue
+            out.append(cls)
+            queue += [b.id for b in cls.bases if isinstance(b, ast.Name) and b.id not in bound]
+        return out
+
+    def own_members(cls: ast.ClassDef) -> dict[str, ast.AST]:
+        """The names a class statement defines in its body: methods, attributes."""
+        out: dict[str, ast.AST] = {}
+        for m in cls.body:
+            if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                out[m.name] = m
+            elif isinstance(m, ast.Assign):
+                out.update((t.id, m) for t in m.targets if isinstance(t, ast.Name))
+            elif isinstance(m, ast.AnnAssign) and isinstance(m.target, ast.Name):
+                out[m.target.id] = m
+        return out
+
+    def imported_base(expr: ast.expr) -> str | None:
+        chain = _dotted(expr)
+        head, _, rest = (chain or "").partition(".")
+        if head not in bound:
+            return None
+        return f"{bound[head]}.{rest}" if rest else bound[head]
+
+    type_refs = {p for c in classes.values() for p in map(imported_base, c.bases) if p}
+    for node in nodes:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("isinstance", "issubclass")
+            and node.func.id not in bound
+            and len(node.args) == 2
+        ):
+            checked = node.args[1]
+            kinds = checked.elts if isinstance(checked, ast.Tuple) else [checked]
+            type_refs.update(p for p in map(imported_base, kinds) if p)
+    shadowed: set[tuple[str, str]] = set()
+    # ``self.<m>()`` typed by the return annotation of the ``m`` the reading class reaches in
+    # the file (its own, or an in-file base's): only when every class of the file that reads it
+    # reaches one, and all of them say the same.
+    self_returns: dict[str, dict[str, ast.expr | None]] = {}
+    unscoped: set[str] = set()
+    for name, cls in classes.items():
+        family = lineage(name)
+        defs = [own_members(c) for c in family]
+        bases = {p for c in family for p in map(imported_base, c.bases) if p}
+        shadowed.update((b, m) for b in bases for d in defs for m in d)
+        for n in ast.walk(cls):
+            if not (
+                isinstance(n, ast.Attribute)
+                and isinstance(n.value, ast.Name)
+                and n.value.id in ("self", "cls")
+            ):
+                continue
+            key = f"{n.value.id}.{n.attr}{_CALL}"
+            nearest = next((d[n.attr] for d in defs if n.attr in d), None)
+            if not isinstance(nearest, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                unscoped.add(key)
+                continue
+            returns = nearest.returns
+            dumped = ast.dump(returns) if returns is not None else ""
+            self_returns.setdefault(key, {})[dumped] = returns
     accesses: set[str] = set()
     assigned: set[tuple[str, str]] = set()
     annotated: set[tuple[str, str]] = set()
     chain_keywords: set[tuple[str, str]] = set()
 
     def assign(target: ast.expr, value: ast.expr | None) -> None:
+        if value is None:
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            # ``a, b = x, y``: element by element; ``a, b = f()``: each name holds an element
+            # of what ``f()`` gives, a package's only when ``f`` is one of its names.
+            elements = value.elts if isinstance(value, (ast.Tuple, ast.List)) else None
+            starred = any(isinstance(e, ast.Starred) for e in (*target.elts, *(elements or ())))
+            if elements is not None and len(elements) == len(target.elts) and not starred:
+                for t, v in zip(target.elts, elements, strict=True):
+                    assign(t, v)
+                return
+            chain = _access(value)
+            if chain is None or _tokens(chain)[0] not in bound:
+                for t in target.elts:
+                    assign(t.value if isinstance(t, ast.Starred) else t, ast.Constant(None))
+            return
         name = _dotted(target)
-        if name is None or value is None:
+        if name is None:
             return
         assigned.add((name, _access(value) or "?"))
 
@@ -1466,20 +1567,28 @@ def receiver_evidence(nodes: Sequence[ast.AST]) -> dict[str, frozenset[Any]]:
         elif isinstance(node, ast.AnnAssign):
             assign(node.target, node.value)
             annotate(_dotted(node.target), node.annotation)
+        elif isinstance(node, ast.NamedExpr):  # ``(m := pattern.match(s))``
+            assign(node.target, node.value)
+        elif isinstance(node, ast.ExceptHandler) and node.name and node.type is not None:
+            # ``except ValueError as err``: an instance of what it names.
+            kinds = node.type.elts if isinstance(node.type, ast.Tuple) else [node.type]
+            for kind in kinds:
+                chain = _access(kind)
+                assigned.add((node.name, f"{chain}{_CALL}" if chain else "?"))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if item.optional_vars is not None:
                     assign(item.optional_vars, item.context_expr)
         elif isinstance(node, ast.arg):
             annotate(node.arg, node.annotation)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and id(node) not in methods:
+            # A function's return, called by its own name: not a method's of the same name.
             annotate(f"{node.name}{_CALL}", node.returns)
-        elif isinstance(node, ast.ClassDef):
-            # A method's return, read through ``self``: ``self.make()`` after ``def make(self)
-            # -> pd.DataFrame`` in the class.
-            for method in node.body:
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)) and method.args.args:
-                    annotate(f"{method.args.args[0].arg}.{method.name}{_CALL}", method.returns)
+    # A method's return, read through ``self``: ``self.make()`` after ``def make(self) ->
+    # pd.DataFrame`` in the class (or an in-file base), never another class's ``make``.
+    for key, said in self_returns.items():
+        if key not in unscoped and len(said) == 1:
+            annotate(key, next(iter(said.values())))
     return {
         "bound": frozenset(bound.items()),
         "accesses": frozenset(accesses),
@@ -1487,6 +1596,8 @@ def receiver_evidence(nodes: Sequence[ast.AST]) -> dict[str, frozenset[Any]]:
         "annotated": frozenset(annotated),
         "chain_keywords": frozenset(chain_keywords),
         "defined": frozenset(defined),
+        "shadowed": frozenset(shadowed),
+        "type_refs": frozenset(type_refs),
     }
 
 
@@ -1760,14 +1871,14 @@ def typed(
                     reached.update(_prefixes(p))
         return list(dict.fromkeys(out))
 
-    # The scan's own members, read on a class it names: its bases too, but not for a member the
-    # file defines itself (``self.make()`` in a subclass that has its own ``make``).
+    # The scan's own members, read on a class it names: its bases too, but not for a member a
+    # subclass of the file defines itself (``self.make()`` in one that has its own ``make``).
     for cls_path, attr in list(members):
-        if api.is_class(cls_path) and attr not in f.defined:
+        if api.is_class(cls_path) and (cls_path, attr) not in f.shadowed:
             members.update((p, attr) for p in widen([api.canon(cls_path)], attr))
     for path, keyword in list(keyword_paths):
         owner, _, name = path.rpartition(".")
-        if api.is_class(owner) and name not in f.defined:
+        if api.is_class(owner) and (owner, name) not in f.shadowed:
             paths = widen([api.canon(owner)], name)
             keyword_paths.update((f"{p}.{name}", keyword) for p in paths)
     # Chains: ``df.applymap``, ``pd.read_csv().applymap``, ``df.groupby().count``.
@@ -1793,6 +1904,22 @@ def typed(
             or (not covered and (root in bound or chain in f.annotated_chains(name)))
         ):
             foreign.add(name)
+    # And through what the file assigns from such a value: ``alias = loc``, ``store =
+    # self.store`` after ``self.store = Store()``, ``rows = data.items()``.
+    for _ in range(4):
+        grew = False
+        for name, chain in f.assigned:
+            if name in foreign or chain == "?":
+                continue
+            prefix = ""
+            for token in _tokens(chain):
+                prefix += token
+                if prefix in foreign:
+                    foreign.add(name)
+                    grew = True
+                    break
+        if not grew:
+            break
     for chain in f.accesses:
         receiver, _, attr = chain.rpartition(".")
         kinds = resolve(receiver)

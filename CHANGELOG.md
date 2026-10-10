@@ -13,9 +13,10 @@
   2.0.0 went from 4 APIs used to 10. A method a class defines itself is its own, not its
   base's: `DataFrame.sum` still takes positional arguments where `NDFrame.sum` no longer does.
 - Where the receiver cannot be typed, a method whose name is exactly one changed API's across
-  the packages the code uses, and not a common Python name, counts by its name alone. The
-  reports tag the use `[name match]`; the notes block, `--fail-on` and `--annotate` count it
-  only with `--include-name-matches` (on `scan` and `sync`).
+  the packages the code uses, and neither a common Python name nor a member of a built-in or
+  standard-library type, can count by its name alone. Such name matches are hidden from every
+  report, the notes, `--fail-on` and `--annotate` unless `--include-name-matches` (`scan`,
+  `sync`) or `include_name_matches` (MCP) asks for them; they are then tagged `[name match]`.
 - A class that became a function, or the reverse, is no longer "old form" at a call site: with
   pandas 3.0.6, `with pd.option_context("mode.copy_on_write", True):` was labelled old form
   although `option_context` is called the same way as a class and as a function. The call is

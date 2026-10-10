@@ -800,9 +800,11 @@ meaning the same as `checks.example_type_checks`).
   its base classes, across your pinned packages). It does not follow dynamic access such as
   `getattr`, and it names files, not lines, for now
   ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). A method read on a value
-  whose class the code does not show counts by its name alone, when that name is one changed
-  API's and not a common one: tagged `[name match]`, and left out of the notes, of `--fail-on`
-  and of `--annotate` unless `--include-name-matches` is given. A parameter that became
+  whose class the code does not show can count by its name alone, when that name is one
+  changed API's and neither a common one nor a member of a built-in or standard-library type:
+  such a `[name match]` is hidden from every report, the notes, `--fail-on` and `--annotate`
+  unless `--include-name-matches` is given (`include_name_matches` over MCP), as most are
+  another library's method of the same name. A parameter that became
   required, keyword-only or positional-only is always "uses this API", never "old form", for
   now.
 - A note names a replacement only when the library's own deprecation text states it. Advice that

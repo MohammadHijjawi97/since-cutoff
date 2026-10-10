@@ -834,10 +834,12 @@ reservadas; `verified` se mantiene y significa lo mismo que `checks.example_type
   paquete (`df = pd.read_csv(...)` es un `DataFrame`; una clase cuenta con sus clases base, a
   través de tus paquetes fijados). No sigue accesos dinámicos como `getattr`, y por ahora indica
   archivos, no líneas ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Un
-  método leído sobre un valor cuya clase el código no muestra cuenta solo por su nombre, cuando
-  ese nombre pertenece a una única API con cambios y no es un nombre común: se etiqueta
-  `[name match]` y queda fuera de las notas, de `--fail-on` y de `--annotate` salvo que se
-  indique `--include-name-matches`. Un parámetro que pasó a ser obligatorio, solo por nombre o
+  método leído sobre un valor cuya clase el código no muestra puede contar solo por su nombre,
+  cuando ese nombre pertenece a una única API con cambios y no es un nombre común ni un miembro
+  de un tipo integrado o de la biblioteca estándar: esa coincidencia `[name match]` no aparece
+  en ningún informe, ni en las notas, ni en `--fail-on` ni en `--annotate` salvo que se indique
+  `--include-name-matches` (`include_name_matches` por MCP), porque la mayoría son un método
+  homónimo de otra biblioteca. Un parámetro que pasó a ser obligatorio, solo por nombre o
   solo posicional aparece siempre como «uses this API», nunca como «old form», por ahora.
 - Una nota solo nombra un sustituto cuando el propio texto de obsolescencia de la biblioteca lo
   indica. Los consejos que solo están en una guía de migración (el

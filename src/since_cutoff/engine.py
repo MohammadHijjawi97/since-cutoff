@@ -253,9 +253,9 @@ class Settings:
     tasks_from: TaskFile | None = None
     # Baseline notes blocks tested next to the run's notes (``run --compare``).
     compare: list[str] = field(default_factory=list)
-    # ``--include-name-matches``: the notes block, ``--fail-on`` and ``--annotate`` count the
-    # APIs matched by a member's name alone too (selection.NAME_ONLY); the reports show them
-    # in any case, tagged.
+    # ``--include-name-matches``: the uses matched by a member's name alone
+    # (selection.NAME_ONLY) are shown (tagged), written to the notes and counted by
+    # ``--fail-on`` and ``--annotate``; without it, no report has them.
     include_name_matches: bool = False
 
 
@@ -403,8 +403,9 @@ class ScanResult:
     # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
     # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
     stale: dict[str, date] = field(default_factory=dict)
-    # Whether the notes (diff_notes, the block), ``--fail-on`` and ``--annotate`` include the
-    # APIs matched by a member's name alone (selection.NAME_ONLY): Settings.include_name_matches.
+    # Whether the reports, the notes (diff_notes, the block), ``--fail-on`` and ``--annotate``
+    # have the uses matched by a member's name alone (selection.NAME_ONLY): hidden from all of
+    # them unless Settings.include_name_matches asked for them (:meth:`uses`).
     name_matches: bool = False
 
     @property
@@ -423,12 +424,19 @@ class ScanResult:
     def package(self, name: str) -> PackageScan:
         return next(p for p in self.packages if p.name == name)
 
-    def uses(self, package: PackageScan) -> tuple[FileUse, ...]:
+    def uses(
+        self, package: PackageScan, *, name_matches: bool | None = None
+    ) -> tuple[FileUse, ...]:
         """The files of the project's code that import the package (none when it does not).
 
-        ``create`` in a file says nothing about a package that file does not import.
+        ``create`` in a file says nothing about a package that file does not import. Without
+        ``name_matches`` (by default, :attr:`name_matches`), the files keep no names for the
+        name-only tier (FileUse.loose): no report, note or count has a NAME_ONLY use.
         """
-        return self.project.code_use(package.import_names)
+        files = self.project.code_use(package.import_names)
+        if self.name_matches if name_matches is None else name_matches:
+            return files
+        return tuple(replace(f, loose=frozenset()) if f.loose else f for f in files)
 
     def ranked(self, package: PackageScan, *, scope: str = SCOPE_USED) -> list[APIChange]:
         """The package's distinct changes, those the project's code uses first
@@ -448,15 +456,10 @@ class ScanResult:
         (:func:`selection.used_names`), in the order of :meth:`ranked`; those matched by a
         member's name alone (selection.NAME_ONLY) only with ``name_matches`` (by default,
         :attr:`name_matches`)."""
-        files = self.uses(package)
+        files = self.uses(package, name_matches=name_matches)
         if not files:
             return []
-        loose = self.name_matches if name_matches is None else name_matches
-        return [
-            c
-            for c in self.ranked(package)
-            if (how := match(c, files)) is not None and (loose or how != NAME_ONLY)
-        ]
+        return [c for c in self.ranked(package) if match(c, files) is not None]
 
     def diff_notes(
         self, *, suggestions: bool = False, name_matches: bool | None = None
@@ -478,13 +481,14 @@ class ScanResult:
 
         Packages in the order of the reports, those the code uses in the old form first; in a
         package, the APIs used in the old form first, then in the order of :meth:`diff_notes`.
+        The uses matched by a member's name alone only with :attr:`name_matches`.
         """
         key = self._used_key()
         cached = self.__dict__.get("_used")
         if cached is not None and cached[0] == key:
             return list(cached[1])
         by_package: dict[str, list[UsedAPI]] = {}
-        for note in self.diff_notes(name_matches=True):
+        for note in self.diff_notes():
             p = self.package(note.change.package)
             files = self.uses(p)
             per_change = {c.id: uses(c, files) for c in note.covered}
@@ -538,6 +542,7 @@ class ScanResult:
         return (
             id(self.project.files),
             len(self.project.files),
+            self.name_matches,
             tuple((p.name, p.status, id(p.changes), len(p.changes)) for p in self.packages),
         )
 

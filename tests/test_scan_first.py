@@ -64,6 +64,7 @@ from since_cutoff.report import (
 )
 from since_cutoff.selection import (
     NAME_MATCH,
+    NAME_MATCH_TAG,
     NAME_ONLY,
     OLD_FORM,
     USE_CALL,
@@ -915,13 +916,29 @@ def _frames_pypi(tmp_path: Path, cache: DiskCache) -> FakePyPI:
 LOOSE = "import frames\n\ndef tidy(df):\n    df.applymap(str)\n"
 
 
-def test_a_name_match_is_tagged_and_left_out_of_the_notes(tmp_path, cache) -> None:
+def test_a_name_match_is_hidden_unless_asked_for(tmp_path, cache) -> None:
     """A member matched by its name alone, on a value whose class the code does not show
-    (selection.NAME_ONLY): tagged in every report, counted as used, but not a note to write
-    unless --include-name-matches asks for it."""
+    (selection.NAME_ONLY): in no report, note or count by default (on ordinary code most are
+    another library's method of the same name); tagged, written and counted with
+    --include-name-matches."""
     pypi = _frames_pypi(tmp_path, cache)
     root = write_tree(tmp_path / "app", {"requirements.txt": "frames==2.0\n", "main.py": LOOSE})
     scan = scan_app(root, cache, pypi, date(2025, 7, 31))
+    assert scan.used_apis() == []
+    lines = text_of(scan_lines(scan, width=120))
+    assert "applymap" not in lines and NAME_MATCH_TAG not in lines
+    data = to_json(scan)
+    assert data["used_apis"] == [] and "name_only" not in json.dumps(data)
+    assert NAME_MATCH_TAG not in render_scan_markdown(scan)
+    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
+    assert NAME_MATCH_TAG not in tools.project_changes(str(root), cutoff="2025-07")
+    asked = tools.project_changes(str(root), cutoff="2025-07", include_name_matches=True)
+    assert "`applymap` [name match]" in asked
+    # Not a reason to fail CI, nor a file to annotate.
+    assert fail_reason(scan, {"used", "old-form"}) is None
+    assert github_annotations(scan) == []
+    # Asked for: tagged in every report, the note is ready, the block has it, and CI sees it.
+    scan.name_matches = True
     [used] = scan.used_apis()
     assert (used.note.api, used.form, used.match) == ("Frame.applymap", OLD_FORM, NAME_ONLY)
     lines = text_of(scan_lines(scan, width=120))
@@ -929,22 +946,11 @@ def test_a_name_match_is_tagged_and_left_out_of_the_notes(tmp_path, cache) -> No
     assert "  Frame.applymap was removed" in lines and "old form [name match]" in lines
     assert "    main.py   calls applymap [name match]" in lines
     assert "[name match]: matched by the method's name alone" in lines
-    assert "notes ready" not in lines and report.NAME_MATCHES_ONLY in lines.replace("\n  ", " ")
+    assert "1 note ready" in lines
     data = to_json(scan)
     assert data["used_apis"][0]["match"] == "name_only"
     assert data["used_apis"][0]["locations"][0]["match"] == "name_only"
-    assert data["notes_preview"] in (None, "", [])
     assert "| old form [name match] |" in render_scan_markdown(scan)
-    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
-    assert "`applymap` [name match]" in tools.project_changes(str(root), cutoff="2025-07")
-    # Not a reason to fail CI, nor a file to annotate: a name alone is a hint, as the notes
-    # treat it.
-    assert fail_reason(scan, {"used", "old-form"}) is None
-    assert github_annotations(scan) == []
-    # Asked for: the note is ready, the block has it, and CI sees it.
-    scan.name_matches = True
-    lines = text_of(scan_lines(scan, width=120))
-    assert "1 note ready" in lines and "old form [name match]" in lines
     assert "applymap" in (scan.notes_block(scan.diff_notes()) or "")
     assert fail_reason(scan, {"old-form"}) == (
         "--fail-on old-form: your code uses 1 changed API in the old form"
@@ -958,15 +964,38 @@ def test_include_name_matches_on_scan_and_sync(tmp_path, cache, capsys, monkeypa
     monkeypatch.setattr(cli, "Engine", lambda s, **kw: Engine(s, **{**kw, "pypi": pypi}))
     root = write_tree(tmp_path / "app", {"requirements.txt": "frames==2.0\n", "main.py": LOOSE})
     argv = [str(root), "--cutoff", "2025-07-31"]
-    # A name match alone does not fail CI; asked for, it does.
+    # A name match alone is not shown and does not fail CI; asked for, it is and it does.
     assert cli.main(["scan", *argv, "--fail-on", "old-form", "--annotate", "github"]) == 0
     out = capsys.readouterr().out
-    assert "old form [name match]" in out and "No notes to write: every use is a name match" in out
-    assert "::warning" not in out
+    assert NAME_MATCH_TAG not in out and "applymap" not in out and "::warning" not in out
+    report_md = (root / ".since-cutoff" / "report.md").read_text(encoding="utf-8")
+    assert NAME_MATCH_TAG not in report_md
     assert cli.main(["scan", *argv, "--fail-on", "old-form", "--include-name-matches"]) == 3
-    assert "1 note ready" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "1 note ready" in out and "old form [name match]" in out
     assert cli.main(["sync", *argv, "--yes"]) == 0
     assert "no notes to write" in capsys.readouterr().out and not (root / "AGENTS.md").exists()
     assert cli.main(["sync", *argv, "--yes", "--include-name-matches"]) == 0
     block = (root / "AGENTS.md").read_text(encoding="utf-8")
     assert "`Frame.applymap` was removed; do not use it." in block
+
+
+def test_annotations_and_fail_on_count_per_use_not_per_api(tmp_path, cache) -> None:
+    """An API with one path match does not bring its name-only places into --annotate:
+    ``def tidy(frame): frame.swapaxes(0, 1)`` got a ``::warning file=generic.py``."""
+    pypi = _frames_pypi(tmp_path, cache)
+    files = {
+        "requirements.txt": "frames==2.0\n",
+        "main.py": "import frames as fr\n\ndf = fr.read_csv('x')\ndf.swapaxes(0, 1)\n",
+        "generic.py": "import frames\n\ndef tidy(frame):\n    frame.swapaxes(0, 1)\n",
+    }
+    root = write_tree(tmp_path / "app", files)
+    scan = scan_app(root, cache, pypi, date(2025, 7, 31))
+    annotated = github_annotations(scan)
+    assert [a.split(",", 1)[0] for a in annotated] == ["::warning file=main.py"]
+    assert [x.file for u in report.counted(scan) for x in u.uses] == ["main.py"]
+    assert [x.file for u in scan.used_apis() for x in u.uses] == ["main.py"]
+    # Asked for, the name-only place is there too, in the reports and in CI.
+    scan.name_matches = True
+    assert sorted(x.file for u in report.counted(scan) for x in u.uses) == ["generic.py", "main.py"]
+    assert len(github_annotations(scan)) == 2
