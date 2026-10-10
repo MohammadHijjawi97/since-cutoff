@@ -19,11 +19,14 @@ are marked network.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
+import os
 import textwrap
 from datetime import date
 from functools import cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -463,6 +466,55 @@ def test_a_constructor_reached_through_a_plain_import_is_recorded_by_its_class(
     names = dependency_names(change, scan_file(ast.parse(code)))
     assert names == ("oldhttp", "oldhttp.Client", "Client(http_client)")
     assert form(change, names) == OLD_FORM
+
+
+def _factory_tree(http: str, importers: list[str]) -> dict[str, str]:
+    """mcp's ``McpHttpClientFactory``: a Protocol of a private module that public modules only
+    import, the type of a factory code passes in (``sse_client(httpx_client_factory=...)``)."""
+    files = {
+        "pkg/__init__.py": "",
+        "pkg/_utils.py": f"""
+            from typing import Protocol
+
+            import {http}
+
+            class Factory(Protocol):
+                def __call__(
+                    self, timeout: {http}.Timeout | None = None, auth: {http}.Auth | None = None
+                ) -> {http}.AsyncClient: ...
+        """,
+    }
+    for name in importers:
+        files[f"pkg/{name}.py"] = (
+            "from pkg._utils import Factory\n\ndef connect(factory: Factory) -> None:\n    pass\n"
+        )
+    return files
+
+
+@pytest.mark.parametrize("descending", [False, True])
+def test_a_protocol_two_modules_import_is_one_place_whatever_the_listing_order(
+    tmp_path, monkeypatch, descending
+) -> None:
+    """mcp 1.28.1 imports ``McpHttpClientFactory`` in ``client.sse`` and
+    ``client.streamable_http``, 2.2.0 only in ``client.sse``. Its ``__call__`` is part of the
+    switch (code implements it, and now returns ``httpx2.AsyncClient``), at the same public path
+    in both releases whatever order the file system lists the modules in: griffe took that
+    order, and the fixture's 23 places came out as 20 on another machine."""
+    walk = os.walk
+
+    def listed(top: Any, *args: Any, **kwargs: Any) -> Any:
+        for root, dirs, files in walk(top, *args, **kwargs):
+            dirs.sort(reverse=descending)
+            files.sort(reverse=descending)
+            yield root, dirs, files
+
+    monkeypatch.setattr(os, "walk", listed)
+    old = _factory_tree("oldhttp", ["sse", "streamable_http"])
+    [change] = _switches(_diff(tmp_path, old, _factory_tree("newhttp", ["sse"])))
+    d = change.dependency or {}
+    assert (d["sites"], d["parameters"]) == (3, {"auth": 1, "timeout": 1})
+    assert {e["path"] for e in d["examples"]} == {"pkg.sse.Factory.__call__"}
+    assert d["calls"] == []  # an instance's method: the file may have it from anywhere
 
 
 def test_names_a_module_only_exports_are_not_names_of_the_old_library(tmp_path) -> None:
@@ -1224,7 +1276,54 @@ def _fixture(name: str) -> tuple[PackageScan, dict[str, Any]]:
 def test_the_openai_fixture_is_current() -> None:
     """(test_ranking.py checks the mcp one.)"""
     _, data = _fixture("openai-2.44.0-3.19.2-switch")
-    assert data["schema"] == DIFF_SCHEMA, "re-record the fixture from the cache after a schema bump"
+    assert data["schema"] == DIFF_SCHEMA, "re-record it: python scripts/record_diff_fixtures.py"
+
+
+def _recorder() -> Any:
+    path = Path(__file__).parents[1] / "scripts" / "record_diff_fixtures.py"
+    if not path.exists():
+        pytest.skip("scripts/record_diff_fixtures.py is not part of this checkout")
+    spec = importlib.util.spec_from_file_location("record_diff_fixtures", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_re_recorded_fixture_keeps_its_shape_and_its_kinds(toylib) -> None:
+    trees = {tree.version: tree for tree in toylib}
+    pypi = SimpleNamespace(source=lambda name, version: trees[version])
+    fixture = {"package": "toylib", "from_version": "1.0", "to_version": "2.0"}
+    recorder = _recorder()
+    data = recorder.record(pypi, {**fixture, "kinds": [PARAM_REMOVED]})
+    assert list(data) == [
+        "schema",
+        "package",
+        "from_version",
+        "to_version",
+        "import_names",
+        "kinds",
+        "changes",
+    ]
+    assert (data["schema"], data["import_names"]) == (DIFF_SCHEMA, ["toylib"])
+    assert [c["kind"] for c in data["changes"]] == [PARAM_REMOVED]
+    everything = recorder.record(pypi, fixture)
+    assert "kinds" not in everything and len(everything["changes"]) > 1
+    assert recorder.text(data).endswith("}\n")
+
+
+@pytest.mark.network
+def test_every_diff_fixture_is_what_the_releases_on_pypi_give() -> None:
+    """``python scripts/record_diff_fixtures.py --check``, on the machine that runs it: the
+    mcp fixture's 23 places came out as 20 where griffe listed mcp's modules in another order."""
+    from since_cutoff.cache import DiskCache
+    from since_cutoff.pypi import PyPI
+
+    recorder = _recorder()
+    pypi = PyPI(DiskCache())
+    for path in sorted(FIXTURES.glob("*.json")):
+        recorded = path.read_text(encoding="utf-8")
+        assert recorder.text(recorder.record(pypi, json.loads(recorded))) == recorded, path.name
 
 
 MCP_NOTE = (

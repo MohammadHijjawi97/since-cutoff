@@ -283,6 +283,37 @@ class FakePyPI(PyPI):
         return self._trees[(name, version)]
 
 
+def compiled_fastlib(
+    root: Path, cache: DiskCache, module: str = "fastlib.fast", *, drop: bool = True
+) -> FakePyPI:
+    """fastlib 1.0 and 2.0, where 2.0 ships ``module`` compiled without a stub (issue #52):
+    with ``drop``, its ``__init__`` still imports ``speedy`` from it but no longer ``gone``,
+    and ``slow`` is gone; without, nothing else changed. The extension module itself is never
+    extracted, only named."""
+    code = "def speedy(x: int) -> int:\n    return x\n\ndef gone() -> None: ...\n"
+    v1 = write_tree(
+        root / "fastlib-1.0",
+        {
+            "fastlib/__init__.py": f"from {module} import gone, speedy\n",
+            f"fastlib/{module.rpartition('.')[2]}.py": code,
+            "fastlib/slow.py": "def crawl() -> None: ...\n",
+        },
+    )
+    names = "speedy" if drop else "gone, speedy"
+    v2_files = {"fastlib/__init__.py": f"from {module} import {names}\n"}
+    if not drop:
+        v2_files["fastlib/slow.py"] = "def crawl() -> None: ...\n"
+    v2 = write_tree(root / "fastlib-2.0", v2_files)
+    return FakePyPI(
+        cache,
+        {"fastlib": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")]},
+        {
+            ("fastlib", "1.0"): SourceTree("fastlib", "1.0", v1, ("fastlib",)),
+            ("fastlib", "2.0"): SourceTree("fastlib", "2.0", v2, ("fastlib",), compiled=(module,)),
+        },
+    )
+
+
 @pytest.fixture
 def fake_pypi(cache: DiskCache, toylib: tuple[SourceTree, SourceTree]) -> FakePyPI:
     v1, v2 = toylib

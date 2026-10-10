@@ -65,6 +65,7 @@ from since_cutoff.apidiff import (
     object_replacements,
     parameter_replacements,
     signature_parameters,
+    stated_alternatives,
 )
 from since_cutoff.errors import SinceCutoffError
 
@@ -718,12 +719,12 @@ def _library_evidence(
     source = f"{change.package} {version}" + (f" {where}" if where else "")
     what = change.parameter or api_name(change)
     stated = _stated_replacement(text, names)
-    if stated is not None:
-        shown = _shown_name(stated)
+    if stated:
+        shown = _listed([_shown_name(s) for s in stated], "or")
         sentence = (
-            f"Use `{shown}` instead of `{what}`." if change.parameter else f"Use `{shown}` instead."
+            f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
         )
-        return sentence, Replacement(stated, EVIDENCE_LIBRARY, source, what)
+        return sentence, Replacement(stated[0], EVIDENCE_LIBRARY, source, what)
     quote = _quote(text, best)
     if not quote:
         return None
@@ -772,17 +773,24 @@ def library_names(change: APIChange, lookup: ApiLookup | None = None) -> list[st
     return list(dict.fromkeys(found))
 
 
-def _stated_replacement(text: str, names: list[str]) -> str | None:
-    """The one of ``names`` that ``text`` states as the replacement ("Use `stop` instead."),
-    or None when the text only mentions them ("If you want to force a new download, use
+def _stated_replacement(text: str, names: list[str]) -> list[str] | None:
+    """The ones of ``names`` that ``text`` states as the replacement, the first it gives
+    first ("Use `stop` instead."; httpx 0.27's "Use 'proxy' or 'mounts' instead."), or None
+    when the text only mentions them ("If you want to force a new download, use
     `force_download=True`" is advice, not a replacement)."""
     for pattern in STATED_REPLACEMENT:
         for m in re.finditer(pattern, text, re.IGNORECASE):
-            said = m.group("n").strip(".")
-            for n in names:
-                if n == said or n.endswith("." + said) or said.endswith("." + n):
-                    return n
+            said = [_named_as(s, names) for s in (m.group("n").strip("."), *stated_alternatives(m))]
+            if said[0] is not None:
+                return list(dict.fromkeys(n for n in said if n is not None))
     return None
+
+
+def _named_as(said: str, names: list[str]) -> str | None:
+    """The one of ``names`` that ``said`` names: itself, or by its last parts."""
+    return next(
+        (n for n in names if n == said or n.endswith("." + said) or said.endswith("." + n)), None
+    )
 
 
 # A sentence of a deprecation message that only says what the bullet says already ("X is

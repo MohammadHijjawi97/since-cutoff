@@ -102,7 +102,10 @@ def make_provider(
         default_url, key_env = OPENAI_COMPATIBLE.get(provider, (None, "OPENAI_API_KEY"))
         if provider == "openai-compatible" and not os.environ.get("OPENAI_API_KEY"):
             key_env = None  # optional: a local server (vLLM, LM Studio) takes no key
-        url = base_url or default_url
+        # --base-url, then OPENAI_BASE_URL (OpenAI's own variable: the other providers keep
+        # their URL), then the provider's default (#94).
+        env_url = os.environ.get("OPENAI_BASE_URL") if provider == "openai" else None
+        url = base_url or env_url or default_url
         if not url:
             raise ProviderError("openai-compatible needs --base-url")
         return OpenAICompatibleProvider(

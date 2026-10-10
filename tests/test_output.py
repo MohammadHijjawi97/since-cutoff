@@ -630,6 +630,8 @@ def test_modules_a_pth_file_puts_on_the_path_get_their_import_names(
     tree = _OneFile(DiskCache(tmp_path), "311", wheel).source("pywin32", "311")
     assert tree.import_names == ("adodbapi", "pywin", "pywintypes", "win32con")
     assert (tree.root / "pywin" / "scintilla" / "scintillacon.py").is_file()
+    # Compiled modules are named from the .pth directories too: win32/win32api.pyd is win32api.
+    assert tree.compiled == ("win32api",)
     # The diff finds the modules where they are imported from.
     old = write_tree(tmp_path / "old", {"win32con.py": "WM_USER = 1024\nWM_OLD = 1\n"})
     changes = _diff_trees(old, tree.root, ["win32con"])

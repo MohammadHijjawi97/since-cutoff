@@ -17,6 +17,9 @@
 - `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
   default in all four READMEs (the Spanish and French pins and the translated action tables
   were not checked).
+- `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
+  environment for every other setting (#94). The variable overrode the flag; the order is now
+  the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
 - `sync --json` reports proposals and write results for scripts, with progress on stderr.
   It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
@@ -48,6 +51,47 @@
   scan and the MCP tools warn from which day each such copy is: releases published after it
   are unknown (#54). A version the older copy does not list is reported as missing from it,
   not from PyPI. A 404, or any other answer from PyPI, is still an error.
+- A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
+  (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
+  stub), is no longer reported as removed, nor is what it defines or a name a readable
+  module still imports from it (#52). Since only sources are extracted, the diff could not
+  tell it from a removal. A name a readable module stopped importing from it is still
+  removed, and a package whose `__init__` is compiled hides only its own names, not its
+  readable submodules. The source tree now records the compiled modules (extension modules
+  in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
+  and the scan, the report and the MCP tools warn that changes to such a module, private
+  ones included, and to the names taken from it are not reported. After upgrading, cached
+  sources are downloaded and extracted again once (source schema 3) and cached diffs are
+  recomputed (diff schema 21).
+- The API diff is the same on every machine: griffe read a package's sibling modules in the
+  order the file system lists them, so an object that several of them import from a private
+  module took its public path from that order. mcp 1.28.1 -> 2.2.0's switch to `httpx2` had 20
+  places instead of 23 where `mcp.client.streamable_http` came before `mcp.client.sse`: only
+  `sse` still imports `McpHttpClientFactory`, so its `__call__` (`timeout`, `auth` and its
+  return) did not match between the releases. Modules are now read in the order of their names
+  (diff schema 21, with the notes' evidence below).
+- Cached API diffs are keyed on the installed griffe's version too: griffe reads the sources and
+  is a range dependency, so after an upgrade the diffs the old one made are made again instead
+  of served from the cache. `results.json`, `scan --json` (`settings.griffe_version`,
+  `report_schema` 3) and report.md record which griffe it was. Diffs cached by an earlier
+  since-cutoff are made once more (and diff schema 21 would make them again anyway), so the mcp
+  switch above shows its 23 places there too.
+- Notes name the replacement a library's warning gives in more cases. A message built before its
+  `warnings.warn` call (`message = (...)`, then `warnings.warn(message)`) is read, a replacement
+  the text states in quotes counts like one in backticks, and every alternative it gives is
+  named ("Use a, b, or c instead"): httpx 0.28's note now says "`Client()` no longer accepts
+  `proxies`; do not pass it. Use `proxy` or `mounts` instead of `proxies`. [diff + library]",
+  where it said it found no replacement, and click 8.2's `BaseCommand` and `MultiCommand` name
+  `click.Command` and `click.Group`.
+- A parameter in the place of a removed one, with its type, is no longer a "probable rename"
+  when a version note in the pinned release's docstring (`.. versionadded::`,
+  `.. versionchanged::`) says the new one was added or the old one removed: click 8.2's
+  `CliRunner` took `catch_exceptions` where 8.1 took `mix_stderr`, and the note told agents to
+  pass `catch_exceptions`, which changes what the runner does.
+- `scripts/record_diff_fixtures.py` re-records the real diffs in `tests/fixtures/diffs` from
+  PyPI, after a diff schema bump for example; `--check` only says which would change. Two new
+  golden pairs, httpx 0.27.2 -> 0.28.1 and click 8.1.8 -> 8.2.0, pin what their changelogs
+  document and the notes an agent gets for them (`tests/test_golden_diffs.py`).
 
 ## 0.5.0 - 2026-09-28
 
