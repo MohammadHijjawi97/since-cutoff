@@ -105,23 +105,77 @@ _CHANGELOG_LABELS = (
     "whatsnew",
     "news",
 )
-_GITHUB_REPO = re.compile(
-    r"^https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s#?]+?)(?:\.git)?(?:[/?#].*)?$"
+# The project URLs most likely to name the repository, by label as above, in the order tried
+# before the others: pydantic-core's URLs start with a Funding one, a sponsors page.
+_REPO_LABELS = ("source", "sourcecode", "repository", "repo", "code", "github", "homepage")
+# A first path segment on github.com that is no user or organisation: the page is not a
+# repository (``github.com/sponsors/<user>``, ``github.com/orgs/<org>/discussions``).
+_GITHUB_NOT_OWNERS = frozenset(
+    {
+        "about",
+        "apps",
+        "codespaces",
+        "collections",
+        "contact",
+        "copilot",
+        "customer-stories",
+        "discussions",
+        "enterprise",
+        "events",
+        "explore",
+        "features",
+        "issues",
+        "join",
+        "login",
+        "marketplace",
+        "notifications",
+        "orgs",
+        "pricing",
+        "pulls",
+        "readme",
+        "resources",
+        "search",
+        "security",
+        "settings",
+        "site",
+        "solutions",
+        "sponsors",
+        "team",
+        "topics",
+        "trending",
+    }
 )
+_GITHUB_REPO = re.compile(
+    r"^https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s#?]+?)(?:\.git)?(?:[/?#].*)?$",
+    re.IGNORECASE,
+)
+
+
+def _label(key: str) -> str:
+    """A project URL's label as compared: lower case, spaces, hyphens and underscores
+    dropped ("Release Notes" is ``releasenotes``)."""
+    return re.sub(r"[\s_-]+", "", key.lower())
 
 
 def changelog_url(urls: Mapping[str, str]) -> str | None:
     """Where a package documents its releases, from its project URLs (:meth:`PyPI.project_urls`):
     the URL labelled Changelog, Changes, Release notes, Releases, History, What's new or News,
     else the releases page of the GitHub repository another URL names
-    (``https://github.com/owner/repo/releases``). None when neither is there."""
-    by_label = {re.sub(r"[\s_-]+", "", k.lower()): v.strip() for k, v in urls.items()}
+    (``https://github.com/owner/repo/releases``), the Source, Repository or Homepage URL before
+    the others; a GitHub page that is no repository (``github.com/sponsors/<user>``, pydantic-
+    core's Funding URL; ``github.com/orgs/<org>/...``) names none. None when neither is there."""
+    by_label = {_label(k): v.strip() for k, v in urls.items()}
     for label in _CHANGELOG_LABELS:
         if by_label.get(label, "").startswith(("https://", "http://")):
             return by_label[label]
-    for value in urls.values():
+
+    def rank(item: tuple[str, str]) -> int:
+        label = _label(item[0])
+        return _REPO_LABELS.index(label) if label in _REPO_LABELS else len(_REPO_LABELS)
+
+    for _, value in sorted(urls.items(), key=rank):
         m = _GITHUB_REPO.match(value.strip())
-        if m and m.group(2).lower() not in ("issues", "discussions", "sponsors"):
+        if m and m.group(1).lower() not in _GITHUB_NOT_OWNERS:
             return f"https://github.com/{m.group(1)}/{m.group(2)}/releases"
     return None
 
@@ -156,11 +210,13 @@ class PyPI:
     def project(self, name: str) -> dict[str, Any]:
         """The package's PyPI JSON, cut down to what the scan reads: ``info`` (name, version,
         summary, project_urls, home_page) and ``releases``. Cached for METADATA_TTL; a cached
-        copy from before the info held the URLs is fetched again."""
+        copy from before the info held the URLs is fetched again, and read as it is when PyPI
+        cannot be reached (it is no older than the TTL: only the URLs are missing)."""
         key = canonicalize_name(name)
         cached = self.cache.get("pypi", key, max_age=METADATA_TTL)
+        old_shape: dict[str, Any] | None = None
         if cached is not None and "project_urls" not in (cached.get("info") or {}):
-            cached = None
+            old_shape, cached = cached, None
         if cached is not None:
             if self._stale:  # another process may have reached PyPI meanwhile
                 with self._locks_guard:
@@ -179,6 +235,8 @@ class PyPI:
         except net.HTTPError as exc:
             if exc.status == 404:
                 raise PackageIndexError(f"'{name}' is not on PyPI") from exc
+            if old_shape is not None:
+                return dict(old_shape)  # fresh enough; the notes point at no changelog
             fallback = self._stale_copy(key) if exc.transient else None
             if fallback is not None:
                 return fallback

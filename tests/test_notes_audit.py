@@ -3,15 +3,18 @@ they say now.
 
 - a replacement the library states in a sentence that leads up to it ("replaced by newer
   agents based on X", "in favor of the http-based alternatives implemented in [`X`]") is
-  named, markup and all; "renamed to X", "see X" and a sentence-initial "Use X" count too, and
-  advice ("If you want ..., use `x=True`") still does not;
+  named, markup and all; "renamed to X" and a sentence-initial "Use X." count too, and advice
+  ("If you want ..., use `x=True`", "see `X` for the options") still does not;
 - where no name can be found, the note points at the package's changelog (PyPI's project URLs,
-  else the GitHub releases page) instead of saying it found no replacement;
+  else the releases page of the GitHub repository they name) instead of saying it found no
+  replacement;
 - a function deprecated in one call form only (an ``@overload``) is named by the parameters
   that form alone takes, never by a 500-character signature, and a call site is in the old
-  form only when it passes one of them;
+  form only when it passes one of them; a form that no keyword names falls back to its
+  signature;
 - a removed parameter of an SDK method points at ``extra_body`` alone, with no "found no
-  replacement" after it; bullets that say the same of several APIs merge into one;
+  replacement" after it; bullets that say the same of several APIs merge into one, and sync
+  keeps its books per API;
 - a package first released after the cutoff gets a bullet from PyPI's metadata, tagged
   ``[metadata]``, which sync writes.
 """
@@ -30,14 +33,17 @@ import pytest
 from since_cutoff import net
 from since_cutoff.apidiff import DEPRECATED, PARAM_REMOVED, REMOVED, APIChange
 from since_cutoff.cache import DiskCache
-from since_cutoff.engine import NEW, Engine, ModelTarget, Settings
+from since_cutoff.engine import NEW, Engine, ModelTarget, ScanResult, Settings
 from since_cutoff.notes import (
     EVIDENCE_LIBRARY,
     NEW_PACKAGE,
     NOTE_DIFF,
+    NOTE_MODEL,
     TAG_DIFF,
     TAG_LIBRARY,
     TAG_METADATA,
+    TAG_TYPE_CHECKED,
+    Note,
     diff_note,
     diff_notes,
     new_package_note,
@@ -48,7 +54,13 @@ from since_cutoff.notes import (
 )
 from since_cutoff.project import load_project, scan_file
 from since_cutoff.pypi import PyPI, SourceTree, changelog_url
-from since_cutoff.report import render_markdown, render_scan_markdown, scan_lines, to_json
+from since_cutoff.report import (
+    changes_text,
+    render_markdown,
+    render_scan_markdown,
+    scan_lines,
+    to_json,
+)
 from since_cutoff.selection import OLD_FORM, USE_CALL, USE_KEYWORD, USES_API, form, uses
 from since_cutoff.stats import estimate_tokens
 from since_cutoff.sync import propose, read_target
@@ -136,7 +148,8 @@ def test_in_favor_of_with_doc_markup_names_hfapi() -> None:
 
 
 def test_renamed_to_is_stated_directly() -> None:
-    """huggingface-hub's login(): "`new_session` has been renamed to skip_if_logged_in"."""
+    """A "renamed to X" in the shape of huggingface-hub's login(): a synthetic text, since
+    0.34.3's own text for `new_session` names nothing (its real note points at the changelog)."""
     c = change(
         PARAM_REMOVED,
         "huggingface_hub.login",
@@ -158,12 +171,9 @@ def test_renamed_to_is_stated_directly() -> None:
     [
         # Right after the cue: "Use X instead", as before.
         ("Deprecated. Use `fetch` instead.", "Use `pkg.fetch` instead. [diff + library]"),
-        # A sentence-initial "Use X" states it; "use X" after a condition is advice (below).
+        # A sentence-initial "Use X." with nothing but the name states it; "use X" after a
+        # condition, or "Use X to ...", is advice (below).
         ("Please use fetch.", "Use `pkg.fetch` instead. [diff + library]"),
-        (
-            "This client is gone; see `fetch` for the new API.",
-            'pkg 1.0 said: "This client is gone; see `fetch` for the new API." [diff + library]',
-        ),
         (
             "Superseded by the simpler `fetch` helper.",
             'pkg 1.0 said: "Superseded by the simpler `fetch` helper." [diff + library]',
@@ -202,6 +212,54 @@ def test_advice_is_still_not_a_replacement() -> None:
     assert note.tag_list == (TAG_DIFF,) and note.replacements == []
     assert note.bullet.endswith(
         "since-cutoff found no replacement in huggingface-hub's deprecation text."
+    )
+
+
+def test_the_strongest_cue_anywhere_in_the_text_wins() -> None:
+    """The text says "see `Helper`" first and "Use `new_func` instead" after it: the second
+    states the replacement; the note named Helper and quoted the "see" sentence."""
+    c = change(
+        REMOVED,
+        "pkg.old",
+        hint="This function is deprecated; see `Helper` for the background. Use `new_func` instead.",
+        library_names=["pkg.Helper", "pkg.new_func"],
+    )
+    note = diff_note([c])
+    assert note.line == (
+        "`pkg.old` was removed; do not use it. Use `pkg.new_func` instead. [diff + library]"
+    )
+    assert [r.text for r in note.replacements] == ["pkg.new_func"]
+
+
+def test_a_pointer_at_a_name_is_quoted_and_is_not_a_replacement() -> None:
+    """A "see `X`" and a sentence-initial "Use `X` to ..." mention a name without saying that
+    it replaces anything. They were recorded as stated replacements, tagged [library]; they are
+    quoted under [diff], as advice is."""
+    see = change(
+        REMOVED,
+        "pkg.old",
+        hint="`old()` is deprecated; see `Config` for the available options.",
+        library_names=["pkg.Config"],
+    )
+    note = diff_note([see])
+    assert note.line == (
+        "`pkg.old` was removed; do not use it. pkg 1.0 said: \"'old()' is deprecated; see "
+        "`Config` for the available options.\" since-cutoff found no replacement in pkg's "
+        "deprecation text. [diff]"
+    )
+    assert note.replacements == [] and note.tag_list == (TAG_DIFF,)
+    advice = change(
+        PARAM_REMOVED,
+        "pkg.parse",
+        parameter="lenient",
+        hint="Use `strict=False` to keep the previous lenient parsing.",
+        library_names=["strict"],
+    )
+    note = diff_note([advice])
+    assert note.replacements == [] and note.tag_list == (TAG_DIFF,)
+    assert (
+        'On `lenient`, pkg 1.0 said: "Use `strict=False` to keep the previous lenient parsing."'
+        in note.bullet
     )
 
 
@@ -314,6 +372,24 @@ def test_the_url_cannot_end_the_block_or_open_a_code_span() -> None:
             "https://x.example/notes",
         ),
         ({"Source": "https://github.com/a/b.git"}, "https://github.com/a/b/releases"),
+        # pydantic-core: the first URL is a sponsors page, not a repository; the Source URL
+        # names one. The releases page was github.com/sponsors/samuelcolvin/releases (a 404).
+        (
+            {
+                "Funding": "https://github.com/sponsors/samuelcolvin",
+                "Homepage": "https://github.com/pydantic",
+                "Source": "https://github.com/pydantic/pydantic/tree/main/pydantic-core",
+            },
+            "https://github.com/pydantic/pydantic/releases",
+        ),
+        ({"Funding": "https://github.com/sponsors/samuelcolvin"}, None),
+        ({"Source": "https://github.com/orgs/o/discussions"}, None),
+        # A Homepage before a Funding URL that happens to name a repository; any case.
+        (
+            {"Funding": "https://github.com/a/funding", "Homepage": "https://github.com/a/b"},
+            "https://github.com/a/b/releases",
+        ),
+        ({"Source": "https://GitHub.com/O/R.git"}, "https://github.com/O/R/releases"),
         ({"Documentation": "https://docs.example"}, None),
         ({"Changelog": "ftp://not.http"}, None),
         ({}, None),
@@ -362,6 +438,15 @@ def test_pypi_keeps_the_project_urls_and_summary_in_its_cache(monkeypatch, cache
     )
     assert pypi.project_urls("old-style") == {"Homepage": "https://github.com/o/r"}
     assert pypi.summary("old-style") is None
+    # Offline, a copy from before stands in as it is (it is within the TTL): no stale warning.
+    cache.set("pypi", "offline", {"info": {"name": "offline"}, "releases": {"1.0": []}})
+
+    def unreachable(url: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise net.HTTPError(url, None)
+
+    monkeypatch.setattr(net, "get_json", unreachable)
+    assert pypi.project("offline")["releases"] == {"1.0": []}
+    assert pypi.project_urls("offline") == {} and pypi.stale == {}
 
 
 HUB_OLD = {
@@ -480,15 +565,65 @@ def test_a_deprecated_overload_records_the_parameters_only_it_takes(tmp_path) ->
     assert c.call_form_only == ["lifespan", "on_progress", "on_roots_list_changed"]
 
 
-def test_the_note_names_the_deprecated_call_form_not_its_signature(tmp_path) -> None:
-    c = _server_change(tmp_path)
-    assert diff_note([c]).line == (
-        "`Server(...)` with `lifespan=`, `on_progress=` or `on_roots_list_changed=` passed as "
-        'keyword arguments is deprecated; avoid it in new code. mcp 2.0 says: "Pass neither." '
+def _form_change(tmp_path: Path, deprecated: str, other: str) -> APIChange:
+    """The DEPRECATED change of ``pkg.f``, whose ``@overload`` with the parameters
+    ``deprecated`` is deprecated while the one with ``other`` is not."""
+    old = {"pkg/__init__.py": "def f(*args, **kwargs): ...\n"}
+    new = {
+        "pkg/__init__.py": f"""
+            from typing import overload
+            from typing_extensions import deprecated
+
+
+            @overload
+            def f({other}): ...
+            @overload
+            @deprecated("Deprecated.")
+            def f({deprecated}): ...
+            def f(*args, **kwargs): ...
+        """,
+    }
+    [c] = [c for c in toy_diff(tmp_path, "pkg", old, new) if c.kind == DEPRECATED]
+    return c
+
+
+def test_a_form_that_no_keyword_names_records_no_parameters(tmp_path) -> None:
+    """cachetools' ``cached(cache, key, lock, info, /)``: ``info`` is positional-only, so
+    ``info=`` is a TypeError, not the deprecated form, yet the note read "with `info=` passed as
+    a keyword argument" and only a call passing ``info=`` was the old form. The same for a form
+    that differs by ``**kwargs``. No keyword names such a form: the field is [], the note
+    quotes the signature when it is short, and every call is "uses this API"."""
+    info = _form_change(tmp_path / "a", "cache, key, lock, info, /", "cache, key=None, lock=None")
+    assert (info.call_form, info.call_form_only) == ("f(cache, key, lock, info, /)", [])
+    assert diff_note([info]).line == (
+        "`pkg.f` called as `f(cache, key, lock, info, /)` is deprecated; avoid it in new code. "
         "[diff]"
     )
-    # mcp 2.3.0's real text, with its 500-character overload, as the audit saw it.
-    real = change(
+    [use] = uses(info, _file("from pkg import f\nf(1, 2, 3, info=4)\n"))
+    assert use.form == USES_API
+    kwargs = _form_change(tmp_path / "b", "name: str, **kwargs", "name: str")
+    assert (kwargs.call_form, kwargs.call_form_only) == ("f(name: str, **kwargs)", [])
+    assert diff_note([kwargs]).bullet.startswith(
+        "`pkg.f` called as `f(name: str, **kwargs)` is deprecated"
+    )
+    # A keyword-only parameter of its own next to a positional-only one: the keyword alone
+    # would not name the form.
+    mixed = _form_change(tmp_path / "c", "a, info, /, *, on_progress", "a")
+    assert mixed.call_form_only == []
+    # A parameter a call may pass by keyword names the form, positional-or-keyword or not.
+    plain = _form_change(tmp_path / "d", "a, b", "a")
+    assert plain.call_form_only == ["b"]
+    assert diff_note([plain]).line == (
+        "`pkg.f(...)` with `b=` passed as a keyword argument is deprecated; avoid it in new "
+        "code. [diff]"
+    )
+
+
+def _mcp_2_3_server() -> APIChange:
+    """mcp 2.3.0's ``Server.__init__`` as the audit saw it: a 500-character deprecated overload
+    whose own parameters are the three the 2.2.0 fixture records too (the other overload took
+    ``lifespan``, ``cache_hints`` and ``get_tool_input_schema`` by then)."""
+    return change(
         DEPRECATED,
         "mcp.server.lowlevel.server.Server.__init__",
         owner="Server",
@@ -497,12 +632,21 @@ def test_the_note_names_the_deprecated_call_form_not_its_signature(tmp_path) -> 
         new="2.3.0",
         deprecation="Passing any of them emits an MCPDeprecationWarning at runtime.",
         call_form="__init__(self, name: str, *, version: str = '', " + "x: int = 0, " * 60,
-        call_form_only=["lifespan", "get_tool_input_schema", "cache_hints"],
+        call_form_only=["on_set_logging_level", "on_roots_list_changed", "on_progress"],
     )
-    line = diff_note([real]).line
+
+
+def test_the_note_names_the_deprecated_call_form_not_its_signature(tmp_path) -> None:
+    c = _server_change(tmp_path)
+    assert diff_note([c]).line == (
+        "`Server(...)` with `lifespan=`, `on_progress=` or `on_roots_list_changed=` passed as "
+        'keyword arguments is deprecated; avoid it in new code. mcp 2.0 says: "Pass neither." '
+        "[diff]"
+    )
+    line = diff_note([_mcp_2_3_server()]).line
     assert line.startswith(
-        "`Server(...)` with `lifespan=`, `get_tool_input_schema=` or `cache_hints=` passed as "
-        "keyword arguments is deprecated; avoid it in new code."
+        "`Server(...)` with `on_set_logging_level=`, `on_roots_list_changed=` or `on_progress=` "
+        "passed as keyword arguments is deprecated; avoid it in new code."
     )
     assert "x: int" not in line and len(line) < 300
     # A short form is still quoted; a long one with no parameter of its own is only named.
@@ -520,6 +664,39 @@ def test_the_note_names_the_deprecated_call_form_not_its_signature(tmp_path) -> 
         "One call form of `sdk.cached` (an overload) is deprecated; avoid that form in new "
         "code. [diff]"
     )
+
+
+def test_the_heading_and_the_listing_name_the_call_form_too() -> None:
+    """The scan's heading ("Server is deprecated when called as __init__(self, name: str, ...")
+    and ``--all``'s listing (APIChange.describe) dumped the 400-character signature next to the
+    fixed note. They name the form's keywords, quote a signature only when it is short, and
+    otherwise say that one call form is deprecated."""
+    real = _mcp_2_3_server()
+    assert real.describe() == (
+        "`mcp.server.lowlevel.server.Server.__init__` called with `on_set_logging_level=`, "
+        "`on_roots_list_changed=`, `on_progress=` is deprecated (mcp 2.3.0): Passing any of "
+        "them emits an MCPDeprecationWarning at runtime."
+    )
+    assert changes_text([real]) == (
+        True,
+        "is deprecated when called with on_set_logging_level=, on_roots_list_changed= or "
+        "on_progress=",
+    )
+    assert changes_text([real], code=True)[1].startswith(
+        "is deprecated when called with `on_set_logging_level=`, "
+    )
+    short = change(
+        DEPRECATED, "sdk.with_config", call_form="with_config(*, config)", call_form_only=[]
+    )
+    assert short.describe() == (
+        "`sdk.with_config` called as `with_config(*, config)` is deprecated (pkg 2.0)"
+    )
+    assert changes_text([short])[1] == "is deprecated when called as with_config(*, config)"
+    long = change(
+        DEPRECATED, "sdk.cached", call_form="cached(" + "a, " * 60 + ")", call_form_only=[]
+    )
+    assert long.describe() == "`sdk.cached`: one call form (an overload) is deprecated (pkg 2.0)"
+    assert changes_text([long])[1] == "is deprecated in one call form (an overload)"
 
 
 def _file(text: str, name: str = "app/main.py"):
@@ -684,29 +861,98 @@ def test_the_legacy_block_and_the_notes_per_api_do_not_change() -> None:
     assert legacy.count("\n- ") == 2 and "`pkg.A` was removed" in legacy
 
 
+TWINS_OLD = {"tw/__init__.py": "class A: ...\nclass B: ...\n"}
+TWINS_NEW = {"tw/__init__.py": "class C: ...\n"}
+
+
+def _twins(tmp_path: Path, cache: DiskCache) -> tuple[Path, ScanResult]:
+    """A project using ``tw.A`` and ``tw.B``, both removed in tw 2.0: one merged bullet."""
+    trees = {
+        ("tw", v): SourceTree("tw", v, write_tree(tmp_path / f"tw-{v}", files), ("tw",))
+        for v, files in (("1.0", TWINS_OLD), ("2.0", TWINS_NEW))
+    }
+    pypi = FakePyPI(cache, {"tw": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")]}, trees)
+    root = _app(tmp_path, "tw==2.0", "from tw import A, B\nA()\nB()\n")
+    engine = Engine(Settings(), store=cache, llm_cache=cache, pypi=pypi)
+    return root, engine.scan(load_project(root), ModelTarget.cutoff_only(CUTOFF))
+
+
+def _type_checked(note: Note) -> Note:
+    """What ``run --apply`` writes for the API of ``note``: a model's bullet whose example
+    type-checked."""
+    bullet = f"`{note.api}` is gone; use `tw.C` instead."
+    return Note(note.change, bullet, None, True, NOTE_MODEL, (TAG_TYPE_CHECKED,))
+
+
+def test_sync_keeps_a_type_checked_note_next_to_the_other_apis_bullet(tmp_path, cache) -> None:
+    """A block ``run --apply`` wrote holds a [type-checked] bullet for tw.A and the diff's for
+    tw.B. sync keyed the merged bullet by tw.A alone: with the [type-checked] bullet for tw.A
+    it dropped the merged bullet whole, so tw.B lost its note ("tw 2.0: 1 dropped" while the
+    code still uses it); with the [type-checked] bullet for tw.B, it found no note keyed by
+    tw.B and dropped the [type-checked] one instead. Each API keeps its own note, and the
+    block is up to date."""
+    root, scan = _twins(tmp_path, cache)
+    [merged] = scan.scope_notes()
+    assert merged.apis == ["tw.A", "tw.B"]
+    a, b = scan.diff_notes()
+    kw: dict[str, Any] = {"model": "", "cutoff": CUTOFF, "version_source": "pyproject.toml"}
+    for notes in ([_type_checked(a), b], [a, _type_checked(b)]):
+        block = render_block(notes, deps=scan.deps_hash(), **kw)
+        (root / "AGENTS.md").write_text(block, encoding="utf-8")
+        proposal = propose(scan, read_target(root, root / "AGENTS.md"))
+        assert proposal.action is None and proposal.changes == [], proposal.block
+        assert proposal.block is not None and proposal.notes == 2
+        assert [line for line in proposal.block.splitlines() if line.startswith("- ")] == [
+            f"- {n.line}" for n in notes
+        ]
+
+
+def test_bullets_that_merge_count_as_changed_and_name_their_apis(tmp_path, cache) -> None:
+    """A block since-cutoff 0.5 wrote has one bullet per API: when they merge, sync said
+    "1 changed, 1 dropped" (one API per merged line); both changed. report.md's list of sources
+    named the first API only."""
+    root, scan = _twins(tmp_path, cache)
+    a, b = scan.diff_notes()
+    block = render_block(
+        [a, b], model="", cutoff=CUTOFF, version_source="pyproject.toml", deps=scan.deps_hash()
+    )
+    (root / "AGENTS.md").write_text(block, encoding="utf-8")
+    proposal = propose(scan, read_target(root, root / "AGENTS.md"))
+    assert [c.done for c in proposal.changes] == ["tw 2.0: 2 changed"]
+    [merged] = scan.scope_notes()
+    assert proposal.apis == {merged.line: ("tw.A", "tw.B")}
+    assert "- `tw.A` and `tw.B` [diff]: tw 1.0 -> 2.0; stated from the API diff" in (
+        render_markdown(scan)
+    )
+
+
 # ------------------------------------------------- J: a package newer than the cutoff
 def test_the_note_for_a_package_first_released_after_the_cutoff() -> None:
+    """httpx2 0.0.0 reserved the name on 2026-05-11; the pinned 2.13.1 came out on 2026-09-23.
+    The note said "2.13.1 was first released on 2026-05-11": it gives both dates."""
     note = new_package_note(
         "httpx2",
         "2.13.1",
         "2026-05-11",
         "The next generation HTTP client.",
         "https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md",
+        "2026-09-23",
     )
     assert note.line == (
-        "httpx2 2.13.1 was first released on 2026-05-11, after the cutoff; the model has no "
-        "training data on it. Summary: The next generation HTTP client. Changelog: "
+        "httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no "
+        "training data on it. The project pins 2.13.1 (released 2026-09-23). Summary: The next "
+        "generation HTTP client. Changelog: "
         "https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md [metadata]"
     )
-    assert estimate_tokens(note.line) <= 60
+    assert estimate_tokens(note.line) <= 75
     assert note.tag_list == (TAG_METADATA,) and note.api == "httpx2"
     assert note.change.kind == NEW_PACKAGE and note.applies_to()["version"] == "2.13.1"
     assert note.checks()["change"].startswith("the release list and metadata of httpx2 on PyPI")
     assert note.checks()["runtime"] == "not checked"
     # Without a date, summary or URL on PyPI: only what is known.
     assert new_package_note("fresh", "1.0", None).line == (
-        "fresh 1.0 was first released after the cutoff; the model has no training data on it. "
-        "[metadata]"
+        "fresh first appeared on PyPI after the cutoff; the model has no training data on it. "
+        "The project pins 1.0. [metadata]"
     )
     assert tag_legend([TAG_METADATA]) == [
         "[metadata] PyPI metadata: the two releases' Requires-Dist (in their wheels' METADATA), "
@@ -735,9 +981,10 @@ def _new_package_pypi(cache: DiskCache) -> FakePyPI:
 
 
 HTTPX2_NOTE = (
-    "- httpx2 2.13.1 was first released on 2026-05-11, after the cutoff; the model has no "
-    "training data on it. Summary: The next generation HTTP client. Changelog: "
-    "https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md [metadata]"
+    "- httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no training "
+    "data on it. The project pins 2.13.1 (released 2026-06-02). Summary: The next generation "
+    "HTTP client. Changelog: https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md "
+    "[metadata]"
 )
 
 
@@ -749,9 +996,10 @@ def test_sync_writes_the_note_for_a_new_package_the_code_imports(tmp_path, cache
     engine = Engine(Settings(), store=cache, llm_cache=cache, pypi=_new_package_pypi(cache))
     scan = engine.scan(load_project(root), ModelTarget.cutoff_only(CUTOFF))
     httpx2 = scan.package("httpx2")
-    assert (httpx2.status, httpx2.first_released, httpx2.summary) == (
+    assert (httpx2.status, httpx2.first_released, httpx2.locked_date, httpx2.summary) == (
         NEW,
         "2026-05-11",
+        "2026-06-02",
         "The next generation HTTP client.",
     )
     [note] = scan.scope_notes()

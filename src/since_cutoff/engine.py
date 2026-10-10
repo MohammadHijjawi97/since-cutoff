@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -453,16 +453,27 @@ class ScanResult:
             return []
         return [c for c in self.ranked(package) if used_names(c, files)]
 
-    def diff_notes(self, *, suggestions: bool = False, merge: bool = False) -> list[Note]:
+    def diff_notes(
+        self,
+        *,
+        suggestions: bool = False,
+        merge: bool = False,
+        exclude: Collection[str] = (),
+    ) -> list[Note]:
         """A note from the API diff (:func:`notes.diff_note`) for each changed API the project's
         code uses, package by package in the order of the reports; with ``merge``, one for
-        APIs that say the same (:func:`notes.diff_notes`). No model is called, and nothing of
-        the libraries is run."""
+        APIs that say the same (:func:`notes.diff_notes`). ``exclude`` (APIChange.api_key)
+        leaves out the APIs whose note a ``[type-checked]`` one stands in for (sync.propose),
+        before the others merge, so that a bullet they shared still names the rest. No model
+        is called, and nothing of the libraries is run."""
         return [
             note
             for p in self.changed
             for note in diff_notes(
-                self.used_changes(p), suggestions=suggestions, changelog=p.changelog, merge=merge
+                [c for c in self.used_changes(p) if c.api_key not in exclude],
+                suggestions=suggestions,
+                changelog=p.changelog,
+                merge=merge,
             )
         ]
 
@@ -470,7 +481,9 @@ class ScanResult:
         """One note (:func:`notes.new_package_note`, ``[metadata]``) for each dependency first
         released after the cutoff that the project's code imports (:meth:`new_imported`)."""
         return [
-            new_package_note(p.name, p.locked or "", p.first_released, p.summary, p.changelog)
+            new_package_note(
+                p.name, p.locked or "", p.first_released, p.summary, p.changelog, p.locked_date
+            )
             for p in self.new_imported()
         ]
 
@@ -571,6 +584,7 @@ class ScanResult:
         *,
         suggestions: bool = False,
         per_package: int | None = None,
+        exclude: Collection[str] = (),
     ) -> list[Note]:
         """The notes a block of ``scope`` holds: from the API diff, for the changed APIs
         the code uses (SCOPE_USED, :meth:`diff_notes`, APIs that say the same merged), or, for
@@ -582,9 +596,12 @@ class ScanResult:
         not use, a params class's field that mirrors a callable's lost parameter and an
         internal hook get no note (:func:`_not_worth_a_note`). With either scope, one note per
         dependency first released after the cutoff that the code imports
-        (:meth:`new_package_notes`)."""
+        (:meth:`new_package_notes`). ``exclude`` is as in :meth:`diff_notes`: the APIs whose
+        note a ``[type-checked]`` one stands in for, left out before the rest merge (they still
+        count towards ``per_package``)."""
         if scope != SCOPE_IMPORTED:
-            return self.diff_notes(suggestions=suggestions, merge=True) + self.new_package_notes()
+            from_diff = self.diff_notes(suggestions=suggestions, merge=True, exclude=exclude)
+            return from_diff + self.new_package_notes()
         budget = per_package or IMPORTED_APIS
         notes: list[Note] = []
         for p in self.changed:
@@ -605,7 +622,7 @@ class ScanResult:
                 if key in used or not all(_not_worth_a_note(c, lost) for c in changes):
                     chosen.append(key)
             notes += diff_notes(
-                [c for c in ranked if c.api_key in set(chosen)],
+                [c for c in ranked if c.api_key in set(chosen) and c.api_key not in exclude],
                 suggestions=suggestions,
                 changelog=p.changelog,
                 merge=True,

@@ -178,13 +178,14 @@ that lists them ([#5](https://github.com/MohammadHijjawi97/since-cutoff/issues/5
 not use them.", "`huggingface_hub.hf_hub_download()` and `huggingface_hub.snapshot_download()`
 no longer accept `proxies` or `resume_download`; …". Two bullets say the same when they are
 equal once each one's API name is taken out: the same changes, evidence and quotes. The
-terminal, report.md, the MCP tools and the JSON keep one entry per API. A replacement is named
-only with evidence, and the tag says which:
+terminal, report.md, the MCP tools and the JSON keep one entry per API (report.md's list of
+sources names every API of a merged bullet). A replacement is named only with evidence, and the
+tag says which:
 
 | evidence | what the note says | tag |
 |---|---|---|
-| none | "`Client.send()` no longer accepts `temperature`; do not pass it. See https://github.com/encode/httpx/blob/master/CHANGELOG.md (0.28.1)." The pointer is where the package documents its releases, from its PyPI metadata: the project URL labelled Changelog, Changes, Release notes, Releases, History, What's new or News, else the releases page of the GitHub repository another of its URLs names, with the pinned version; when PyPI lists neither, "since-cutoff found no replacement in toylib's deprecation text." When the pinned method takes `extra_body` (an SDK method that sends a request: anthropic, openai and other Stainless-generated clients), the removed parameter left the signature but perhaps not the API, so the note says so instead of "do not pass them", and nothing more: "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` argument." (`extra_query` only for a method that takes no `extra_body`: a GET, whose fields are query fields.) Where the library's own text says so: "huggingface-hub's deprecation text says there is no replacement for `resume_download`." Advice in that text that is not stated as a replacement is quoted: "On `x`, pkg 1.0 said: "…"" | `[diff]` |
-| the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement, and the name exists in the pinned version. Stated right after the cue ("Use `stop` instead", "replaced by `X`", "renamed to `X`", "in favour of `X`", "Deprecated: use `X`", a sentence-initial "Use `X`"), the note says "Use `X` instead". Stated in a sentence that leads up to the name ("replaced by newer agents based on `FunctionAgent`", "in favor of the http-based alternatives implemented in [`HfApi`]", "see `X`"), the note quotes that sentence, markup (Sphinx roles, MkDocs' `[`X`]`) dropped, so the library's own words stand. "If you want to force a new download, use `force_download=True`" is advice, not a replacement. | "Use `stop` instead of `stop_sequences`."; "llama-index-core 0.12.49 said: "FunctionCallingAgent has been rewritten and replaced by newer agents based on llama_index.core.agent.workflow.FunctionAgent."" | `[diff + library]` |
+| none | "`Client.send()` no longer accepts `temperature`; do not pass it. See https://github.com/encode/httpx/blob/master/CHANGELOG.md (0.28.1)." The pointer is where the package documents its releases, from its PyPI metadata: the project URL labelled Changelog, Changes, Release notes, Releases, History, What's new or News, else the releases page of the GitHub repository its Source, Repository or Homepage URL names (a sponsors or organisation page, `github.com/sponsors/<user>`, is no repository), with the pinned version; when PyPI lists neither, "since-cutoff found no replacement in toylib's deprecation text." When the pinned method takes `extra_body` (an SDK method that sends a request: anthropic, openai and other Stainless-generated clients), the removed parameter left the signature but perhaps not the API, so the note says so instead of "do not pass them", and nothing more: "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` argument." (`extra_query` only for a method that takes no `extra_body`: a GET, whose fields are query fields.) Where the library's own text says so: "huggingface-hub's deprecation text says there is no replacement for `resume_download`." Advice in that text that is not stated as a replacement is quoted: "On `x`, pkg 1.0 said: "…"" | `[diff]` |
+| the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement, and the name exists in the pinned version. Stated right after the cue ("Use `stop` instead", "replaced by `X`", "renamed to `X`", "in favour of `X`", "Deprecated: use `X`", a sentence-initial "Use `X`." with nothing but the name after it), the note says "Use `X` instead". Stated in a sentence that leads up to the name ("replaced by newer agents based on `FunctionAgent`", "in favor of the http-based alternatives implemented in [`HfApi`]"), the note quotes that sentence, markup (Sphinx roles, MkDocs' `[`X`]`) dropped, so the library's own words stand. The strongest cue anywhere in the text counts: "see `Helper` for the background. Use `new_func` instead." names `new_func`. "If you want to force a new download, use `force_download=True`", "see `Config` for the available options" and "Use `strict=False` to keep the previous lenient parsing" point at a name without saying that it replaces anything: advice, quoted under `[diff]`. | "Use `stop` instead of `stop_sequences`."; "llama-index-core 0.12.49 said: "FunctionCallingAgent has been rewritten and replaced by newer agents based on llama_index.core.agent.workflow.FunctionAgent."" | `[diff + library]` |
 | a moved object that looks like the same object: a class or module keeps at least half of its public names, a function its parameters, a value the same value | "`pkg.helpers.Session` moved to `pkg.sessions.Session`: import it with `from pkg.sessions import Session`." | `[diff + move checked]` |
 | the older release's Requires-Dist lists a library the pinned one does not, and the public API that named its types names another required library's types, or a copy it ships, instead ([below](#a-dependency-the-pinned-release-switched)) | "openai 3.19.2 requires `httpx2` instead of `httpx`: `OpenAI(http_client=...)` takes `httpx2.Client` (`httpx2.AsyncClient` for `AsyncOpenAI`), `OpenAI(timeout=...)` takes `httpx2.Timeout` and `OpenAI(base_url=...)` takes `httpx2.URL`. Use `httpx2` there, not `httpx`." | `[diff + metadata]` |
 | a new parameter in the same position with the same annotation, unless a version note in the pinned release's docstring (`.. versionadded::`, `.. versionchanged::`) says that one was added or the other removed (click 8.2's `CliRunner`: `catch_exceptions` where `mix_stderr` was) | "`begin` was probably renamed to `start` (same position and type)." | `[diff; probable rename]` |
@@ -197,17 +198,23 @@ PEP 702 `@deprecated` on one of its `@overload`s) is named by the parameters tha
 takes: "`Server(...)` with `on_set_logging_level=`, `on_roots_list_changed=` or `on_progress=`
 passed as keyword arguments is deprecated; avoid it in new code." (mcp 2.2's `Server.__init__`);
 its signature is quoted only when it is short, and a call site is in the old form only when it
-passes one of those parameters. A stubs package's note (`pandas-stubs`, `types-*`) says what its
+passes one of those parameters. When one of them cannot be passed by keyword (positional-only,
+`*args`, `**kwargs`: cachetools' `cached(cache, key, lock, info, /)`), no keyword names the
+form, so the note quotes its signature when that is short ("`cachetools.cached` called as
+`cached(cache, key, lock, info, /)` is deprecated; avoid it in new code."), else says that one
+call form (an overload) is deprecated, and every call site is "uses this API". The terminal
+heading and `--all` name the form the same way. A stubs package's note (`pandas-stubs`, `types-*`) says what its
 declarations no longer have and that type checkers reject it. Text from a package (deprecation
 messages) is quoted as whole sentences and cannot close the block or open code.
 
 A dependency first released after the cutoff that the code imports has no release at the cutoff
 to compare with, so it gets one bullet from PyPI's metadata instead of a diff, tagged
-`[metadata]`: "httpx2 2.13.1 was first released on 2026-05-11, after the cutoff; the model has
-no training data on it. Summary: The next generation HTTP client. Changelog:
-https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md". The summary and the URL
-are left out when PyPI lists none. `sync` writes it with the other notes, and drops it when the
-code no longer imports the package.
+`[metadata]`: "httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no
+training data on it. The project pins 2.13.1 (released 2026-09-23). Summary: The next generation
+HTTP client. Changelog: https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md".
+The two dates differ (httpx2 0.0.0 reserved the name months before 2.13.1), so the note gives
+both. The summary and the URL are left out when PyPI lists none. `sync` writes it with the other
+notes, and drops it when the code no longer imports the package.
 
 When the pinned release's source still reads a removed parameter by name (in a decorator the
 callable uses, or a function of the same module that the decorator calls), the terminal,
@@ -357,10 +364,13 @@ file:
    cache). A
    package's notes are dropped when it is no longer a dependency, is no newer than the release at
    the cutoff, has an unchanged API, or its changed APIs are no longer used; sync says why. A
-   bullet whose API had one before counts as changed ("toylib 2.0: 1 changed").
+   bullet whose API had one before counts as changed ("toylib 2.0: 1 changed"), and so do two
+   bullets that merged into one ("2 changed") and the bullets that the one `[metadata]` bullet
+   of a package first released after the cutoff takes the place of.
 4. **Notes from `run`.** A `[type-checked]` bullet that `run --apply` wrote is kept, in place of
    the note from the diff for the same API, while its package keeps the same version and the code
-   still uses that API. After a version change the note from the diff takes its place, and sync
+   still uses that API; the other APIs that shared a merged bullet with that one keep theirs.
+   After a version change the note from the diff takes its place, and sync
    says that `since-cutoff run --only <pkg>` tests the model again.
 5. **Scope and suggestions.** `--scope imported` adds, for each changed package the code imports,
    the changes most likely to matter (up to 5 APIs per package, `--per-package N` for another

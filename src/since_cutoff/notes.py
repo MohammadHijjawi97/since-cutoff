@@ -20,8 +20,9 @@ not know, each tagged with what was checked, and nothing else claimed.
                                 names another required distribution's types instead
                                 (:func:`dependency_bullet`)
   ``[metadata]``                a package first released after the cutoff, which no diff can
-                                describe: its first release's date, PyPI summary and changelog
-                                URL (:func:`new_package_note`)
+                                describe: the day it first appeared on PyPI, the pinned
+                                release's date, its PyPI summary and changelog URL
+                                (:func:`new_package_note`)
   ``[not confirmed]``           names that merely look similar; only with ``suggestions``
   ============================  ==========================================================
 
@@ -51,6 +52,7 @@ from typing import Any
 
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
+    CALL_FORM_LIMIT,
     DEPENDENCY_SWITCHED,
     DEPRECATED,
     DIFF_SCHEMA,
@@ -133,9 +135,6 @@ NOTE_DIFF = "diff"
 # (:func:`new_package_note`): not a kind the API diff reports, since there is nothing to
 # compare it with.
 NEW_PACKAGE = "new_package"
-# The longest deprecated call form (an ``@overload``'s signature) a note quotes as it is; a
-# longer one is named by the parameters only it takes, or not at all.
-CALL_FORM_LIMIT = 120
 
 # What a block covers (its meta line's "scope").
 SCOPE_USED = "used"  # the changed APIs the project's code uses (scan, sync)
@@ -255,6 +254,18 @@ class Note:
     def api(self) -> str:
         """How the note names its API: ``Messages.create``, ``huggingface_hub.hf_hub_download``."""
         return api_name(self.change, self.covered)
+
+    @property
+    def apis(self) -> list[str]:
+        """Every API the note names, as the bullet lists them: one for a note about one API,
+        several for a bullet that says the same of several (:func:`diff_notes` with ``merge``:
+        ``["Anthropic.completions", "anthropic.AI_PROMPT", "anthropic.HUMAN_PROMPT"]``)."""
+        by_api: dict[str, list[APIChange]] = {}
+        for c in self.covered:
+            by_api.setdefault(c.api_key, []).append(c)
+        if len(by_api) <= 1:
+            return [self.api]
+        return sorted(api_name(g[0], g) for g in by_api.values())
 
     def applies_to(self) -> dict[str, str]:
         c = self.change
@@ -846,8 +857,9 @@ def _library_evidence(
     agents based on `FunctionAgent`", "in favor of the http-based alternatives implemented in
     `HfApi`"), the sentence is that one, quoted, so that the library's own words stand (the
     "Use ... instead" form when it is too long to quote). Text that only mentions a name as
-    advice ("If you want to force a new download, use `force_download=True`") gives a quote and
-    no replacement (None), or nothing when there is nothing worth quoting."""
+    advice ("If you want to force a new download, use `force_download=True`", "see `Config`
+    for the available options") gives a quote and no replacement (None), or nothing when there
+    is nothing worth quoting."""
     names = library_names(change, lookup)
     if not names:
         return None
@@ -866,14 +878,14 @@ def _library_evidence(
     ]
     for text, version, where, said in texts:
         stated = _stated_replacement(text, names)
-        if stated is None:
-            continue
-        found, direct = stated
+        if stated is None or not stated.replacement:
+            continue  # nothing stated, or a pointer at a name: quoted below, as advice
+        found = stated.names
         source = f"{change.package} {version}" + (f" {where}" if where else "")
         replacement = Replacement(found[0], EVIDENCE_LIBRARY, source, what)
         shown = _listed([_shown_name(n) for n in found], "or")
         use = f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
-        quote = "" if direct else _quote(text, found[0])
+        quote = "" if stated.direct else _quote(text, found[0])
         if quote:
             return f'{on}{change.package} {version} {said}: "{quote}"', replacement
         return use, replacement
@@ -931,44 +943,68 @@ def library_names(change: APIChange, lookup: ApiLookup | None = None) -> list[st
 
 # How a deprecation text states its replacement, and where in the sentence the name is: after
 # "use", up to "instead" (every alternative in between: httpx 0.27's "Use 'proxy' or 'mounts'
-# instead."); after "replaced by", "renamed to", "in favour of", "deprecated: use", a
-# sentence-initial "Use" or "see", up to the end of the clause. A name right after the cue is
-# stated directly; one that the clause leads up to ("replaced by newer agents based on
-# `FunctionAgent`") is stated in that sentence.
+# instead."); after "replaced by", "renamed to", "in favour of" or "deprecated: use", up to the
+# end of the clause. A name right after the cue is stated directly; one that the clause leads
+# up to ("replaced by newer agents based on `FunctionAgent`") is stated in that sentence. The
+# cues are tried in this order over the whole text, so that "see `Helper` for the background.
+# Use `new_func` instead." names `new_func`. The last two point at a name without saying to
+# use it: a sentence-initial "Use" states a replacement only when nothing but names follows
+# ("Please use fetch."; "Use `strict=False` to keep the previous lenient parsing." is
+# advice), and "see `X`" never does.
 _CUES = (
     re.compile(r"\buse\s+(?P<rest>.+?)\s+(?:instead|in\s+its\s+place)\b", re.IGNORECASE),
     re.compile(r"\b(?:replaced|superseded)\s+(?:by|with)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
     re.compile(r"\brenamed\s+(?:to|as)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
     re.compile(r"\bin\s+favou?r\s+of\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
     re.compile(r"\bdeprecated\W+(?:please\s+)?use\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
-    re.compile(r"^\W*(?:please\s+)?use\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
-    re.compile(r"\b(?P<see>see)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"^\W*(?P<weak>(?:please\s+)?use)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\b(?P<weak>see)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
 )
 _TOKEN = re.compile(r"[A-Za-z_][\w.]*")
 
 
-def _stated_replacement(text: str, names: list[str]) -> tuple[list[str], bool] | None:
-    """The ones of ``names`` that ``text`` states as the replacement (:data:`_CUES`), the
-    first it gives first, and whether it states them directly (nothing but the names after the
-    cue: "Use `stop` instead.", "Use 'proxy' or 'mounts' instead.", "renamed to
-    `skip_if_logged_in`") or in a sentence that leads up to them, or says more ("replaced by
-    newer agents based on `FunctionAgent`", "in favor of the http-based alternatives
-    implemented in [`HfApi`]", "use StateGraph with a 'messages' key instead"; "see `X`"
-    always, since it points at the name without saying to use it). None when the text only mentions them ("If you want to force a
-    new download, use `force_download=True`" is advice, not a replacement). Markup around a
-    name (Sphinx roles, MkDocs' ``[`X`]``) does not count."""
-    for sentence in _sentences(text):
+@dataclass(frozen=True)
+class _Stated:
+    """What a deprecation text says of the names that exist in the pinned version
+    (:func:`_stated_replacement`)."""
+
+    names: list[str]  # the ones it names after a cue, the first it gives first
+    # Nothing but the names (and "or") after the cue: "Use `stop` instead.", "Use 'proxy' or
+    # 'mounts' instead.", "renamed to `skip_if_logged_in`".
+    direct: bool
+    # The cue states them as the replacement. False for "see `X`", and for a sentence-initial
+    # "Use `X` to ..." that says more than the names: advice, quoted and not a replacement.
+    replacement: bool
+
+
+def _stated_replacement(text: str, names: list[str]) -> _Stated | None:
+    """The ones of ``names`` that ``text`` names after a cue (:data:`_CUES`, the strongest cue
+    anywhere in the text first), and how: directly, or in a sentence that leads up to them or
+    says more ("replaced by newer agents based on `FunctionAgent`", "in favor of the
+    http-based alternatives implemented in [`HfApi`]", "use StateGraph with a 'messages' key
+    instead"), and whether the cue states them as the replacement at all ("see `Config` for
+    the available options" and "Use `strict=False` to keep the previous lenient parsing" do
+    not). None when the text only mentions them ("If you want to force a new download, use
+    `force_download=True`" is advice, not a replacement). Markup around a name (Sphinx roles,
+    MkDocs' ``[`X`]``) does not count."""
+    sentences = _sentences(text)
+    for cue in _CUES:
         matches = sorted(
-            (m for cue in _CUES for m in cue.finditer(sentence)), key=lambda m: m.start("rest")
+            ((i, m) for i, sentence in enumerate(sentences) for m in cue.finditer(sentence)),
+            key=lambda im: (im[0], im[1].start("rest")),
         )
-        for m in matches:
+        for _, m in matches:
             tokens = [t.strip(".") for t in _TOKEN.findall(m.group("rest"))]
             said = [(t, _named_as(t, names)) for t in tokens if t]
             found = _unique(n for _, n in said if n is not None)
-            if found:
-                # Direct: nothing but the names (and "or") after the cue.
-                only_names = all(n is not None or t.lower() in ("or", "and") for t, n in said)
-                return found, only_names and m.groupdict().get("see") is None
+            if not found:
+                continue
+            direct = all(n is not None or t.lower() in ("or", "and") for t, n in said)
+            weak = m.groupdict().get("weak")
+            if weak is None:
+                return _Stated(found, direct, True)
+            # A sentence-initial "Use" that names nothing else states it; "see" never does.
+            return _Stated(found, direct, direct and weak.lower() != "see")
     return None
 
 
@@ -1437,19 +1473,27 @@ def new_package_note(
     first_released: str | None,
     summary: str | None = None,
     changelog: str | None = None,
+    released: str | None = None,
 ) -> Note:
     """The one bullet for a package first released after the cutoff that the project's code
     imports: no release existed at the cutoff to compare with, so there is no diff, and the
     model has no training data on it. What PyPI's metadata says of it: the day of its first
-    release (``first_released``, ISO), its one-line ``summary`` and where it documents its
-    releases (``changelog``, :func:`pypi.changelog_url`), each left out when unknown. Tagged
-    ``[metadata]``; about 40 tokens.
+    release (``first_released``, ISO), the day the pinned ``version`` was released
+    (``released``, ISO: the two differ, httpx2 0.0.0 came out months before 2.13.1), its
+    one-line ``summary`` and where it documents its releases (``changelog``,
+    :func:`pypi.changelog_url`), each left out when unknown. Tagged ``[metadata]``; about 50
+    tokens.
 
-    ``httpx2 2.13.1 was first released on 2026-05-11, after the cutoff; the model has no
-    training data on it. Summary: The next generation HTTP client. Changelog: https://...``
+    ``httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no training
+    data on it. The project pins 2.13.1 (released 2026-09-23). Summary: The next generation
+    HTTP client. Changelog: https://...``
     """
     when = f"on {first_released}, after the cutoff" if first_released else "after the cutoff"
-    text = f"{package} {version} was first released {when}; the model has no training data on it."
+    pinned = f"{version} (released {released})" if released else version
+    text = (
+        f"{package} first appeared on PyPI {when}; the model has no training data on it. "
+        f"The project pins {pinned}."
+    )
     if summary:
         text += f" Summary: {safe_text(summary, 120).rstrip('.')}."
     if changelog:

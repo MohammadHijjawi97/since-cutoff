@@ -20,6 +20,7 @@ from rich.text import Text
 
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
+    CALL_FORM_LIMIT,
     DEPENDENCY_SWITCHED,
     DIFF_SCHEMA,
     KIND_CHANGED,
@@ -1015,8 +1016,13 @@ def changes_text(changes: Sequence[APIChange], *, code: bool = False) -> tuple[b
                 text = f"changed from {c.old_kind} to {c.new_kind}"
             elif kind == KIND_CHANGED:
                 text = "changed kind"
-            elif c.call_form:
+            elif c.call_form_only:
+                keywords = _joined([q(f"{p}=") for p in c.call_form_only], "or")
+                text = f"is deprecated when called with {keywords}"
+            elif c.call_form and len(c.call_form) <= CALL_FORM_LIMIT:
                 text = f"is deprecated when called as {q(' '.join(c.call_form.split()))}"
+            elif c.call_form:
+                text = "is deprecated in one call form (an overload)"
             else:
                 text = "is deprecated"
             first_is_api = first_is_api or not parts
@@ -2137,10 +2143,12 @@ def _notes_md(notes: list[Note], block: str, *, run: bool) -> list[str]:
 
 def _source_md(note: Note) -> str:
     """Where one note comes from: the diff, the library's text, a model; and what was not
-    checked (the runtime caveat, the names that merely look similar)."""
+    checked (the runtime caveat, the names that merely look similar). A bullet that says the
+    same of several APIs names them all."""
     c = note.change
     versions = f"{c.from_version} -> {c.to_version}" if c.from_version else c.to_version
-    parts = [f"`{note.api}` {tag_text(note.tag_list)}: {c.package} {versions}"]
+    apis = _joined([f"`{a}`" for a in note.apis], "and")
+    parts = [f"{apis} {tag_text(note.tag_list)}: {c.package} {versions}"]
     if note.source == NOTE_MODEL:
         writer = f" by `{note.writer}`" if note.writer else ""
         parts.append(f"written{writer}; its example type-checks against {c.package} {c.to_version}")

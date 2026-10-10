@@ -94,9 +94,11 @@ log = logging.getLogger(__name__)
 # (``library_names``, and whether find_renamed runs); and a parameter in the place of a removed
 # one is no rename (``renamed``, ``suggestions``) when a version note in the new docstring says
 # the one was added or the other removed (_documented_apart: click 8.2's ``CliRunner``). Also
-# ``call_form_only``: the parameters that only a deprecated ``@overload`` takes (mcp 2.2's
-# ``Server.__init__``), so that a note can name the deprecated call form instead of its signature
-# and a call site is in the old form only when it passes one of them.
+# ``call_form_only``: the keyword-passable parameters that only a deprecated ``@overload`` takes
+# (mcp 2.2's ``Server.__init__``), so that a note can name the deprecated call form instead of
+# its signature and a call site is in the old form only when it passes one of them; [] when the
+# form differs by a positional-only parameter or a ``*args`` / ``**kwargs`` (cachetools'
+# ``cached(cache, key, lock, info, /)``), which no keyword names.
 DIFF_SCHEMA = 21
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
@@ -105,6 +107,11 @@ FUZZY_LIMIT = 2000
 
 # The parameters through which an SDK method sends request fields it has no parameter for.
 REQUEST_EXTRAS = ("extra_body", "extra_query")
+
+# The longest deprecated call form (an ``@overload``'s signature, APIChange.call_form) that a
+# note or a report quotes as it is; a longer one is named by the parameters only it takes
+# (``call_form_only``), or not at all.
+CALL_FORM_LIMIT = 120
 
 REMOVED = "removed"
 MOVED = "moved"
@@ -222,9 +229,11 @@ class APIChange:
     # DEPRECATED with ``call_form``: the parameters that only the deprecated overload takes,
     # none of the other overloads having them (mcp 2.2's ``Server.__init__``:
     # ``on_set_logging_level``, ``on_roots_list_changed`` and ``on_progress``), in the order of
-    # its signature. A call is in the deprecated form when it passes one of them (the notes name
-    # them; selection.form). [] when the overloads differ otherwise (by a type, or a positional
-    # parameter); None without ``call_form``, and in a diff made before DIFF_SCHEMA 21.
+    # its signature, when every one of them can be passed by keyword. A call is in the
+    # deprecated form when it passes one of them (the notes name them; selection.form). []
+    # when the overloads differ otherwise: by a type, or by a positional-only parameter, an
+    # ``*args`` or a ``**kwargs`` (cachetools' ``cached(cache, key, lock, info, /)``), which no
+    # keyword names; None without ``call_form``, and in a diff made before DIFF_SCHEMA 21.
     call_form_only: list[str] | None = None
     # Every public path that leads to the changed object, in either version: where it is
     # defined and where it is re-exported (``pkg.fetch`` for ``pkg.dl.fetch``); for a class
@@ -451,8 +460,13 @@ class APIChange:
             extra = f": {self.deprecation}" if meaningful else ""
             if self.parameter:
                 return f"`{call}`: parameter `{self.parameter}` is deprecated{pkg}{extra}"
-            if self.call_form:
+            if self.call_form_only:
+                keywords = ", ".join(f"`{p}=`" for p in self.call_form_only)
+                return f"`{path}` called with {keywords} is deprecated{pkg}{extra}"
+            if self.call_form and len(self.call_form) <= CALL_FORM_LIMIT:
                 return f"`{path}` called as `{self.call_form}` is deprecated{pkg}{extra}"
+            if self.call_form:
+                return f"`{path}`: one call form (an overload) is deprecated{pkg}{extra}"
             return f"`{path}` is deprecated{pkg}{extra}"
         return f"`{path}` changed{pkg}"
 
@@ -3768,8 +3782,10 @@ def _deprecated_form(obj: Any) -> tuple[str | None, list[str] | None]:
     itself and its other overloads are not (pydantic's ``with_config(*, config=...)``,
     cachetools' ``cached`` with a positional ``info``): only that call form is deprecated. With
     it, the parameters that only the deprecated overloads take (APIChange.call_form_only): []
-    when the other overloads take every one of them too. ``(None, None)`` for a function that
-    is deprecated as a whole, or not at all."""
+    when the other overloads take every one of them too, and [] when one of them cannot be
+    passed by keyword (positional-only, ``*args``, ``**kwargs``: cachetools' ``info``), since
+    a call is then in the deprecated form without passing any keyword that names it.
+    ``(None, None)`` for a function that is deprecated as a whole, or not at all."""
     overloads = list(getattr(obj, "overloads", None) or [])
     if obj not in overloads and _pep702_decorator(obj) is not None:
         return None, None
@@ -3777,16 +3793,22 @@ def _deprecated_form(obj: Any) -> tuple[str | None, list[str] | None]:
     if not marked or len(marked) == len(overloads):
         return None, None
     signature = signature_of(marked[0]) or ""
-    others = {name for o in overloads if o not in marked for name in _overload_parameters(o)}
-    only = [n for o in marked for n in _overload_parameters(o) if n not in others]
-    return signature.split(" -> ")[0] or None, list(dict.fromkeys(only))
+    others = {name for o in overloads if o not in marked for name, _ in _overload_parameters(o)}
+    only = [(n, k) for o in marked for n, k in _overload_parameters(o) if n not in others]
+    if any(kind not in _BY_KEYWORD for _, kind in only):
+        only = []
+    return signature.split(" -> ")[0] or None, list(dict.fromkeys(n for n, _ in only))
 
 
-def _overload_parameters(fn: Any) -> list[str]:
-    """The names of ``fn``'s parameters, ``self`` and ``cls`` left out; [] when griffe has
-    none for it."""
+# The kinds of parameter a call can pass by keyword.
+_BY_KEYWORD = ("positional_or_keyword", "keyword_only")
+
+
+def _overload_parameters(fn: Any) -> list[tuple[str, str]]:
+    """The names and kinds (:func:`_pkind`) of ``fn``'s parameters, ``self`` and ``cls`` left
+    out; [] when griffe has none for it."""
     try:
-        return [p.name for p in fn.parameters if p.name not in ("self", "cls")]
+        return [(p.name, _pkind(p)) for p in fn.parameters if p.name not in ("self", "cls")]
     except Exception:
         return []
 

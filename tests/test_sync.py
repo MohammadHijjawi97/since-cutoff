@@ -404,16 +404,18 @@ def test_why_a_section_goes(sc, tmp_path) -> None:
     assert "AGENTS.md is out of date: toylib's API did not change from 1.0 to 1.1." in out
     set_pins(root, ("toylib==2.0", "otherlib==1.0"))
     # No toylib release on or before the cutoff: its whole API is newer, and the code imports
-    # it, so its section holds the one note that says so (tagged [metadata]).
+    # it, so its section holds the one note that says so (tagged [metadata]), in place of the
+    # two notes from the diff: both changed, none dropped.
     code, out = sc("sync", root, "--cutoff", "2024-01-01", "--yes")
     assert code == EXIT_OK
     assert (
         "✓ Updated AGENTS.md: written for the cutoff 2024-01-01 (it was for "
-        "claude-sonnet-4-5 (cutoff 2025-07-31)); toylib 2.0: 1 changed, 1 dropped." in out
+        "claude-sonnet-4-5 (cutoff 2025-07-31)); toylib 2.0: 2 changed." in out
     )
     assert (
-        "**toylib 2.0**\n- toylib 2.0 was first released on 2024-06-01, after the cutoff; the "
-        "model has no training data on it. [metadata]\n" in agents(root)
+        "**toylib 2.0**\n- toylib first appeared on PyPI on 2024-06-01, after the cutoff; the "
+        "model has no training data on it. The project pins 2.0 (released 2025-10-01). "
+        "[metadata]\n" in agents(root)
     )
     # Once the code no longer imports it, its section goes.
     (root / "main.py").write_text("import json\n", encoding="utf-8")
