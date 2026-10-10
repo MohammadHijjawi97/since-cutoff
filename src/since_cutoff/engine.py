@@ -253,8 +253,9 @@ class Settings:
     tasks_from: TaskFile | None = None
     # Baseline notes blocks tested next to the run's notes (``run --compare``).
     compare: list[str] = field(default_factory=list)
-    # ``--include-name-matches``: the notes block gets the APIs matched by a member's name
-    # alone too (selection.NAME_ONLY); the reports show them in any case, tagged.
+    # ``--include-name-matches``: the notes block, ``--fail-on`` and ``--annotate`` count the
+    # APIs matched by a member's name alone too (selection.NAME_ONLY); the reports show them
+    # in any case, tagged.
     include_name_matches: bool = False
 
 
@@ -402,8 +403,8 @@ class ScanResult:
     # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
     # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
     stale: dict[str, date] = field(default_factory=dict)
-    # Whether the notes (diff_notes, the block) include the APIs matched by a member's name
-    # alone (selection.NAME_ONLY): Settings.include_name_matches.
+    # Whether the notes (diff_notes, the block), ``--fail-on`` and ``--annotate`` include the
+    # APIs matched by a member's name alone (selection.NAME_ONLY): Settings.include_name_matches.
     name_matches: bool = False
 
     @property

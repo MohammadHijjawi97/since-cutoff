@@ -3114,7 +3114,8 @@ def _ordered(paths: Iterable[str]) -> list[str]:
 # ------------------------------------------------- receiver types (selection.type_project)
 # What receiver_map records of a pinned release; bumped when that changes, so that the copies
 # the scan caches per release (Engine.store, "receivers") are made again. Not part of a diff.
-RECEIVERS_SCHEMA = 1
+# 2: ``members``, the names each class declares itself.
+RECEIVERS_SCHEMA = 2
 # Where an annotation that names no package of the project leads: the standard library and the
 # typing helpers (``typing_extensions.Self``). Not recorded.
 _STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", ())) | {
@@ -3140,7 +3141,9 @@ def receiver_map(root: Any) -> dict[str, dict[str, Any]]:
     written: pandas' ``read_csv`` gives a ``DataFrame`` or a ``TextFileReader``), or to
     :data:`SELF_TYPE`; a return of a container (``list[X]``), of a type variable or of a type
     outside every package is not recorded. ``attrs`` is the same for properties and annotated
-    attributes, which are read without a call.
+    attributes, which are read without a call. ``members`` maps each class (canonical path) to
+    the public names it declares itself, not those it inherits: where a member read on an
+    instance is found, so that a subclass's own ``sum`` is not its base's.
     """
     import griffe
 
@@ -3150,6 +3153,7 @@ def receiver_map(root: Any) -> dict[str, dict[str, Any]]:
     bases: dict[str, list[str]] = {}
     returns: dict[str, str] = {}
     attrs: dict[str, str] = {}
+    defines: dict[str, list[str]] = {}
 
     def class_set(expr: Any) -> list[str]:
         """The canonical paths of the classes an annotation names (its top, or the members of
@@ -3233,6 +3237,9 @@ def receiver_map(root: Any) -> dict[str, dict[str, Any]]:
                 items = list(member.members.items())
             except Exception:
                 continue
+            declared = [n for n, _ in items if not _private(n)]
+            if declared:
+                defines[canonical] = declared
             for attr_name, attr in items:
                 if _private(attr_name) or getattr(attr, "is_alias", False):
                     continue
@@ -3248,7 +3255,13 @@ def receiver_map(root: Any) -> dict[str, dict[str, Any]]:
                     continue
                 if found is not None:
                     where[f"{canonical}.{attr_name}"] = found
-    return {"classes": classes, "bases": bases, "returns": returns, "attrs": attrs}
+    return {
+        "classes": classes,
+        "bases": bases,
+        "returns": returns,
+        "attrs": attrs,
+        "members": defines,
+    }
 
 
 # Names in an annotation that are not the class it names: the forms of a union and the way of
@@ -3558,6 +3571,43 @@ def signature_parameters(signature: str | None) -> list[str]:
             names.append(t)
             start = False
     return names
+
+
+def keyword_parameters(signature: str | None) -> list[str] | None:
+    """The parameters of a :func:`signature_of` text that a call may pass by keyword: not the
+    positional-only ones (before ``/``) nor ``*args``. None when the callable takes
+    ``**kwargs`` (any keyword), or when the text is missing or cut short."""
+    if not signature or "(" not in signature:
+        return None
+    inner = signature.split("(", 1)[1]
+    names: list[str] = []
+    depth = 0
+    start = True  # at the start of a parameter
+    star = False  # after a ``*``: the next name is ``*args``
+    for token in re.finditer(r"\*\*?|/|[A-Za-z_]\w*|[\[\](){},=:]", inner):
+        t = token.group()
+        if t in ("(", "[", "{"):
+            depth += 1
+        elif t in (")", "]", "}"):
+            if depth == 0:
+                return names  # the end of the parameters
+            depth -= 1
+        elif depth == 0 and t == ",":
+            start, star = True, False
+        elif depth == 0 and t in ("=", ":"):
+            start = False
+        elif depth == 0 and start:
+            if t == "**":
+                return None
+            if t == "*":
+                star = True
+            elif t == "/":
+                names.clear()
+            else:
+                if not star:
+                    names.append(t)
+                start, star = False, False
+    return None  # cut short: the parameters after the cut are unknown
 
 
 def _accepts_var_keyword(fn: Any) -> bool:

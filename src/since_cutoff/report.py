@@ -1228,7 +1228,8 @@ def _form_legend(used: Sequence[UsedAPI]) -> list[str]:
     if any(u.match == NAME_ONLY for u in used):
         out.append(
             f"{NAME_MATCH_TAG}: matched by the method's name alone, on a value whose class the "
-            "code does not show; not written to the notes unless --include-name-matches is given"
+            "code does not show; not written to the notes, nor counted by --fail-on or "
+            "--annotate, unless --include-name-matches is given"
         )
     return out
 
@@ -1273,11 +1274,19 @@ def place_form(uses: Sequence[Use]) -> str:
     return OLD_FORM if any(u.form == OLD_FORM for u in uses) else USES_API
 
 
+def counted(scan: ScanResult) -> list[UsedAPI]:
+    """The used APIs that ``--fail-on`` and ``--annotate`` count: not those matched by a
+    member's name alone (selection.NAME_ONLY; the reports tag them), unless
+    ``--include-name-matches`` asked for them, as for the notes."""
+    return [u for u in scan.used_apis() if u.match != NAME_ONLY or scan.name_matches]
+
+
 def fail_reason(scan: ScanResult, conditions: set[str]) -> str | None:
     """Why ``scan --fail-on`` exits with code 3, or None: ``old-form`` when the code uses a
     changed API in the old form, ``used`` when it uses one at all, ``changes`` when any
-    dependency changed its API after the cutoff (``--fail-on-changes``)."""
-    used = scan.used_apis() if conditions & {"used", "old-form"} else []
+    dependency changed its API after the cutoff (``--fail-on-changes``). A name match counts
+    only with ``--include-name-matches`` (:func:`counted`)."""
+    used = counted(scan) if conditions & {"used", "old-form"} else []
     old = [u for u in used if u.form == OLD_FORM]
     if "old-form" in conditions and old:
         return (
@@ -1300,10 +1309,11 @@ def github_annotations(scan: ScanResult, env: Mapping[str, str] | None = None) -
     project's code uses a changed API: ``::warning`` where it is the old form, ``::notice``
     elsewhere. File-level for now (``file=`` only); once the scan records lines (issue #8),
     ``line=`` and ``col=`` too. Paths are relative to ``GITHUB_WORKSPACE`` when the project is
-    inside it. Property values and the message are escaped as the Actions toolkit does."""
+    inside it. Property values and the message are escaped as the Actions toolkit does. A name
+    match is annotated only with ``--include-name-matches`` (:func:`counted`)."""
     prefix = _workspace_prefix(scan.project.root, env)
     out = []
-    for u in scan.used_apis():
+    for u in counted(scan):
         p = u.package
         title = f"since-cutoff: {p.name} {p.locked}"
         message = (

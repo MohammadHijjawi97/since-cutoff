@@ -154,9 +154,12 @@ the files that import the package, and statically (nothing is run):
   class counts with its base classes, across the project's packages whose sources the scan read:
   `ChatOpenAI` from langchain-openai is a langchain-core `BaseChatModel`, so `llm.predict(q)` is
   `BaseChatModel.predict` although the file never imports langchain-core. A member is read up to
-  the nearest class the diff says changed it, so that `llm.predict` is not also its base's
-  `BaseLanguageModel.predict`. The return annotations, bases and re-exports come from the pinned
-  release's sources (griffe; nothing is run) and are cached per release;
+  the nearest class that defines it in the pinned release, or that the diff says changed it:
+  `df.sum()` on a `DataFrame` is `DataFrame.sum`, which pandas 3 still defines, not the
+  `NDFrame.sum` whose parameters became keyword-only, and `llm.predict` is not also its base's
+  `BaseLanguageModel.predict`. The return annotations, bases, members and re-exports come from
+  the pinned release's sources (griffe; nothing is run) and are cached per release: the first
+  scan of a release reads its sources once more for them, a few seconds for pandas;
 - a constructor where the class is called, under any name of the class;
 - a parameter only where it is passed by keyword to that very callable: `temperature=` passed to
   another library's `create` in the same file does not count. An SDK's beta mirror
@@ -165,20 +168,23 @@ the files that import the package, and statically (nothing is run):
 A change from a diff that recorded no import paths (an older cache, or a change made by hand
 through the Python API) is matched by package and name, and the report says "matched by name".
 
-Last, a method or attribute read on a value the file shows nothing of (a parameter without an
-annotation) counts by its name alone, when that name belongs to exactly one changed API across
-the changed packages the code imports and is not a common Python name (`get`, `set`, `run`,
-`create`, `close`, `update`, `count`, ...). The reports tag such a use `[name match]`: the
-terminal next to its label and its place, the Markdown summary in the form column, the JSON as
-`"match": "name_only"`. `sync` leaves its note out of the block unless `--include-name-matches`
-is given (`scan --include-name-matches` counts it among the notes ready; the block does not
-keep the choice, so give the flag on every sync).
+Last, a method or attribute read on a bare name the file shows nothing of (a parameter without
+an annotation, a loop variable; not a literal, nor a value of the file's own classes and
+functions, of a relative import, of a builtin or of a package the scan did not read) counts by
+its name alone, when that name belongs to exactly one changed API across the changed packages
+the code imports or reaches and is not a common Python name (`get`, `set`, `run`, `create`,
+`close`, `update`, `count`, `sum`, `any`, `fetch`, ...). The reports tag such a use `[name
+match]`: the terminal next to its label and its place, the Markdown summary in the form column,
+the JSON as `"match": "name_only"`. Unless `--include-name-matches` is given, `sync` leaves its
+note out of the block, and `scan` leaves it out of `--fail-on` and `--annotate github` (the
+flag also counts it among the notes ready; the block does not keep the choice, so give the flag
+on every sync).
 
 Each use is one of two **forms**:
 
 | form | meaning |
 |---|---|
-| **old form** | the code uses the API as the release at the cutoff allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword. A class that became a function, or the reverse (pandas 3's `option_context`), is called the same way, so a call of it is "uses this API" unless it passes a keyword the new signature does not take; the note still says to check its signature |
+| **old form** | the code uses the API as the release at the cutoff allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword. A class that became a function, or the reverse (pandas 3's `option_context`), is called the same way, so a call of it is "uses this API" unless it passes a keyword the new signature does not take (a subclass or an `isinstance()` of it stays the old form); the note still says to check its signature |
 | **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
 
 The terminal and the MCP tool `project_changes` show at most 3 files per API (`scan -v` shows

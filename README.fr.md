@@ -851,9 +851,9 @@ mesuré le test sur les tâches réservées ; `verified` est conservé et signi
   ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). Une méthode lue sur une
   valeur dont le code ne montre pas la classe ne compte que par son nom, quand ce nom
   n'appartient qu'à une seule API modifiée et n'est pas un nom courant : elle est étiquetée
-  `[name match]` et reste hors des notes sauf avec `--include-name-matches`. Un paramètre
-  devenu obligatoire, nommé seulement ou positionnel seulement est toujours marqué « uses this
-  API », jamais « old form », pour l'instant.
+  `[name match]` et reste hors des notes, de `--fail-on` et de `--annotate` sauf avec
+  `--include-name-matches`. Un paramètre devenu obligatoire, nommé seulement ou positionnel
+  seulement est toujours marqué « uses this API », jamais « old form », pour l'instant.
 - Une note ne nomme un remplaçant que si le texte de dépréciation de la bibliothèque elle-même
   l'énonce. Un conseil qui ne figure que dans un guide de migration (le
   [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md)

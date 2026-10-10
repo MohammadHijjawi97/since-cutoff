@@ -22,6 +22,7 @@ from since_cutoff.apidiff import (
     REMOVED,
     APIChange,
     diff_sources,
+    keyword_parameters,
 )
 from since_cutoff.cache import DiskCache
 from since_cutoff.engine import CHANGED, KNOWN, Engine, ModelTarget, ScanResult, Settings
@@ -43,6 +44,7 @@ from since_cutoff.selection import (
     PATH_MATCH,
     USE_CALL,
     USE_KEYWORD,
+    USE_REFERENCE,
     USES_API,
     collapse,
     form,
@@ -802,6 +804,63 @@ PLUGINS = {
             pass
     """,
 }
+# ``plugins`` with a ``Helper`` of its own whose ``predict`` 2.0 removes: the name of a changed
+# API in ``plugins`` and, through ``ChatX``, in ``core`` too.
+HELPER_V1 = {
+    "plugins/__init__.py": 'from plugins.chat import ChatX, Helper\n\n__all__ = ["ChatX", "Helper"]\n',
+    "plugins/chat.py": PLUGINS["plugins/chat.py"]
+    + """
+
+        class Helper:
+            def predict(self, text: str) -> str:
+                return text
+    """,
+}
+HELPER_V2 = {
+    "plugins/__init__.py": HELPER_V1["plugins/__init__.py"],
+    "plugins/chat.py": PLUGINS["plugins/chat.py"]
+    + """
+
+        class Helper:
+            pass
+    """,
+}
+# ``svc`` 1.0 -> 2.0: ``Base.send`` loses ``temperature`` and ``Base.foo`` goes, while
+# ``Client(Base)`` keeps its own ``send(text, temperature=0.0)`` and gains a ``foo`` of its own
+# (pandas 3's shape: ``NDFrame.sum`` made its parameters keyword-only, ``DataFrame.sum`` still
+# takes them by position).
+SVC_V1 = {
+    "svc/__init__.py": 'from svc.core import Base, Client\n\n__all__ = ["Base", "Client"]\n',
+    "svc/core.py": """
+        class Base:
+            def send(self, text: str, temperature: float = 0.0) -> str:
+                return text
+
+            def foo(self) -> int:
+                return 1
+
+
+        class Client(Base):
+            def send(self, text: str, temperature: float = 0.0) -> str:
+                return text
+    """,
+}
+SVC_V2 = {
+    "svc/__init__.py": SVC_V1["svc/__init__.py"],
+    "svc/core.py": """
+        class Base:
+            def send(self, text: str) -> str:
+                return text
+
+
+        class Client(Base):
+            def send(self, text: str, temperature: float = 0.0) -> str:
+                return text
+
+            def foo(self) -> int:
+                return 1
+    """,
+}
 
 
 def _typed_scan(
@@ -998,6 +1057,133 @@ def test_a_name_alone_counts_when_it_is_one_changed_apis_and_not_common(tmp_path
     assert [n.api for n in scan.diff_notes()] == ["Frame.applymap"]
 
 
+def test_a_member_the_class_defines_itself_is_not_its_bases(tmp_path, cache):
+    # The diff reports ``Base.send`` and ``Base.foo`` on ``Base`` alone: ``Client`` overrides
+    # ``send`` and has a ``foo`` of its own in 2.0. Typing ``c`` as a ``Client`` must not add
+    # its base's changes (real pandas 3.0.6: ``df.head().T.sum()`` was "NDFrame.sum: axis,
+    # min_count, numeric_only and skipna are now keyword-only", while ``DataFrame.sum`` still
+    # takes them by position).
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"svc": (SVC_V1, SVC_V2)},
+        {
+            "main.py": "from svc import Client\n\nc = Client()\nc.send('x', temperature=0.2)\nc.foo()\n",
+            "base.py": "from svc import Base\n\nb = Base()\nb.send('x', temperature=0.2)\nb.foo()\n",
+        },
+    )
+    base = "base.py"
+    assert _found(scan) == {
+        "Base.send": (
+            OLD_FORM,
+            PATH_MATCH,
+            [(base, USE_KEYWORD, ("send", "temperature"), PATH_MATCH)],
+        ),
+        "Base.foo": (OLD_FORM, PATH_MATCH, [(base, USE_CALL, ("foo",), PATH_MATCH)]),
+    }
+
+
+def test_the_files_own_return_annotations_type_what_they_give(tmp_path, cache):
+    # The only evidence of what ``df`` and ``self.make()`` are is the file's own annotation.
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"frames": (FRAMES_V1, FRAMES_V2)},
+        {
+            "main.py": """
+                import frames as fr
+
+                def load(path) -> fr.Frame:
+                    return fr.read_csv(path)
+
+                class App:
+                    def make(self) -> "fr.Frame":
+                        return load("x")
+
+                    def go(self):
+                        self.make().swapaxes(0, 1)
+
+                df = load("x")
+                df.applymap(str)
+            """,
+        },
+    )
+    main = "main.py"
+    assert _found(scan) == {
+        "Frame.applymap": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("applymap",), PATH_MATCH)]),
+        "NDFrame.swapaxes": (OLD_FORM, PATH_MATCH, [(main, USE_CALL, ("swapaxes",), PATH_MATCH)]),
+    }
+
+
+def test_a_value_of_the_files_own_code_is_no_name_match(tmp_path, cache):
+    # The name-only tier is for values the file shows nothing of. An instance of its own class,
+    # of a class it imports relatively or of a builtin, and what its own method returns, are not
+    # (real pandas 3.0.6: ``loc = Local(); loc.swapaxes(0, 1)`` was "NDFrame.swapaxes was
+    # removed", a warning annotation and exit 3 with --fail-on old-form).
+    scan = _typed_scan(
+        tmp_path,
+        cache,
+        {"frames": (FRAMES_V1, FRAMES_V2)},
+        {
+            "own_class.py": """
+                import frames
+
+                class Local:
+                    def swapaxes(self, a, b):
+                        return self
+
+                loc = Local()
+                loc.swapaxes(0, 1)
+            """,
+            "relative.py": "import frames\nfrom .models import Store\n\ns = Store()\ns.swapaxes(0, 1)\n",
+            "builtin.py": "import frames\n\ntext = str(1)\ntext.applymap(1)\n",
+            "own_method.py": """
+                import frames
+
+                class App:
+                    def make(self):
+                        return 1
+
+                    def go(self):
+                        df = self.make()
+                        df.applymap(str)
+            """,
+            "param.py": "import frames\n\ndef tidy(df):\n    df.applymap(str)\n",
+        },
+    )
+    assert _found(scan) == {
+        "Frame.applymap": (OLD_FORM, NAME_ONLY, [("param.py", USE_CALL, ("applymap",), NAME_ONLY)])
+    }
+
+
+def test_a_name_alone_is_one_apis_across_the_reached_packages_too(tmp_path, cache):
+    # ``model.predict`` where ``plugins`` (imported) lost ``Helper.predict`` and ``core``, reached
+    # through ``ChatX``, lost ``BaseChat.predict`` and ``BaseLanguage.predict``: three changed
+    # APIs share the name, so none counts (one bare call was three "[name match]" uses).
+    libs = {"core": (CORE_V1, CORE_V2), "plugins": (HELPER_V1, HELPER_V2)}
+    reached = (
+        "from plugins import ChatX\n\ndef ask(model, q):\n    llm = ChatX()\n    llm.invoke(q)\n"
+        "    return model.predict(q)\n"
+    )
+    scan = _typed_scan(tmp_path / "reached", cache, libs, {"main.py": reached})
+    assert "core" in next(iter(scan.project.files)).reaches
+    assert _found(scan) == {}
+    # Without the reach, ``predict`` is plugins' alone.
+    alone = "from plugins import Helper\n\ndef ask(model, q):\n    return model.predict(q)\n"
+    scan = _typed_scan(tmp_path / "alone", cache, libs, {"main.py": alone})
+    assert _found(scan) == {
+        "Helper.predict": (OLD_FORM, NAME_ONLY, [("main.py", USE_CALL, ("predict",), NAME_ONLY)])
+    }
+
+
+def test_keyword_parameters_are_those_a_call_may_pass_by_keyword() -> None:
+    assert keyword_parameters("f(a, b=2**3, /, c, *args, d=1, *, e) -> None") == ["c", "d", "e"]
+    assert keyword_parameters("option_context(*args) -> None") == []
+    assert keyword_parameters("f(a, **kwargs) -> None") is None  # any keyword
+    assert keyword_parameters("f(a, b") is None  # cut short
+    assert keyword_parameters(None) is None
+
+
 def test_a_class_that_became_a_function_is_the_old_form_only_with_a_refused_keyword(tmp_path):
     # Item F: ``with pd.option_context("mode.copy_on_write", True):`` is the same code for
     # pandas 2's class and pandas 3's function; the note still says to check the signature.
@@ -1010,10 +1196,20 @@ def test_a_class_that_became_a_function_is_the_old_form_only_with_a_refused_keyw
     [use] = uses(kind, same)
     assert (use.kind, use.names, use.form) == (USE_CALL, ("option_context",), USES_API)
     assert form(kind, ("option_context",)) == USES_API
-    # A keyword the function does not take (``option_context(*args)``) is the old form.
-    refused = code("from frames import option_context\noption_context(mode=True)\n")
-    [use] = uses(kind, refused)
-    assert (use.kind, use.names, use.form) == (USE_KEYWORD, ("option_context", "mode"), OLD_FORM)
+    # A keyword the function does not take (``option_context(*args)``) is the old form; so is
+    # ``args=``, which ``*args`` does not take by keyword.
+    for keyword in ("mode", "args"):
+        refused = code(f"from frames import option_context\noption_context({keyword}=True)\n")
+        [use] = uses(kind, refused)
+        assert (use.kind, use.names) == (USE_KEYWORD, ("option_context", keyword))
+        assert use.form == OLD_FORM
+    # A subclass or an ``isinstance()`` of it is the old form: a function is no type.
+    for text in (
+        "import frames as fr\nclass My(fr.option_context):\n    pass\n",
+        "import frames as fr\nisinstance(x, fr.option_context)\n",
+    ):
+        [use] = uses(kind, code(text))
+        assert (use.kind, use.names, use.form) == (USE_REFERENCE, ("option_context",), OLD_FORM)
     # Any other kind change stays the old form.
     kind.new_kind = "attribute"
     [use] = uses(kind, same)

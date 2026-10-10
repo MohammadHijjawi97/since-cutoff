@@ -496,6 +496,7 @@ def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_pat
                 import re
                 import pandas as pd
                 from frames import Frame as F
+                from .models import Store
 
                 def load(path) -> pd.DataFrame:
                     df = pd.read_csv(path, sep=";")
@@ -520,6 +521,9 @@ def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_pat
         "app.py",
     )
     assert dict(use.bound) == {"re": "re", "pd": "pandas", "F": "frames.Frame"}
+    # The file's own classes and functions, and a relative import: a value of theirs is the
+    # project's own, not a package's left untyped.
+    assert use.defined == {"load", "App", "make", "Store"}
     assert use.accesses >= {
         "pd.read_csv",
         "df.groupby",
@@ -576,6 +580,12 @@ def test_typed_reads_the_values_from_the_packages_own_annotations():
                     "pandas.core.generic.NDFrame.head": "Self",
                 },
                 "attrs": {"pandas.core.frame.DataFrame.T": "pandas.core.frame.DataFrame"},
+                # What each class declares itself in the pinned release, as pandas 3 has it:
+                # ``sum`` on both; ``applymap`` and ``swapaxes`` are gone.
+                "members": {
+                    "pandas.core.frame.DataFrame": ["groupby", "T", "sum"],
+                    "pandas.core.generic.NDFrame": ["head", "sum"],
+                },
             },
             {
                 # langchain-openai's shape: ``ChatOpenAI`` derives from langchain-core's class,
@@ -609,6 +619,8 @@ def test_typed_reads_the_values_from_the_packages_own_annotations():
     assert api.member("pandas.core.frame.DataFrame", "head", call=True) == {
         "pandas.core.frame.DataFrame"
     }
+    assert api.defines("pandas.core.frame.DataFrame", "sum")
+    assert not api.defines("pandas.core.frame.DataFrame", "swapaxes")
     assert api.modules == {"pandas", "lc_openai", "lc_core"}
     f = scan_file(
         ast.parse(
@@ -617,12 +629,17 @@ def test_typed_reads_the_values_from_the_packages_own_annotations():
                 import re
                 import pandas as pd
                 from lc_openai import ChatOpenAI
+                from .models import Store
+
+                def load(path) -> pd.DataFrame:
+                    return pd.read_csv(path)
 
                 def f(path, other, data: "pd.DataFrame | None"):
                     df = pd.read_csv(path)
                     df.applymap(str)
                     df.groupby("k", axis=0).count()
                     df.head().T.swapaxes(0, 1)
+                    df.sum()
                     data.applymap(str)
                     other.melt(id_vars="a")
                     m = re.match("a", path)
@@ -631,17 +648,41 @@ def test_typed_reads_the_values_from_the_packages_own_annotations():
                     items.count(1)
                     llm = ChatOpenAI(model="x")
                     llm.predict("q")
+                    own = load(path)
+                    own.melt(id_vars="a")
+                    loc = Local()
+                    loc.collect()
+                    store = Store()
+                    store.collect()
+                    text = str(path)
+                    text.collect()
+
+                class Local:
+                    def collect(self):
+                        return self
 
                 class Mine(ChatOpenAI):
                     def go(self):
                         self.predict("q", stop=["x"])
+
+                    def make(self) -> "pd.DataFrame":
+                        return load("x")
+
+                    def raw(self):
+                        return load("x")
+
+                    def run(self):
+                        self.make().pivot()
+                        made = self.raw()
+                        made.collect()
                 """
             )
         ),
         "main.py",
     )
     owners = {"predict": {"lc_core.language_models.chat.BaseChatModel"}}
-    t = typed(f, api, keep={"melt", "group", "count", "applymap", "predict"}, owners=owners)
+    keep = {"melt", "group", "count", "applymap", "predict", "collect"}
+    t = typed(f, api, keep=keep, owners=owners)
     added = t.members - f.members
     frame = {"pandas.DataFrame", "pandas.core.frame.DataFrame", "pandas.core.generic.NDFrame"}
     # ``df``: a DataFrame (or pandas' TextFileReader, the other return of read_csv), with its
@@ -651,8 +692,20 @@ def test_typed_reads_the_values_from_the_packages_own_annotations():
     }
     assert ("pandas.core.groupby.generic.DataFrameGroupBy", "count") in added
     assert {c for c, a in added if a == "swapaxes"} == frame
+    # ``sum``: DataFrame defines it itself, so the member is not its base NDFrame's (pandas 3
+    # made ``NDFrame.sum``'s parameters keyword-only; ``DataFrame.sum`` still takes them by
+    # position); TextFileReader is the other class ``df`` may be.
+    assert {c for c, a in added if a == "sum"} == {
+        "pandas.DataFrame",
+        "pandas.core.frame.DataFrame",
+        "pandas.io.parsers.readers.TextFileReader",
+    }
+    # The file's own functions' returns: ``load()`` and ``self.make()``.
+    assert {c for c, a in added if a == "melt"} == frame
+    assert {c for c, a in added if a == "pivot"} == frame
     # ``llm``: a ChatOpenAI and, through another package, a BaseChatModel, but not the base
     # of that (``owners`` says ``BaseChatModel`` lost ``predict``: the nearest class counts).
+    # ``self.make`` and ``self.raw`` are ``Mine``'s own methods: not widened to the bases.
     assert {c for c, a in t.members if a == "predict"} == {
         "lc_openai.ChatOpenAI",
         "lc_openai.chat.ChatOpenAI",
@@ -669,7 +722,8 @@ def test_typed_reads_the_values_from_the_packages_own_annotations():
         "lc_core.language_models.chat.BaseChatModel",
     }
     # ``other.melt``: a bare name the file shows nothing of. ``m`` is re's and ``items`` a
-    # list; ``data`` and ``df`` are typed.
+    # list; ``data`` and ``df`` are typed; ``loc``, ``store``, ``text`` and ``made`` are the
+    # file's own class's, a relative import's, a builtin's and the file's own method's.
     assert t.loose == {"melt"}
     # Nothing to type from: the file as scanned, but for the names kept; ``df`` is pandas',
     # a package no map covers, so it is not a value left untyped either.

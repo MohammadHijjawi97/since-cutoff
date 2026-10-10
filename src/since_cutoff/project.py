@@ -11,6 +11,7 @@ are recorded but never looked up on PyPI by name.
 from __future__ import annotations
 
 import ast
+import builtins
 import codecs
 import json
 import re
@@ -1026,18 +1027,22 @@ class FileUse:
     # each name (``self.x`` too) is assigned, ``("df", "pd.read_csv()")``, or ``("data", "?")``
     # for a value that is no such chain; what each name is annotated with, ``("df",
     # "pd.DataFrame")``, and what a call of the file's own function gives, ``("load()",
-    # "pd.DataFrame")``; and the keywords passed at the end of a chain, ``("df.groupby", "axis")``.
+    # "pd.DataFrame")``; the keywords passed at the end of a chain, ``("df.groupby", "axis")``;
+    # and the names the file's own classes and functions, and its relative imports (``from
+    # .models import Store``), define: a value of theirs is the project's, not a package's.
     bound: frozenset[tuple[str, str]] = frozenset()
     accesses: frozenset[str] = frozenset()
     assigned: frozenset[tuple[str, str]] = frozenset()
     annotated: frozenset[tuple[str, str]] = frozenset()
     chain_keywords: frozenset[tuple[str, str]] = frozenset()
+    defined: frozenset[str] = frozenset()
     # Set by :func:`typed`. ``reaches``: the paths (with their prefixes, as ``paths``) of the
     # classes the file's typed values derive from in packages the file does not import:
     # ``llm = ChatOpenAI(...)`` from langchain-openai is a langchain-core ``BaseChatModel``, so
     # the file uses langchain-core's API (Project.code_use). ``loose``: of the names typed() was
-    # asked to keep, those the file reads or calls on a value it could not type (a parameter
-    # without an annotation): the name-only tier of selection (NAME_ONLY).
+    # asked to keep, those the file reads or calls on a bare name it shows nothing of (a
+    # parameter without an annotation, a loop variable): the name-only tier of selection
+    # (NAME_ONLY).
     reaches: frozenset[str] = frozenset()
     loose: frozenset[str] = frozenset()
 
@@ -1407,21 +1412,30 @@ _SELF_TYPE = "Self"
 # Receivers whose class the file's own class statement gives (the ``members`` of scan_file),
 # never a value of their own.
 _OWN = ("self", "cls", "super")
+# What a call of a builtin gives (``rows = list()``, ``with open(p) as fh``) is no package's.
+_BUILTINS = frozenset(dir(builtins))
 
 
 def receiver_evidence(nodes: Sequence[ast.AST]) -> dict[str, frozenset[Any]]:
     """The fields of :class:`FileUse` that :func:`typed` reads (``bound``, ``accesses``,
-    ``assigned``, ``annotated``, ``chain_keywords``), from a parsed file's nodes."""
+    ``assigned``, ``annotated``, ``chain_keywords``, ``defined``), from a parsed file's nodes."""
     bound: dict[str, str] = {}
+    defined: set[str] = set()
     for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 top = alias.name.split(".")[0]
                 bound[alias.asname or top] = alias.name if alias.asname else top
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                if alias.name != "*":
+                if alias.name == "*":
+                    continue
+                if node.level == 0 and node.module:
                     bound[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                elif node.level:  # ``from .models import Store``: the project's own
+                    defined.add(alias.asname or alias.name)
+        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined.add(node.name)
     accesses: set[str] = set()
     assigned: set[tuple[str, str]] = set()
     annotated: set[tuple[str, str]] = set()
@@ -1472,6 +1486,7 @@ def receiver_evidence(nodes: Sequence[ast.AST]) -> dict[str, frozenset[Any]]:
         "assigned": frozenset(assigned),
         "annotated": frozenset(annotated),
         "chain_keywords": frozenset(chain_keywords),
+        "defined": frozenset(defined),
     }
 
 
@@ -1541,6 +1556,8 @@ class ApiTypes:
         self.bases: dict[str, list[str]] = {}
         self.returns: dict[str, str] = {}
         self.attrs: dict[str, str] = {}
+        # The names each class declares itself (not inherited), by canonical path.
+        self.members: dict[str, set[str]] = {}
         for m in maps:
             self.classes.update({str(k): str(v) for k, v in dict(m.get("classes") or {}).items()})
             self.bases.update(
@@ -1548,6 +1565,8 @@ class ApiTypes:
             )
             self.returns.update({str(k): str(v) for k, v in dict(m.get("returns") or {}).items()})
             self.attrs.update({str(k): str(v) for k, v in dict(m.get("attrs") or {}).items()})
+            for k, v in dict(m.get("members") or {}).items():
+                self.members.setdefault(str(k), set()).update(str(n) for n in v)
         self.public: dict[str, list[str]] = {}
         for public, canonical in self.classes.items():
             self.public.setdefault(self.canon(canonical), []).append(public)
@@ -1587,6 +1606,11 @@ class ApiTypes:
     def paths_of(self, canonical: str) -> list[str]:
         """The class's canonical path and every public path of it, in every package."""
         return list(dict.fromkeys([canonical, *self.public.get(canonical, ())]))
+
+    def defines(self, canonical: str, name: str) -> bool:
+        """Whether the class declares the member itself in the pinned release (``members``):
+        a subclass's own ``sum`` is not its base's, whatever the base's became."""
+        return name in self.members.get(canonical, ())
 
     def member(self, canonical: str, name: str, *, call: bool) -> set[str]:
         """What a member of a class (or of a base) holds: the classes a call of the method
@@ -1629,16 +1653,18 @@ def typed(
     under each of its public paths, so that the members match the paths a diff records
     (``pandas.DataFrame.applymap``). The scan's own ``members`` (``self.x`` in a subclass, an
     imported class's instance) are widened to their bases the same way. A member is read up
-    to the nearest class that ``owners`` (member name -> the classes a diff says changed it,
-    canonical paths) names: ``llm.predict`` on a ``ChatOpenAI`` is ``BaseChatModel.predict``,
-    not also its base ``BaseLanguageModel``'s, which the diff reports on its own. Nothing is
-    run.
+    to the nearest class that defines it in the pinned release (``api.defines``), or that
+    ``owners`` (member name -> the classes a diff says changed it, canonical paths) names:
+    ``df.sum()`` on a ``DataFrame`` is ``DataFrame.sum``, which pandas 3 still defines, not
+    the ``NDFrame.sum`` whose parameters became keyword-only; ``llm.predict`` on a
+    ``ChatOpenAI`` is ``BaseChatModel.predict``, not also its base ``BaseLanguageModel``'s,
+    which the diff reports on its own. Nothing is run.
     """
     bound = dict(f.bound)
     tops = {p.split(".")[0] for p in bound.values()}
+    # What each name holds; ``load()`` and ``self.make()``, with their ``()``, what a call of
+    # the file's own function gives.
     types: dict[str, set[str]] = {}
-    # ``load()``, ``self.make()``: what a call of the file's own function gives.
-    calls_give: dict[str, set[str]] = {}
 
     def resolve(chain: str) -> set[str]:
         """The classes a chain of the file holds (canonical paths), as far as it can be told."""
@@ -1662,9 +1688,7 @@ def typed(
             if not known:
                 continue  # ``self``, ``cfg``: a later prefix may still be typed
             if token == _CALL:
-                if prefix in calls_give:
-                    kinds, path, pending = set(calls_give[prefix]), None, set()
-                elif path is not None:
+                if path is not None:
                     if api.is_class(path):
                         kinds = {api.canon(path)}
                     else:
@@ -1705,7 +1729,7 @@ def typed(
     for name, chain in f.annotated:
         found = resolve(chain)
         if found:
-            (calls_give if name.endswith(_CALL) else types).setdefault(name, set()).update(found)
+            types.setdefault(name, set()).update(found)
     for _ in range(4):  # ``a = pd.read_csv(p)``, ``b = a.head()``, ``c = b``
         grew = False
         for name, chain in f.assigned:
@@ -1722,37 +1746,52 @@ def typed(
 
     def widen(classes: Iterable[str], attr: str) -> list[str]:
         """Every path of these classes and of their bases, in every package, up to the
-        nearest class ``owners`` says changed ``attr``."""
+        nearest class that defines ``attr`` itself or that ``owners`` says changed it."""
         out: list[str] = []
+        changed = (owners or {}).get(attr, ())
         for cls in classes:
             chain = [cls, *api.ancestors(cls)]
-            changed = (owners or {}).get(attr, ())
-            nearest = next((i for i, c in enumerate(chain) if c in changed), None)
+            nearest = next(
+                (i for i, c in enumerate(chain) if c in changed or api.defines(c, attr)), None
+            )
             for c in chain if nearest is None else chain[: nearest + 1]:
                 for p in api.paths_of(c):
                     out.append(p)
                     reached.update(_prefixes(p))
         return list(dict.fromkeys(out))
 
-    # The scan's own members, read on a class it names: its bases too.
+    # The scan's own members, read on a class it names: its bases too, but not for a member the
+    # file defines itself (``self.make()`` in a subclass that has its own ``make``).
     for cls_path, attr in list(members):
-        if api.is_class(cls_path):
+        if api.is_class(cls_path) and attr not in f.defined:
             members.update((p, attr) for p in widen([api.canon(cls_path)], attr))
     for path, keyword in list(keyword_paths):
         owner, _, name = path.rpartition(".")
-        if api.is_class(owner):
+        if api.is_class(owner) and name not in f.defined:
             paths = widen([api.canon(owner)], name)
             keyword_paths.update((f"{p}.{name}", keyword) for p in paths)
     # Chains: ``df.applymap``, ``pd.read_csv().applymap``, ``df.groupby().count``.
     untyped: set[str] = set()
-    # A name assigned something that is no chain (a literal, a comprehension) or a chain from
-    # a package no map covers (``m = re.match(...)``), or annotated with a builtin or such a
-    # package's class (``data: dict``), is not a package's value left untyped.
+    # A name assigned something that is no chain (a literal, a comprehension), a chain from a
+    # package no map covers (``m = re.match(...)``), from the file's own classes, functions and
+    # relative imports (``loc = Local()``, ``df = self.make()``, ``from .models import Store``)
+    # or from a builtin (``rows = list()``), or annotated with a builtin or such a package's
+    # class (``data: dict``), is not a package's value left untyped.
     foreign: set[str] = set()
     for name, chain in (*f.assigned, *f.annotated):
-        root = _tokens(chain)[0]
+        tokens = _tokens(chain)
+        root = tokens[0]
         covered = root in bound and bound[root].split(".")[0] in api.modules
-        if chain == "?" or (not covered and (root in bound or chain in f.annotated_chains(name))):
+        own = root not in bound and (
+            root in f.defined
+            or root in _BUILTINS
+            or (root in _OWN and len(tokens) > 1 and tokens[1][1:] in f.defined)
+        )
+        if (
+            chain == "?"
+            or own
+            or (not covered and (root in bound or chain in f.annotated_chains(name)))
+        ):
             foreign.add(name)
     for chain in f.accesses:
         receiver, _, attr = chain.rpartition(".")

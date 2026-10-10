@@ -51,6 +51,7 @@ from since_cutoff.pypi import PyPI, SourceTree
 from since_cutoff.report import (
     api_head,
     changes_text,
+    fail_reason,
     github_annotations,
     render_console,
     render_markdown,
@@ -936,11 +937,19 @@ def test_a_name_match_is_tagged_and_left_out_of_the_notes(tmp_path, cache) -> No
     assert "| old form [name match] |" in render_scan_markdown(scan)
     tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
     assert "`applymap` [name match]" in tools.project_changes(str(root), cutoff="2025-07")
-    # Asked for: the note is ready, and the block has it.
+    # Not a reason to fail CI, nor a file to annotate: a name alone is a hint, as the notes
+    # treat it.
+    assert fail_reason(scan, {"used", "old-form"}) is None
+    assert github_annotations(scan) == []
+    # Asked for: the note is ready, the block has it, and CI sees it.
     scan.name_matches = True
     lines = text_of(scan_lines(scan, width=120))
     assert "1 note ready" in lines and "old form [name match]" in lines
     assert "applymap" in (scan.notes_block(scan.diff_notes()) or "")
+    assert fail_reason(scan, {"old-form"}) == (
+        "--fail-on old-form: your code uses 1 changed API in the old form"
+    )
+    assert github_annotations(scan)[0].startswith("::warning file=main.py,title=")
 
 
 def test_include_name_matches_on_scan_and_sync(tmp_path, cache, capsys, monkeypatch) -> None:
@@ -949,10 +958,12 @@ def test_include_name_matches_on_scan_and_sync(tmp_path, cache, capsys, monkeypa
     monkeypatch.setattr(cli, "Engine", lambda s, **kw: Engine(s, **{**kw, "pypi": pypi}))
     root = write_tree(tmp_path / "app", {"requirements.txt": "frames==2.0\n", "main.py": LOOSE})
     argv = [str(root), "--cutoff", "2025-07-31"]
-    assert cli.main(["scan", *argv, "--fail-on", "old-form"]) == 3  # used, in the old form
+    # A name match alone does not fail CI; asked for, it does.
+    assert cli.main(["scan", *argv, "--fail-on", "old-form", "--annotate", "github"]) == 0
     out = capsys.readouterr().out
     assert "old form [name match]" in out and "No notes to write: every use is a name match" in out
-    assert cli.main(["scan", *argv, "--include-name-matches"]) == 0
+    assert "::warning" not in out
+    assert cli.main(["scan", *argv, "--fail-on", "old-form", "--include-name-matches"]) == 3
     assert "1 note ready" in capsys.readouterr().out
     assert cli.main(["sync", *argv, "--yes"]) == 0
     assert "no notes to write" in capsys.readouterr().out and not (root / "AGENTS.md").exists()
