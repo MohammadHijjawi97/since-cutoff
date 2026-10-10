@@ -31,6 +31,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.HelpOption",
     "click.decorators.HelpOption"
@@ -71,6 +72,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.HelpOption",
     "click.decorators.HelpOption"
@@ -111,6 +113,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.testing.CliRunner.mix_stderr"
    ],
@@ -150,6 +153,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.CommandCollection.add_source",
     "click.core.CommandCollection.add_source"
@@ -190,6 +194,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.testing.CliRunner.__init__"
    ],
@@ -229,6 +234,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Argument.make_metavar",
     "click.core.Argument.make_metavar"
@@ -269,6 +275,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Parameter.make_metavar",
     "click.core.Parameter.make_metavar"
@@ -309,6 +316,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.testing.Result.__init__"
    ],
@@ -348,6 +356,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Choice.get_metavar",
     "click.types.Choice.get_metavar"
@@ -388,6 +397,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Choice.get_missing_message",
     "click.types.Choice.get_missing_message"
@@ -428,6 +438,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.DateTime.get_metavar",
     "click.types.DateTime.get_metavar"
@@ -468,6 +479,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.ParamType.get_metavar",
     "click.types.ParamType.get_metavar"
@@ -508,6 +520,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.ParamType.get_missing_message",
     "click.types.ParamType.get_missing_message"
@@ -548,6 +561,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.BaseCommand",
     "click.core.BaseCommand"
@@ -590,6 +604,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.MultiCommand",
     "click.core.MultiCommand"
@@ -632,6 +647,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.OptionParser",
     "click.parser.OptionParser"
@@ -672,6 +688,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.BaseCommand",
     "click.core.BaseCommand"
@@ -714,6 +731,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.MultiCommand",
     "click.core.MultiCommand"
@@ -756,6 +774,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.Argument"
    ],
@@ -795,6 +814,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.Option"
    ],
@@ -834,6 +854,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.OptionParser",
     "click.parser.OptionParser"
@@ -874,6 +895,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.ParsingState"
    ],
@@ -913,6 +935,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.normalize_opt"
    ],
@@ -952,6 +975,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.split_arg_string"
    ],
@@ -991,6 +1015,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.split_opt"
    ],

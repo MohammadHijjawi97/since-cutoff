@@ -487,8 +487,10 @@ def form(change: APIChange, names: tuple[str, ...]) -> str:
     Old form: it reads or imports what was removed, moved (its old path) or changed kind, uses
     what is deprecated, or passes a removed or deprecated parameter by keyword to its callable.
     A parameter that is now required, keyword-only or positional-only is always "uses this
-    API": whether a call passes it the new way is not something a name match can tell. So is a
-    function whose deprecation covers one of its call forms (an ``@overload``) only.
+    API": whether a call passes it the new way is not something a name match can tell. A
+    function whose deprecation covers one of its call forms (an ``@overload``) only is in the
+    old form where the call passes a parameter only that form takes (APIChange.call_form_only),
+    and "uses this API" otherwise.
 
     A switched dependency (:func:`dependency_names`) is in the old form where the file hands
     a value of the old distribution, by keyword or by position, to a switched parameter of a
@@ -502,9 +504,9 @@ def form(change: APIChange, names: tuple[str, ...]) -> str:
     if change.kind == DEPENDENCY_SWITCHED:
         handed = any("(" in n or n.startswith(CATCHES) for n in names[1:])
         return OLD_FORM if handed else USES_API
-    if not names or change.kind in _NEVER_OLD_FORM or change.call_form:
+    if not names or change.kind in _NEVER_OLD_FORM:
         return USES_API
-    if change.parameter:
+    if change.parameter or change.call_form:
         return OLD_FORM if len(names) == 2 else USES_API
     return OLD_FORM
 
@@ -529,16 +531,17 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
     if change.kind == DEPENDENCY_SWITCHED:
         return dependency_names(change, f)
     owner, name = change.owner, change.name
-    parameter = change.parameter
-    wanted = parameter if parameter and not parameter.startswith("__") else None
-    passed = False
+    # The keywords that make a call the old form: the changed parameter, or those only a
+    # deprecated call form takes (APIChange.call_form_only).
+    wanted = _keywords(change)
+    passed: str | None = None
     if not owner:
         found = sorted(f.paths & by_path, key=lambda p: (p.rsplit(".", 1)[-1] != name, p))
         if not found:
             return ()
         # The name the file imports it under (a package may re-export it under another).
         callable_name = found[0].rsplit(".", 1)[-1]
-        passed = wanted is not None and any((p, wanted) in f.keyword_paths for p in by_path)
+        passed = next((w for w in wanted if any((p, w) in f.keyword_paths for p in by_path)), None)
     elif name == "__init__":
         named = {path.rsplit(".", 1)[0] for path in by_path} & f.paths
         if not named:
@@ -550,9 +553,9 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
         if not called:
             return ()
         classes = {path.rsplit(".", 1)[0] for path in by_path}
-        through = sorted(c for c in classes if (c, wanted) in f.keyword_paths) if wanted else []
-        passed = bool(through)
-        callable_name = through[0].rsplit(".", 1)[-1] if through else called[0]
+        through = sorted((c, w) for w in wanted for c in classes if (c, w) in f.keyword_paths)
+        passed = through[0][1] if through else None
+        callable_name = through[0][0].rsplit(".", 1)[-1] if through else called[0]
     else:
         if name.startswith("__") or name not in f.attributes:
             return ()
@@ -561,13 +564,28 @@ def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[st
         if not (on_class or by_pair):
             return ()
         callable_name = name
-        if wanted is not None:
-            passed = (on_class and any((p, wanted) in f.keyword_paths for p in by_path)) or any(
-                (chain, wanted) in f.keyword_chains for chain in by_pair
-            )
-    if passed and parameter:
-        return (callable_name, parameter)
+        passed = next(
+            (
+                w
+                for w in wanted
+                if (on_class and any((p, w) in f.keyword_paths for p in by_path))
+                or any((chain, w) in f.keyword_chains for chain in by_pair)
+            ),
+            None,
+        )
+    if passed:
+        return (callable_name, passed)
     return (callable_name,)
+
+
+def _keywords(change: APIChange) -> tuple[str, ...]:
+    """The keywords a call passes in the old form of ``change``: its parameter (not ``*args``
+    or ``**kwargs``), or, for a function deprecated in one call form only, the parameters that
+    form alone takes."""
+    parameter = change.parameter
+    if parameter:
+        return () if parameter.startswith(("*", "__")) else (parameter,)
+    return tuple(change.call_form_only or ())
 
 
 def dependency_names(change: APIChange, f: FileUse) -> tuple[str, ...]:

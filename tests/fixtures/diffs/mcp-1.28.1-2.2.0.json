@@ -31,6 +31,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp",
     "mcp.client.auth.OAuthClientProvider",
@@ -355,6 +356,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.McpError",
     "mcp.shared.exceptions.McpError"
@@ -400,6 +402,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.cli.claude.MCP_PACKAGE"
    ],
@@ -439,6 +442,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.JWTParameters"
    ],
@@ -478,6 +482,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.RFC7523OAuthClientProvider"
    ],
@@ -520,6 +525,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.oauth2.OAuthContext.timeout"
    ],
@@ -559,6 +565,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.experimental"
    ],
@@ -600,6 +607,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.add_response_router",
     "mcp.ServerSession.add_response_router",
@@ -642,6 +650,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.experimental",
     "mcp.client.session.ClientSession.experimental"
@@ -682,6 +691,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.get_server_capabilities",
     "mcp.client.session.ClientSession.get_server_capabilities"
@@ -722,6 +732,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess"
    ],
@@ -761,6 +772,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.ACCEPT"
    ],
@@ -800,6 +812,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.CONTENT_TYPE"
    ],
@@ -839,6 +852,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.GetSessionIdCallback"
    ],
@@ -878,6 +892,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.JSON"
    ],
@@ -917,6 +932,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.MCP_PROTOCOL_VERSION"
    ],
@@ -956,6 +972,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.headers"
    ],
@@ -995,6 +1012,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.sse_read_timeout"
    ],
@@ -1034,6 +1052,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.SSE"
    ],
@@ -1073,6 +1092,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.get_session_id"
    ],
@@ -1112,6 +1132,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.protocol_version"
    ],
@@ -1151,6 +1172,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.streamablehttp_client"
    ],
@@ -1192,6 +1214,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.websocket"
    ],
@@ -1231,6 +1254,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.__aenter__",
     "mcp.os.win32.utilities.FallbackProcess.__aenter__"
@@ -1271,6 +1295,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.__aexit__",
     "mcp.os.win32.utilities.FallbackProcess.__aexit__"
@@ -1311,6 +1336,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.stderr",
     "mcp.os.win32.utilities.FallbackProcess.stderr"
@@ -1351,6 +1377,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.stdin_raw",
     "mcp.os.win32.utilities.FallbackProcess.stdin_raw"
@@ -1391,6 +1418,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.stdout_raw",
     "mcp.os.win32.utilities.FallbackProcess.stdout_raw"
@@ -1431,6 +1459,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.os.win32.utilities.JobHandle"
    ],
@@ -1470,6 +1499,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.os.win32.utilities.terminate_windows_process"
    ],
@@ -1511,6 +1541,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.FastMCP",
     "mcp.server.fastmcp.FastMCP",
@@ -1557,6 +1588,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.auth.handlers.authorize.AnyUrlModel"
    ],
@@ -1596,6 +1628,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.experimental"
    ],
@@ -1635,6 +1668,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.Audio",
     "mcp.server.fastmcp.utilities.types.Audio"
@@ -1679,6 +1713,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.Context",
     "mcp.server.fastmcp.server.Context"
@@ -1723,6 +1758,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.FastMCP",
     "mcp.server.fastmcp.FastMCP",
@@ -1764,6 +1800,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.types.Icon",
     "mcp.server.fastmcp.Icon",
@@ -1805,6 +1842,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.Image",
     "mcp.server.fastmcp.utilities.types.Image"
@@ -1849,6 +1887,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.exceptions"
    ],
@@ -1893,6 +1932,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.prompts"
    ],
@@ -1937,6 +1977,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.resources"
    ],
@@ -1981,6 +2022,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.server"
    ],
@@ -2025,6 +2067,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.tools"
    ],
@@ -2069,6 +2112,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.utilities"
    ],
@@ -2113,6 +2157,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.experimental"
    ],
@@ -2152,6 +2197,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.func_inspection"
    ],
@@ -2191,6 +2237,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.CombinationContent"
    ],
@@ -2230,6 +2277,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.call_tool",
     "mcp.server.lowlevel.Server.call_tool",
@@ -2271,6 +2319,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.completion",
     "mcp.server.lowlevel.Server.completion",
@@ -2312,6 +2361,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.experimental",
     "mcp.server.lowlevel.Server.experimental",
@@ -2353,6 +2403,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.get_prompt",
     "mcp.server.lowlevel.Server.get_prompt",
@@ -2394,6 +2445,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_prompts",
     "mcp.server.lowlevel.Server.list_prompts",
@@ -2435,6 +2487,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_resource_templates",
     "mcp.server.lowlevel.Server.list_resource_templates",
@@ -2476,6 +2529,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_resources",
     "mcp.server.lowlevel.Server.list_resources",
@@ -2517,6 +2571,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_tools",
     "mcp.server.lowlevel.Server.list_tools",
@@ -2558,6 +2613,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.notification_handlers",
     "mcp.server.lowlevel.Server.notification_handlers",
@@ -2599,6 +2655,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.progress_notification",
     "mcp.server.lowlevel.Server.progress_notification",
@@ -2640,6 +2697,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.read_resource",
     "mcp.server.lowlevel.Server.read_resource",
@@ -2681,6 +2739,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.request_context",
     "mcp.server.lowlevel.Server.request_context",
@@ -2722,6 +2781,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.request_handlers",
     "mcp.server.lowlevel.Server.request_handlers",
@@ -2763,6 +2823,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.set_logging_level",
     "mcp.server.lowlevel.Server.set_logging_level",
@@ -2804,6 +2865,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.subscribe_resource",
     "mcp.server.lowlevel.Server.subscribe_resource",
@@ -2845,6 +2907,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.unsubscribe_resource",
     "mcp.server.lowlevel.Server.unsubscribe_resource",
@@ -2886,6 +2949,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.StructuredContent"
    ],
@@ -2925,6 +2989,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.UnstructuredContent"
    ],
@@ -2964,6 +3029,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.request_ctx"
    ],
@@ -3003,6 +3069,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.session.InitializationState"
    ],
@@ -3042,6 +3109,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.session.ServerRequestResponder"
    ],
@@ -3081,6 +3149,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__aenter__",
     "mcp.server.session.ServerSession.__aenter__"
@@ -3121,6 +3190,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__aexit__",
     "mcp.server.session.ServerSession.__aexit__"
@@ -3161,6 +3231,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.experimental",
     "mcp.server.session.ServerSession.experimental"
@@ -3201,6 +3272,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.incoming_messages",
     "mcp.server.session.ServerSession.incoming_messages"
@@ -3241,6 +3313,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.send_message",
     "mcp.server.session.ServerSession.send_message"
@@ -3281,6 +3354,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.websocket"
    ],
@@ -3320,6 +3394,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.auth.OAuthClientMetadata.validate_redirect_uri"
    ],
@@ -3359,6 +3434,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.auth.OAuthClientMetadata.validate_scope"
    ],
@@ -3398,6 +3474,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.context.RequestContext"
    ],
@@ -3437,6 +3514,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.McpError",
     "mcp.shared.exceptions.McpError"
@@ -3482,6 +3560,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.experimental"
    ],
@@ -3521,6 +3600,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.memory.create_connected_server_and_client_session"
    ],
@@ -3560,6 +3640,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.progress"
    ],
@@ -3599,6 +3680,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.response_router"
    ],
@@ -3638,6 +3720,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.session"
    ],
@@ -3677,6 +3760,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.version"
    ],
@@ -3718,6 +3802,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider.__init__"
    ],
@@ -3759,6 +3844,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.PrivateKeyJWTOAuthProvider.__init__"
    ],
@@ -3798,6 +3884,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.OAuthClientProvider.__init__",
     "mcp.client.auth.oauth2.OAuthClientProvider.__init__"
@@ -3838,6 +3925,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.oauth2.OAuthContext.__init__"
    ],
@@ -3877,6 +3965,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.__init__",
     "mcp.client.ClientSession.__init__",
@@ -3918,6 +4007,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_prompts",
     "mcp.client.ClientSession.list_prompts",
@@ -3961,6 +4051,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_resource_templates",
     "mcp.client.ClientSession.list_resource_templates",
@@ -4004,6 +4095,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_resources",
     "mcp.client.ClientSession.list_resources",
@@ -4047,6 +4139,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_tools",
     "mcp.client.ClientSession.list_tools",
@@ -4090,6 +4183,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.send_notification",
     "mcp.client.ClientSession.send_notification",
@@ -4132,6 +4226,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSessionGroup.call_tool",
     "mcp.client.session_group.ClientSessionGroup.call_tool"
@@ -4172,6 +4267,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.__init__"
    ],
@@ -4211,6 +4307,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.__init__"
    ],
@@ -4250,6 +4347,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4289,6 +4387,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4328,6 +4427,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4367,6 +4467,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4406,6 +4507,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.terminate_windows_process_tree",
     "mcp.os.win32.utilities.terminate_windows_process_tree"
@@ -4446,6 +4548,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.run",
     "mcp.server.lowlevel.Server.run",
@@ -4487,6 +4590,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4527,6 +4631,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4567,6 +4672,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4607,6 +4713,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4649,6 +4756,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.elicit",
     "mcp.server.session.ServerSession.elicit"
@@ -4691,6 +4799,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.elicit_form",
     "mcp.server.session.ServerSession.elicit_form"
@@ -4731,6 +4840,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.auth.handlers.token.TokenRequest"
    ],
@@ -4770,6 +4880,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.send_progress_notification",
     "mcp.client.ClientSession.send_progress_notification",
@@ -4811,6 +4922,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.send_roots_list_changed",
     "mcp.client.ClientSession.send_roots_list_changed",
@@ -4852,6 +4964,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.set_logging_level",
     "mcp.client.ClientSession.set_logging_level",
@@ -4893,6 +5006,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.subscribe_resource",
     "mcp.client.ClientSession.subscribe_resource",
@@ -4936,6 +5050,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.unsubscribe_resource",
     "mcp.client.ClientSession.unsubscribe_resource",
@@ -4979,6 +5094,11 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": "__init__(self, name: str, *, version: str = '', title: str | None = None, description: str | None = None, instructions: str | None = None, website_url: str | None = None, icons: list[types.Icon] | None = None, cache_hints: Mapping[CacheableMethod, CacheHint] | None = None, lifespan: Callable[[Server[LifespanResultT]], AbstractAsyncContextManager[LifespanResultT]] = lifespan, on_list_tools: Call...",
+   "call_form_only": [
+    "on_set_logging_level",
+    "on_roots_list_changed",
+    "on_progress"
+   ],
    "import_paths": [
     "mcp.server.Server.__init__",
     "mcp.server.lowlevel.Server.__init__",
@@ -5022,6 +5142,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.create_message",
     "mcp.server.session.ServerSession.create_message"
@@ -5062,6 +5183,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.list_roots",
     "mcp.server.session.ServerSession.list_roots"
@@ -5102,6 +5224,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.send_log_message",
     "mcp.server.session.ServerSession.send_log_message"

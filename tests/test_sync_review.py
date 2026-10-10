@@ -144,11 +144,25 @@ def test_a_bullet_whose_api_keeps_a_note_is_counted_as_changed() -> None:
     old = "`Messages.create()` no longer accepts `temperature`; do not pass it. [diff]"
     new = "`Messages.create()` no longer accepts `temperature` or `top_p`; do not pass them. [diff]"
     other = "`toylib.fetch()` now requires `timeout`. [diff]"
-    apis = {new: "Messages.create", other: "toylib.fetch"}
+    apis = {new: ("Messages.create",), other: ("toylib.fetch",)}
     assert _counts([new], [old], apis) == "1 changed"
     assert _counts([new, other], [old], apis) == "1 added, 1 changed"
     assert _counts([other], [old], apis) == "1 added, 1 dropped"
     assert _counts([], [], apis) == "text unchanged"
+    # Two bullets that merged into one (0.6, issue #5): both changed, none dropped; one that
+    # split again: one changed, one added.
+    a = "`tw.A` was removed; do not use it. [diff]"
+    b = "`tw.B` was removed; do not use it. [diff]"
+    both = "`tw.A` and `tw.B` were removed; do not use them. [diff]"
+    assert _counts([both], [a, b], {both: ("tw.A", "tw.B")}) == "2 changed"
+    assert _counts([a, b], [both], {a: ("tw.A",), b: ("tw.B",)}) == "1 added, 1 changed"
+    # An API whose name starts the same is another API.
+    ab = "`tw.AB` was removed; do not use it. [diff]"
+    assert _counts([a], [ab], {a: ("tw.A",)}) == "1 added, 1 dropped"
+    # The one bullet of a package first released after the cutoff stands for its section.
+    whole = "tw first appeared on PyPI on 2026-01-01, after the cutoff; ... [metadata]"
+    assert _counts([whole], [a, b], {whole: ("tw",)}, "tw") == "2 changed"
+    assert _counts([whole], [a, b], {whole: ("tw",)}) == "1 added, 2 dropped"  # another package
 
 
 def test_force_after_a_hand_edit_says_what_it_replaced_once(sc, tmp_path) -> None:

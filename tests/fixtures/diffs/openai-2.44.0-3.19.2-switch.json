@@ -34,6 +34,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "openai",
     "openai.APIConnectionError",

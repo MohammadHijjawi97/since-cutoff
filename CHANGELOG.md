@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+- Notes from the diff say what to use instead in more cases, and point somewhere useful when they
+  cannot (an audit of 36 libraries found 25 of 36 notes ending in "since-cutoff found no
+  replacement in X's deprecation text", several although the text named one; #14). A replacement
+  the library states in a sentence that leads up to it is named, in the library's own words:
+  llama-index-core's "FunctionCallingAgent has been rewritten and replaced by newer agents based
+  on llama_index.core.agent.workflow.FunctionAgent" and huggingface-hub's "['Repository'] is
+  deprecated in favor of the http-based alternatives implemented in [`HfApi`]" (the doc markup
+  dropped) are quoted, tagged `[diff + library]`; "renamed to X" and a sentence-initial "Use X."
+  count as well, and the strongest cue anywhere in the text wins ("see `Helper` for the
+  background. Use `new_func` instead." names `new_func`). "see X" and advice ("Use `strict=False`
+  to keep the previous lenient parsing") are quoted under `[diff]`, not taken as replacements.
+  Where the text names nothing, the note points at the package's changelog with the pinned
+  version ("See https://github.com/encode/httpx/blob/master/CHANGELOG.md (0.28.1).": the
+  Changelog URL in its PyPI metadata, else the releases page of the GitHub repository its Source,
+  Repository or Homepage URL names; never a sponsors or organisation page, pydantic-core's first
+  URL being `github.com/sponsors/samuelcolvin`), and says "found no replacement" only when PyPI
+  lists neither. The cached PyPI metadata now keeps a package's project URLs, summary and home
+  page (`PyPI.project_urls`, `PyPI.summary`); a copy cached before is fetched again once, and
+  read as it is when PyPI cannot be reached.
+- A function deprecated in one call form only (a PEP 702 `@deprecated` on one `@overload`) is
+  named by the parameters that form alone takes (diff schema 21, `call_form_only`): mcp 2.2's
+  note read "`Server` called as `__init__(self, name: str, *, version: str = ..., ...)` is
+  deprecated", a 400-character signature, and labelled every `Server("x")` call "uses this API";
+  it reads "`Server(...)` with `on_set_logging_level=`, `on_roots_list_changed=` or
+  `on_progress=` passed as keyword arguments is deprecated", and a call is in the old form only
+  when it passes one of them. When one of the form's own parameters cannot be passed by keyword
+  (cachetools' positional-only `info`, a `**kwargs`), the note, the terminal heading and `--all`
+  quote the form's signature instead, when it is at most 120 characters, and otherwise say that
+  one call form (an overload) is deprecated.
+- A removed parameter of an SDK method that still takes `extra_body` points there alone (the
+  note named `extra_query` too, which is for query fields, and then said it found no
+  replacement): "If the API still needs them, pass them through its `extra_body` argument."
+- Bullets that say the same of several APIs of one package merge into one in the block (#5):
+  anthropic 1.8's three bullets for `Anthropic.completions`, `anthropic.AI_PROMPT` and
+  `anthropic.HUMAN_PROMPT` are one ("… were removed; do not use them."), and huggingface-hub's
+  `hf_hub_download()` and `snapshot_download()` share one. The terminal, report.md, the MCP tools
+  and the JSON keep one entry per API (report.md's sources name every API of a merged bullet),
+  and the `run --compare` baselines are unchanged. `sync` keeps a `[type-checked]` note next to
+  the merged bullet of the other APIs, and counts bullets that merged as changed, not dropped.
+- A dependency first released after the cutoff that the code imports gets a note, tagged
+  `[metadata]`, which `sync` writes and the scan counts as ready: "httpx2 first appeared on PyPI
+  on 2026-05-11, after the cutoff; the model has no training data on it. The project pins 2.13.1
+  (released 2026-09-23). Summary: The next generation HTTP client. Changelog:
+  https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md". The scan said its whole
+  API was newer than the cutoff, and `sync` wrote nothing.
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.

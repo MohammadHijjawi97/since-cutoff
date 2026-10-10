@@ -559,12 +559,13 @@ def test_a_warning_message_built_before_its_warn_call_is_the_hint(tmp_path) -> N
         "`Client()` no longer accepts `proxies`; do not pass it. Use `proxy` or `mounts` "
         "instead of `proxies`. [diff + library]"
     )
-    # Advice, not a stated replacement: quoted, and the rest said as before.
+    # The replacement stated in a sentence that says more than its name: quoted, and
+    # `WSGITransport` is the replacement.
     assert diff_note([app]).line == (
         '`Client()` no longer accepts `app`; do not pass it. On `app`, hx 1.0 said: "Use the '
-        "explicit style 'transport=WSGITransport(app=...)' instead.\" since-cutoff found no "
-        "replacement in hx's deprecation text. [diff]"
+        "explicit style 'transport=WSGITransport(app=...)' instead.\" [diff + library]"
     )
+    assert diff_note([app]).replacements[0].text == "hx.WSGITransport"
 
 
 FORCE_FILENAME = {

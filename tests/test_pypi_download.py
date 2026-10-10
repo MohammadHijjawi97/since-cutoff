@@ -139,6 +139,8 @@ def test_metadata_is_fetched_once_kept_slim_and_refreshed_after_its_ttl(index, c
         "name": "toy-lib",
         "version": "1.0",
         "summary": "Toy",
+        "project_urls": None,
+        "home_page": None,
     }
     old = time.time() - METADATA_TTL - 60
     os.utime(cache.path("pypi", "toy-lib"), (old, old))
