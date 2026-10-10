@@ -135,7 +135,8 @@ def _unwrapped(text: str) -> str:
 @pytest.mark.parametrize("name", READMES)
 def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     text = _text(name)
-    first = text.split("\n## ", 1)[0]
+    # The first screen: what it is, then the first two sections, Install and Quick start.
+    first = "\n## ".join(text.split("\n## ", 3)[:3])
     [console] = re.findall(r"```console\n(.*?)```", first, re.S)
     lines = console.splitlines()
     assert lines[0] == "$ uvx since-cutoff scan --model anthropic:claude-sonnet-4-5"
@@ -152,7 +153,8 @@ def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     assert _unwrapped(console.rstrip().split("\n\n")[-1]) == ready
     # The block `sync` writes has the same bullet, under the package's line.
     assert f"**anthropic 1.8.0** (0.60.0 at the cutoff)\n- {note}\n" in text
-    # One command that needs no API key.
+    # The install commands, and one command that needs no API key.
+    assert "pipx install since-cutoff" in first and "pip install since-cutoff" in first
     assert "```bash\nuvx since-cutoff scan\n```" in first
 
 

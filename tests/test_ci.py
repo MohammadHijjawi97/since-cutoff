@@ -454,9 +454,9 @@ def test_every_version_field_names_this_release(capsys) -> None:
     found = check.versions()
     # The package, server.json (twice), the Claude Code, Agent Plugins, Codex and Gemini
     # manifests, the skill's metadata.version, both MCP launcher pins, CITATION.cff, the action's
-    # default, the changelog and the README pins; the plugin's SessionStart hook is checked on
-    # its own (see below).
-    assert len(found) == 17
+    # default, the changelog and, in each of the four READMEs, the pre-commit rev and the
+    # action's default; the plugin's SessionStart hook is checked on its own (see below).
+    assert len(found) == 22
     assert dict.fromkeys(found, __version__) == found
     assert check.problems() == []  # including CITATION's date = the changelog's release date
     assert check.main(["check_versions.py", f"v{__version__}"]) == 0
