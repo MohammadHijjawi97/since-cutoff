@@ -732,8 +732,8 @@ def test_a_release_without_modules_is_no_code_or_a_metapackage(index, cache) -> 
         PyPI(cache).source("meta", "1.0")
     assert not isinstance(info.value, NoCodeError)
     assert str(info.value) == (
-        "meta 1.0 is a metapackage without code of its own: it installs a>=1, b, d<2, ...; "
-        "check those packages instead"
+        "meta 1.0 is a metapackage with no API of its own; its parts are dependencies of their "
+        "own, checked like any other: a>=1, b, d<2, ..."
     )
 
 

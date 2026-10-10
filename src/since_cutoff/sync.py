@@ -51,6 +51,7 @@ from since_cutoff.notes import (
     TAG_TYPE_CHECKED,
     Note,
     ParsedBlock,
+    agents_import_tip,
     api_id,
     block_text,
     deps_hash,
@@ -758,6 +759,19 @@ def _model_change(target: TargetFile, detected: DetectedModel | None) -> str | N
         f"miss changes from before {cutoff.isoformat()}: `since-cutoff sync --model "
         f"{detected.spec}` writes the notes for it"
     )
+
+
+def note_import_tip(root: Path, statuses: Sequence[TargetStatus]) -> None:
+    """Say in ``status`` what ``scan`` and ``sync`` say (notes.agents_import_tip) when CLAUDE.md
+    does not import AGENTS.md: that both files have the block and how to keep one copy, or
+    that Claude Code does not read the block in AGENTS.md. Added to the AGENTS.md block's
+    notes, so the text and ``status --json`` both have it (#13)."""
+    tip = agents_import_tip(root, [s.target.path for s in statuses])
+    if tip is None:
+        return
+    for s in statuses:
+        if s.target.path == root / "AGENTS.md" and s.state != NEVER_RUN:
+            s.notes.append(tip)
 
 
 def exit_code(statuses: Sequence[TargetStatus]) -> int:

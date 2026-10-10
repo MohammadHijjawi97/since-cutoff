@@ -261,10 +261,12 @@ def test_cli_unapply(tmp_path, capsys):
 
 
 def test_target_file_choice(tmp_path):
-    # As 0.3 chose the file for a first block (both files: AGENTS.md, until issue #13).
+    # The file for a first block; both files when CLAUDE.md does not import AGENTS.md (#13).
     assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md"]
     (tmp_path / "CLAUDE.md").write_text("x")
     assert [p.name for p in block_targets(tmp_path)] == ["CLAUDE.md"]
     (tmp_path / "AGENTS.md").write_text("y")
+    assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md", "CLAUDE.md"]
+    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n")
     assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md"]
     assert block_targets(tmp_path, "docs/RULES.md") == [tmp_path / "docs/RULES.md"]

@@ -323,12 +323,15 @@ followed by its bullets.
 file:
 
 1. **Which files.** `--target` if given; otherwise every file of AGENTS.md and CLAUDE.md that
-   already has a block; otherwise AGENTS.md, or CLAUDE.md when only that one exists. Claude Code
-   reads CLAUDE.md, and AGENTS.md only when there is no CLAUDE.md or when CLAUDE.md imports it
-   with `@AGENTS.md` ([memory docs](https://code.claude.com/docs/en/memory)); when the notes go to
-   AGENTS.md and CLAUDE.md does not mention `@AGENTS.md`, `scan` and `sync` say so. Choosing the
-   files when both exist is
-   [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+   already has a block; otherwise AGENTS.md, or CLAUDE.md when only that one exists, and both
+   when both exist and CLAUDE.md does not import AGENTS.md
+   ([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)). Claude Code reads
+   CLAUDE.md, and AGENTS.md only when there is no CLAUDE.md or when CLAUDE.md imports it with
+   `@AGENTS.md` outside code ([memory docs](https://code.claude.com/docs/en/memory)); Codex,
+   Cursor and Copilot read AGENTS.md. When CLAUDE.md does not import AGENTS.md, `scan`, `sync`
+   and `status` say how to keep one copy (the import, then
+   `since-cutoff unapply --target CLAUDE.md`), or, for a block in AGENTS.md alone, that Claude
+   Code does not read it.
 2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
    teammates whose agents use other models do not rewrite it back and forth; with no block, the
    model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and

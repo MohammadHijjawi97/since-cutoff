@@ -44,9 +44,9 @@ from since_cutoff.engine import (
     ScanResult,
     Settings,
 )
-from since_cutoff.errors import SinceCutoffError
+from since_cutoff.errors import METAPACKAGE, SinceCutoffError
 from since_cutoff.hosts import DEFAULT_SOURCE, detect_model, not_found_hint
-from since_cutoff.models import ModelRegistry, parse_cutoff
+from since_cutoff.models import FIRST_PARTY, ModelInfo, ModelRegistry, parse_cutoff
 from since_cutoff.notes import (
     IMPORTED_APIS,
     SCOPE_USED,
@@ -79,6 +79,7 @@ from since_cutoff.sync import (
     exit_code,
     hook_line,
     lockfile_changes,
+    note_import_tip,
     out_of_date_text,
     propose,
     read_target,
@@ -570,7 +571,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync.add_argument("-y", "--yes", action="store_true", help="write without asking")
     sync.add_argument(
-        "--json", action="store_true", help="print proposals and write results as JSON"
+        "--json",
+        action="store_true",
+        help="print proposals and write results as JSON (needs --yes, --check or --dry-run)",
     )
     sync.add_argument(
         "--force",
@@ -640,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument(
         "query", nargs="?", default="", help="filter by id substring, e.g. 'sonnet'"
     )
+    models.add_argument(
+        "--makers",
+        action="store_true",
+        help="only the model makers' own listings, not gateways' and resellers'",
+    )
+    models.add_argument("--json", action="store_true", help="print the models as JSON")
     models.add_argument("--offline", action="store_true", help="use the bundled snapshot only")
 
     cache = sub.add_parser("cache", help="show or clear the cache")
@@ -1122,8 +1131,8 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         for line in diff_lines(p):
             out.print(_diff_text(line))
     out.print()
-    # Both AGENTS.md and CLAUDE.md, the notes in AGENTS.md: issue #13 (which files get the
-    # block) is not done yet, so say what Claude Code needs to read them.
+    # Both AGENTS.md and CLAUDE.md, and no `@AGENTS.md` in CLAUDE.md: how to keep one copy, or
+    # what Claude Code needs to read a block in AGENTS.md alone (issue #13).
     tip = agents_import_tip(project.root, [t.path for t in targets])
     if tip and any(p.block for p in proposals):
         out.print(f"[yellow]![/yellow] {escape(tip)}.")
@@ -1210,7 +1219,10 @@ def _sync_scans(
             )
     for scan in scans.values():
         for p in scan.skipped:
-            reporter.warn(f"{p.name} could not be checked ({p.reason}), so it has no notes")
+            if p.reason and METAPACKAGE in p.reason:  # information: its parts are checked
+                reporter.info(p.reason)
+            else:
+                reporter.warn(f"{p.name} could not be checked ({p.reason}), so it has no notes")
     return scans
 
 
@@ -1286,6 +1298,7 @@ def _status(args: argparse.Namespace, out: Console) -> int:
     detected = _detected_offline(project.root)
     deps = current_deps_hash(project)
     statuses = [target_status(project, t, deps=deps, detected=detected) for t in targets]
+    note_import_tip(project.root, statuses)
     code = exit_code(statuses)
     if args.hook:
         line = hook_line(statuses)
@@ -1326,6 +1339,8 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
     registry = ModelRegistry(DiskCache(), offline=args.offline)
     q = args.query.lower()
     models = [m for m in registry.all_models() if q in m.id.lower() and m.knowledge]
+    if args.makers:
+        models = [m for m in models if m.provider in FIRST_PARTY]
     priority = {
         "anthropic": 0,
         "openai": 1,
@@ -1346,6 +1361,10 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
             m.id,
         )
     )
+    if args.json:
+        listed = {"source": registry.source, "models": [_model_json(m) for m in models]}
+        STDOUT.write(json.dumps(listed, indent=2) + "\n")
+        return 0
     if not out.is_terminal:
         for m in models:
             released = m.release_date.isoformat() if m.release_date else ""
@@ -1366,6 +1385,19 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
     out.print(table)
     out.print(f"[dim]{len(models)} models (source: {escape(registry.source)})[/dim]")
     return 0
+
+
+def _model_json(m: ModelInfo) -> dict[str, Any]:
+    """One model of ``models --json``: the cutoff as models.dev writes it and as a date."""
+    return {
+        "provider": m.provider,
+        "id": m.id,
+        "name": m.name,
+        "family": m.family,
+        "training_cutoff": m.knowledge_raw,
+        "cutoff_date": m.knowledge.isoformat() if m.knowledge else None,
+        "released": m.release_date.isoformat() if m.release_date else None,
+    }
 
 
 def _cmd_cache(args: argparse.Namespace) -> int:

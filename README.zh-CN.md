@@ -156,7 +156,7 @@ uvx since-cutoff run
 
 ### 用 sync 和 status 保持说明最新
 
-`since-cutoff sync`（0.4.0 及以后）把 `scan` 显示的说明写进一个带标记的区块：写在 AGENTS.md 中；只有 CLAUDE.md 时写在 CLAUDE.md 中；已经有区块的，就更新那个区块（`--target` 可以指定其他文件）。它会显示一个统一格式的 diff，并询问 `Write this to AGENTS.md? [y/N]`；`--yes` 不询问直接写入；没有可以询问的终端时，它什么也不写。区块以外的文本逐字节保持不变（包括 CRLF 换行），`since-cutoff unapply` 可以移除这个区块。示例项目的区块见[快速开始](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#快速开始)。“Runtime:”这条提示不写进区块：无论如何，建议（“do not pass them”，不要传这些参数）都是一样的。
+`since-cutoff sync`（0.4.0 及以后）把 `scan` 显示的说明写进一个带标记的区块：写在 AGENTS.md 中；只有 CLAUDE.md 时写在 CLAUDE.md 中；CLAUDE.md 没有导入 AGENTS.md 时两个文件都写；已经有区块的，就更新那个区块（`--target` 可以指定其他文件）。它会显示一个统一格式的 diff，并询问 `Write this to AGENTS.md? [y/N]`；`--yes` 不询问直接写入；没有可以询问的终端时，它什么也不写。区块以外的文本逐字节保持不变（包括 CRLF 换行），`since-cutoff unapply` 可以移除这个区块。示例项目的区块见[快速开始](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#快速开始)。“Runtime:”这条提示不写进区块：无论如何，建议（“do not pass them”，不要传这些参数）都是一样的。
 
 修改 lockfile 或代码之后，再运行一次 `sync`。它会为代码新用到的 API 添加说明，重新检查升级过的包；当某个包不再是依赖、不再比截止日期时的版本新，或者你的代码不再用到它有变更的 API 时，删除这个包的说明，并说明原因。它会沿用区块写入时的模型和截止日期（这样，Agent 使用其他模型的同事就不会来回改写它），除非你传入 `--model` 或 `--cutoff`；`--model a,b` 取它们中最早的截止日期。没有任何变化时，它什么也不写，文件的字节和修改时间都保持不变。
 
@@ -173,7 +173,7 @@ uvx since-cutoff run
 
 区块被手动修改过时，`sync` 和 `sync --check` 会显示 diff，不写入任何内容，并以退出码 4 结束；`sync --force` 会替换它。说明所涉及的某个包无法检查时（例如 PyPI 无法访问），`sync` 不写入任何内容，并以退出码 1 结束。
 
-`sync --json` 需要搭配 `--yes`、`--check` 或 `--dry-run`；缺少其中之一时，它不询问，直接以退出码 2 结束。标准输出只包含 JSON（用法错误时为空）；进度、diff 和错误都输出到 stderr。对象包含 `exit_code` 和 `targets`。每个目标文件报告 `target`、`action`、`changed`、`edited`、`written`、`model`、`cutoff`、`scope`、`notes`、`changes`（每个包的 `package`、`done` 和 `state`）、`retest` 和 `diff_lines`。`written` 用来区分已应用的提议、预览和被拒绝的手动修改。通常的退出码和 `--force` 的行为仍然适用。
+`sync --json` 需要搭配 `--yes`、`--check` 或 `--dry-run`；缺少其中之一时，它不询问，直接以退出码 2 结束。标准输出只包含 JSON；sync 失败时标准输出为空（用法错误，退出码 2；或其他错误，例如无法访问 PyPI，退出码 1）；进度、diff 和错误都输出到 stderr。对象包含 `exit_code` 和 `targets`。每个目标文件报告 `target`、`action`、`changed`、`edited`、`written`、`model`、`cutoff`、`scope`、`notes`、`changes`（每个包的 `package`、`done` 和 `state`）、`retest` 和 `diff_lines`。`written` 用来区分已应用的提议、预览和被拒绝的手动修改。通常的退出码和 `--force` 的行为仍然适用。
 
 `since-cutoff status` 不联网，也不读取代码：它列出每个包的说明所对应的版本和 lockfile 中的版本、其他依赖是否有变化，以及你的编程 Agent 所配置的模型的训练截止日期是否早于说明所用的截止日期（并给出相应的 `sync --model` 命令）。`status --json` 供脚本使用。`status --hook` 只在说明过时时输出一行，并且总是以 0 退出，例如：
 
@@ -187,7 +187,7 @@ since-cutoff: the library notes in AGENTS.md are out of date: anthropic 1.8.0 in
 - `sync --suggestions` 会加上锁定版本中那些只是与被移除内容相似的名称，并标为 `[not confirmed]`。区块会记录这两个选择，之后的 sync 会沿用它们。
 - `since-cutoff run --apply` 写入的说明带有 `[type-checked]` 标签。只要它所在的包版本不变、你的代码仍在用那个 API，`sync` 就会保留它，代替同一 API 由 diff 得出的说明。
 
-Claude Code 会读取 CLAUDE.md；只有在没有 CLAUDE.md，或者 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时，才会读取 AGENTS.md（[记忆文档](https://code.claude.com/docs/en/memory)，英文）。当说明写进 AGENTS.md 而 CLAUDE.md 没有导入它时，`scan` 和 `sync` 会给出提示。同时写入两个文件见 [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)。
+Claude Code 会读取 CLAUDE.md；只有在没有 CLAUDE.md，或者 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时，才会读取 AGENTS.md（[记忆文档](https://code.claude.com/docs/en/memory)，英文）；Codex、Cursor 和 Copilot 读取 AGENTS.md。两个文件都在、还没有说明块时，如果 CLAUDE.md 导入了 AGENTS.md，说明只写进 AGENTS.md；没有导入时，两个文件都写（[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)），`scan`、`sync` 和 `status` 会说明怎样只保留一份：在 CLAUDE.md 中加一行 `@AGENTS.md`，再运行 `since-cutoff unapply --target CLAUDE.md`。已经只在 AGENTS.md 中的说明块会留在那里；CLAUDE.md 没有导入它时，它们会给出提示。
 
 ### 测量你的模型
 
@@ -253,7 +253,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 如果没有任何设置指定模型，它会使用 Claude Code 的默认模型，并明确说明这一点。它只读取这些文件中的模型字段；遇到无法识别的模型名称时会停止运行，并在提示中指出是哪个设置。Agent 通过其他服务（GitHub Copilot、Amazon Bedrock、Vertex AI）使用的模型，会按开发它的厂商来命名，因此 `run` 调用的是该厂商的 API（`openai:` 需要 `OPENAI_API_KEY`）。`sync` 会沿用区块写入时的模型，不管你的 Agent 现在用的是哪个。
 
-训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
+训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期（`--makers` 不列出网关和转售商，`--json` 供脚本使用）。网关或转售商收录的模型采用其制造商条目的截止日期；制造商的条目还没有截止日期时，采用任何有截止日期的条目。`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
 
 ## 常见问题
 
@@ -263,7 +263,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 **为什么有些说明写着“since-cutoff found no replacement”？** 只有当库自己的弃用文本写明了替代写法、且这个名称存在于你锁定的版本中时，说明才会给出替代写法（标签 `[diff + library]`）。否则，说明只陈述变更，并指出没有找到替代写法：猜出来的替代写法会被 Agent 照着用，比不给更糟。锁定版本中那些只是名字相似的内容，会在终端中以“not confirmed as replacements”显示；`sync --suggestions` 会把它们写进说明，标为 `[not confirmed]`。当锁定版本的方法仍带有 `extra_body` 或 `extra_query` 参数时（例如 anthropic 的 `Messages.create()`），说明会指出这一点，因为从签名中移除的请求参数可能仍被 API 接受。
 
-**写进 AGENTS.md 还是 CLAUDE.md？** `sync` 写进 AGENTS.md；只有 CLAUDE.md 时写进 CLAUDE.md；两者中已经有区块的，就写进那个（`--target` 可以指定任意文件）。Claude Code 读取 CLAUDE.md，只有当 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时才会读取 AGENTS.md；当说明写进了 AGENTS.md 而 CLAUDE.md 没有导入它时，`scan` 和 `sync` 会提示。要只保留一份，就在 CLAUDE.md 中加上 `@AGENTS.md`。要让两个文件都有区块，用 `sync --target CLAUDE.md --model <同一个模型>` 写一次第二个文件；此后 `sync` 会同时更新两个，`status` 也会同时报告两个。默认同时写入两个文件见 [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)。
+**写进 AGENTS.md 还是 CLAUDE.md？** `sync` 写进 AGENTS.md；只有 CLAUDE.md 时写进 CLAUDE.md；CLAUDE.md 没有导入 AGENTS.md 时两个文件都写（[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)）；两者中已经有区块的，就写进那个（`--target` 可以指定任意文件）。Claude Code 读取 CLAUDE.md，只有当 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时才会读取 AGENTS.md；Codex、Cursor 和 Copilot 读取 AGENTS.md。要只保留一份，就在 CLAUDE.md 中加上 `@AGENTS.md`，再运行 `since-cutoff unapply --target CLAUDE.md`；两个文件都有区块时，`scan`、`sync` 和 `status` 会提示这一点，只在 AGENTS.md 中的区块没有被导入时也会提示。此后 `sync` 会更新每个有区块的文件，`status` 也会逐个报告。
 
 **这些说明要花多少 token？** Agent 每一轮都会读取这个区块。对示例项目来说，区块约 420 个 token，其中两条说明约 160 个；其余是开头说明，写明模型和截止日期并解释各个标签（按每 4 个字符一个 token 计算，与 since-cutoff 自己的算法一致）。`sync` 只为你的代码用到的有变更 API 写说明（`--scope imported` 为每个导入的包最多再加 5 条），模型写的说明最多 60 个英文单词。在基准测试中，区块在 285 到 505 个 token 之间，带说明的会话消耗的总 token 数是不带说明的 0.73 倍。`run` 会报告每个区块的 token 数。
 

@@ -164,6 +164,51 @@ def test_models_prints_one_line_per_model_for_scripts(models_cache, capsys) -> N
     ]
 
 
+def test_models_json_lists_the_same_models_in_the_same_order(
+    models_cache, capsys, monkeypatch
+) -> None:
+    """Issue #25: for scripts, the cutoff as models.dev writes it and as the date since-cutoff
+    uses, the name, the family and where the data came from; the same in a terminal."""
+    assert cli.main(["models", "--json", "--offline"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["source"] == "models.dev (cached)"
+    assert [(m["provider"], m["id"]) for m in listed["models"]] == [
+        ("anthropic", "claude-old"),
+        ("anthropic", "claude-new"),
+        ("openai", "gpt-x"),
+        ("llama", "llama-3.3-70b-versatile"),
+        ("groq", "llama-3.3-70b-versatile"),
+        ("zeta", "z-1"),
+    ]
+    assert listed["models"][0] == {
+        "provider": "anthropic",
+        "id": "claude-old",
+        "name": "claude-old",
+        "family": None,
+        "training_cutoff": "2024-04",
+        "cutoff_date": "2024-04-30",
+        "released": "2024-06-20",
+    }
+    assert cli.main(["models", "GPT", "--json", "--offline"]) == 0
+    assert [m["id"] for m in json.loads(capsys.readouterr().out)["models"]] == ["gpt-x"]
+    terminal = Console(file=io.StringIO(), force_terminal=True, color_system=None, width=100)
+    monkeypatch.setattr(cli, "_console", lambda output: terminal)
+    assert cli.main(["models", "--json", "--offline"]) == 0
+    assert json.loads(capsys.readouterr().out) == listed
+
+
+def test_models_makers_leaves_out_gateways_and_resellers(models_cache, capsys) -> None:
+    assert cli.main(["models", "--makers", "--offline"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "anthropic\tclaude-old\t2024-04\t2024-06-20",
+        "anthropic\tclaude-new\t2025-07-31\t2025-09-29",
+        "openai\tgpt-x\t2024-10\t2025-01-01",
+        "llama\tllama-3.3-70b-versatile\t2024-12\t2024-12-06",
+    ]
+    assert cli.main(["models", "llama", "--makers", "--json", "--offline"]) == 0
+    assert [m["provider"] for m in json.loads(capsys.readouterr().out)["models"]] == ["llama"]
+
+
 def test_models_prints_a_table_in_a_terminal(models_cache, monkeypatch) -> None:
     screen = io.StringIO()
     terminal = Console(file=screen, force_terminal=True, color_system=None, width=100)

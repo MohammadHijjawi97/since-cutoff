@@ -39,9 +39,10 @@ PROVIDER_ALIASES = {
     "zhipu": "zai",
     "glm": "zai",
     "llama": "llama",
-    "meta": "llama",
 }
-# The model makers themselves: preferred over resellers that list the same model id.
+# The model makers themselves: preferred over resellers that list the same model id. (models.dev
+# has a provider "meta" of its own, Meta's Muse Spark models, so "meta" is not an alias of
+# "llama", Meta's Llama API.)
 FIRST_PARTY = frozenset(PROVIDER_ALIASES.values())
 
 
@@ -178,25 +179,45 @@ class ModelRegistry:
         return out
 
     def lookup(self, model_id: str, provider: str | None = None) -> ModelInfo | None:
-        """Find a model by id, preferring the given provider, then any provider with a cutoff."""
+        """Find a model by id: the first of its spellings (:func:`normalize_model_id`, most
+        specific first) that a listing with a cutoff has; among those listings the given
+        provider's, then the model maker's own (:data:`FIRST_PARTY`), then any. The maker's own
+        listing of a new model often has no cutoff yet while a reseller's does, and a dated
+        snapshot (``claude-sonnet-4-20250514``) may have none while the model (``claude-sonnet-4``)
+        has: a listing without a cutoff is the answer only when none has one.
+
+        Listings are matched by their id as written, then by their *bare* id
+        (:func:`bare_model_id`): Amazon Bedrock's ``qwen.qwen3-coder-480b-a35b-v1:0``,
+        Cloudflare's ``@cf/meta/llama-3.2-3b-instruct`` or OpenRouter's
+        ``aion-labs/aion-rp-llama-3.1-8b`` for a model the maker does not list.
+        """
         pref = PROVIDER_ALIASES.get(provider or "", provider)
         if "/" in model_id and not pref:
             pref = PROVIDER_ALIASES.get(model_id.split("/", 1)[0], model_id.split("/", 1)[0])
         models = self.all_models()
-        for cand in normalize_model_id(model_id):
-            hits = [m for m in models if m.id.lower() == cand]
-            if not hits:
-                continue
-            hits.sort(
-                key=lambda m: (
-                    m.provider != pref,
-                    m.knowledge is None,
-                    m.provider not in FIRST_PARTY,
-                    m.provider,
+        candidates = normalize_model_id(model_id)
+        first: ModelInfo | None = None
+        for bare in (False, True):
+            by_id: dict[str, list[ModelInfo]] = {}
+            for m in models:
+                by_id.setdefault(bare_model_id(m.id) if bare else m.id.lower(), []).append(m)
+            for cand in candidates:
+                hits = by_id.get(cand)
+                if not hits:
+                    continue
+                best = min(
+                    hits,
+                    key=lambda m: (
+                        m.knowledge is None,
+                        m.provider != pref,
+                        m.provider not in FIRST_PARTY,
+                        m.provider,
+                    ),
                 )
-            )
-            return hits[0]
-        return None
+                if best.knowledge is not None:
+                    return best
+                first = first or best
+        return first
 
     def latest_in_family(self, provider: str, family_word: str, today: date) -> ModelInfo | None:
         """Resolve aliases such as ``sonnet`` to the newest released model of that family."""

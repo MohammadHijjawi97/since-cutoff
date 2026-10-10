@@ -406,6 +406,25 @@ def test_one_unchecked_dependency_is_not_an_example(tmp_path, cache, fake_pypi) 
     assert "1 of 1 dependency could not be checked: installed from git, not from PyPI" in lines
 
 
+def test_a_metapackage_is_information_not_a_dependency_that_could_not_be_checked(
+    tmp_path, cache, fake_pypi
+) -> None:
+    """``llama-index 0.14.25 is a metapackage ...`` read as an error after "1 of 3 dependencies
+    could not be checked": its parts are dependencies of their own, checked like any other."""
+    from since_cutoff.report import scan_lines
+
+    meta = (
+        "llama-index 0.14.25 is a metapackage with no API of its own; its parts are dependencies "
+        "of their own, checked like any other: llama-index-core<0.15,>=0.14.25"
+    )
+    scan = scan_app(make_app(tmp_path), cache, fake_pypi, date(2025, 7, 31))
+    scan.packages[0].status, scan.packages[0].reason = SKIPPED, meta
+    for lines in (headline(scan, None), scan_lines(scan, width=200)):
+        assert meta in [t.plain for t in lines]
+        assert [t.style for t in lines if t.plain == meta] == ["dim"]
+        assert not any("could not be checked" in t.plain for t in lines)
+
+
 def test_a_git_reference_is_named_in_the_skip_reason(tmp_path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "app"\nversion = "0"\ndependencies = [\n'
@@ -570,6 +589,7 @@ def test_the_download_limit_is_shown_as_given(tmp_path, limit, shown) -> None:
 
 
 def test_a_metapackage_says_where_its_code_is(tmp_path, monkeypatch) -> None:
+    """Information, not a failure: the report shows it after "could not be checked"."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(
@@ -584,8 +604,8 @@ def test_a_metapackage_says_where_its_code_is(tmp_path, monkeypatch) -> None:
     with pytest.raises(PackageIndexError) as info:
         _OneFile(DiskCache(tmp_path), "2.129.0", wheel).source("docling", "2.129.0")
     assert str(info.value) == (
-        "docling 2.129.0 is a metapackage without code of its own: it installs "
-        "docling-slim==2.129.0; check that package instead"
+        "docling 2.129.0 is a metapackage with no API of its own; its part is a dependency of "
+        "its own, checked like any other: docling-slim==2.129.0"
     )
 
 

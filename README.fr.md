@@ -257,8 +257,9 @@ de la note, les versions auxquelles elle s'applique et ce qui a été vérifié)
 ### Tenir les notes à jour avec sync et status
 
 `since-cutoff sync` (depuis la 0.4.0) écrit les notes qu'affiche `scan` dans un bloc balisé :
-dans AGENTS.md, ou dans CLAUDE.md si seul ce fichier existe, et, là où un bloc existe déjà, dans
-celui-ci (`--target` désigne un autre fichier). Il affiche un diff unifié et demande
+dans AGENTS.md, ou dans CLAUDE.md si seul ce fichier existe, ou dans les deux quand CLAUDE.md
+n'importe pas AGENTS.md, et, là où un bloc existe déjà, dans celui-ci (`--target` désigne un
+autre fichier). Il affiche un diff unifié et demande
 `Write this to AGENTS.md? [y/N]` ; `--yes` écrit sans demander, et s'il n'y a pas de terminal où
 poser la question, il n'écrit rien. Le texte hors du bloc garde ses octets, fins de ligne CRLF
 comprises, et `since-cutoff unapply` retire le bloc. Le bloc du projet d'exemple est dans
@@ -291,8 +292,9 @@ sortent avec le code 4 ; `sync --force` le remplace. Si un paquet dont parlent 
 pas être vérifié (PyPI injoignable), `sync` n'écrit rien et sort avec le code 1.
 
 `sync --json` exige `--yes`, `--check` ou `--dry-run` ; sans l'un d'eux, il sort avec le code 2
-sans rien demander. La sortie standard ne contient que du JSON (et reste vide pour les erreurs
-d'usage) ; la progression, les diffs et les erreurs vont sur stderr. L'objet contient `exit_code`
+sans rien demander. La sortie standard ne contient que du JSON, et reste vide quand sync échoue
+(une erreur d'usage, code 2, ou une erreur comme PyPI injoignable, code 1) ; la progression,
+les diffs et les erreurs vont sur stderr. L'objet contient `exit_code`
 et `targets`. Chaque cible indique `target`, `action`, `changed`, `edited`, `written`, `model`,
 `cutoff`, `scope`, `notes`, `changes` (`package`, `done` et `state` de chaque paquet), `retest` et
 `diff_lines`. `written` distingue une proposition appliquée d'un aperçu ou d'une modification à la
@@ -323,10 +325,13 @@ Autres options :
 
 Claude Code lit CLAUDE.md, et ne lit AGENTS.md que s'il n'y a pas de CLAUDE.md ou si CLAUDE.md
 l'importe avec une ligne `@AGENTS.md`
-([documentation sur la mémoire](https://code.claude.com/docs/en/memory), en anglais). Quand les
-notes vont dans AGENTS.md et que CLAUDE.md ne l'importe pas, `scan` et `sync` le signalent.
-L'écriture dans les deux fichiers est l'objet de
-[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+([documentation sur la mémoire](https://code.claude.com/docs/en/memory), en anglais) ; Codex,
+Cursor et Copilot lisent AGENTS.md. Avec les deux fichiers et pas encore de bloc, les notes vont
+dans AGENTS.md seul quand CLAUDE.md l'importe, et dans les deux fichiers sinon
+([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)) ; `scan`, `sync` et
+`status` disent alors comment n'en garder qu'une copie : ajoutez la ligne `@AGENTS.md` à
+CLAUDE.md et lancez `since-cutoff unapply --target CLAUDE.md`. Un bloc déjà dans AGENTS.md seul
+y reste, et ils le signalent quand CLAUDE.md ne l'importe pas.
 
 ### Mesurer votre modèle
 
@@ -433,7 +438,10 @@ conserve le modèle pour lequel un bloc a été écrit, quel que soit celui qu'u
 agent.
 
 Les dates limites d'entraînement proviennent de [models.dev](https://models.dev) (un instantané
-est inclus pour une utilisation hors ligne). `since-cutoff models sonnet` les affiche ;
+est inclus pour une utilisation hors ligne). `since-cutoff models sonnet` les affiche
+(`--makers` laisse de côté les passerelles et les revendeurs, `--json` sert aux scripts). Un
+modèle qu'une passerelle ou un revendeur répertorie prend la date limite de l'entrée de son
+fabricant, ou de n'importe quelle entrée qui en a une quand celle du fabricant n'en a pas encore ;
 `--cutoff 2025-07` remplace la date, et `since-cutoff scan --cutoff 2025-07` sans `--model`
 analyse par rapport à cette seule date. `scan` et `sync` n'ont besoin que de la date limite : ils
 acceptent donc aussi un identifiant de modèle sans fournisseur (`claude-haiku-4-5`, `sonnet`) ou avec n'importe
@@ -477,14 +485,15 @@ Quand la méthode épinglée a encore un argument `extra_body` ou `extra_query`,
 signature peut encore être accepté par l'API.
 
 **AGENTS.md ou CLAUDE.md ?** `sync` écrit dans AGENTS.md ; dans CLAUDE.md si seul ce fichier
-existe ; et dans celui des deux qui a déjà un bloc (`--target` désigne n'importe quel fichier).
-Claude Code lit CLAUDE.md, et AGENTS.md seulement si CLAUDE.md l'importe avec une ligne
-`@AGENTS.md` ; quand les notes vont dans AGENTS.md et que CLAUDE.md ne l'importe pas, `scan` et
-`sync` le signalent. Pour garder une seule copie, ajoutez `@AGENTS.md` à CLAUDE.md. Pour avoir un
-bloc dans les deux fichiers, écrivez le second une fois avec
-`sync --target CLAUDE.md --model <le même modèle>` ; ensuite `sync` met les deux à jour et
-`status` rend compte des deux. L'écriture dans les deux par défaut fait l'objet de
-[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+existe ; dans les deux quand CLAUDE.md n'importe pas AGENTS.md
+([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)) ; et dans celui des deux
+qui a déjà un bloc (`--target` désigne n'importe quel fichier). Claude Code lit CLAUDE.md, et
+AGENTS.md seulement si CLAUDE.md l'importe avec une ligne `@AGENTS.md` ; Codex, Cursor et
+Copilot lisent AGENTS.md. Pour garder une seule copie, ajoutez `@AGENTS.md` à CLAUDE.md et
+lancez `since-cutoff unapply --target CLAUDE.md` ; `scan`, `sync` et `status` le signalent tant
+que les deux fichiers ont le bloc, et signalent quand un bloc dans AGENTS.md seul n'est pas
+importé. Ensuite `sync` met à jour chaque fichier qui a un bloc, et `status` rend compte de
+chacun.
 
 **Combien coûtent les notes en tokens ?** L'agent lit le bloc à chaque tour. Pour le projet
 d'exemple, il fait environ 420 tokens, dont environ 160 pour les deux notes ; le reste est

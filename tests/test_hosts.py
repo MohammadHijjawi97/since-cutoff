@@ -410,6 +410,8 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("opencode", "grok-code", "xai:grok-code"),
         ("mistral", "devstral-medium-2507", "mistral:devstral-medium-2507"),
         ("groq", "llama-3.3-70b-versatile", "llama:llama-3.3-70b-versatile"),
+        # No maker in the id: the provider's own listing, which the registry knows.
+        ("amazon-bedrock", "amazon.nova-pro-v1:0", "amazon-bedrock:amazon.nova-pro-v1:0"),
         (None, "sonnet", "anthropic:sonnet"),
         (None, "my-local-model", "my-local-model"),
     ],
