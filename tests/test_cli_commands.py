@@ -162,12 +162,16 @@ def test_cache_info_lists_each_kind_with_its_size(tmp_path, monkeypatch, capsys)
     assert rows["answers"][-7:] == ["model", "output:", "costs", "money", "to", "make", "again"]
     assert rows["total"][1:6] == ["1.5", "MB", "3", "4", date.today().isoformat()]
     assert lines[-1].startswith("sources cap: 2,048 MB (SINCE_CUTOFF_CACHE_MAX_MB)")
-    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "0")
+    for off in ("0", "-5"):  # the value as it is set, not a 0 nobody wrote
+        monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", off)
+        assert cli.main(["cache", "info"]) == 0
+        assert (
+            capsys.readouterr().out.splitlines()[-1]
+            == f"sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB={off})"
+        )
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "inf")  # was an OverflowError
     assert cli.main(["cache", "info"]) == 0
-    assert (
-        capsys.readouterr().out.splitlines()[-1]
-        == "sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB=0)"
-    )
+    assert capsys.readouterr().out.splitlines()[-1].startswith("sources cap: 2,048 MB")
 
 
 def cli_cache_kinds() -> list[str]:

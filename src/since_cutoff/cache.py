@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -54,6 +55,9 @@ MB = 1024 * 1024
 # Its mtime is when the tree was last used, and ``bytes`` is the size of the tree.
 SOURCES_MARKER = ".since-cutoff.json"
 DEFAULT_MAX_SOURCES_MB = 2048
+# A source tree being deleted is first renamed to ``<key>.tmp-evicted-<random>``. One left behind
+# (the process stopped mid-delete) is no tree: the next trim deletes it.
+EVICTED = ".tmp-evicted"
 # A tree used this recently is never evicted: another since-cutoff process (the MCP server, a
 # scan in another terminal) may still be reading it.
 SOURCES_GRACE = 3600.0
@@ -74,12 +78,15 @@ def default_cache_dir() -> Path:
 def max_sources_bytes(env: Any = None) -> int | None:
     """The cap on the extracted sources, in bytes, from ``SINCE_CUTOFF_CACHE_MAX_MB``
     (default :data:`DEFAULT_MAX_SOURCES_MB`); None when it is 0 or less: no cap. A value that
-    is not a number is reported and the default used."""
+    is not a number (``inf`` and ``nan`` included, which ``float`` accepts) is reported and the
+    default used."""
     raw = (os.environ if env is None else env).get("SINCE_CUTOFF_CACHE_MAX_MB", "")
     if not raw.strip():
         return DEFAULT_MAX_SOURCES_MB * MB
     try:
         megabytes = float(raw)
+        if not math.isfinite(megabytes):
+            raise ValueError(raw)
     except ValueError:
         import logging
 
@@ -89,7 +96,7 @@ def max_sources_bytes(env: Any = None) -> int | None:
             DEFAULT_MAX_SOURCES_MB,
         )
         return DEFAULT_MAX_SOURCES_MB * MB
-    if megabytes <= 0 or megabytes != megabytes:  # 0 switches the cap off; NaN is no number
+    if megabytes <= 0:  # 0 switches the cap off
         return None
     return int(megabytes * MB)
 
@@ -182,8 +189,10 @@ def tree_size(path: Path) -> tuple[int, int]:
 @dataclass(frozen=True)
 class NamespaceStats:
     """One namespace of the cache, for ``cache info``: how many entries (its files or
-    folders), how many files in all, their size, and when its least recently used entry was
-    last used (None when it is empty)."""
+    folders), how many files in all, their size, and ``oldest``, the earliest
+    :func:`last_used` of its entries (None when it is empty). Only the source trees record
+    their use; for every other kind it is when its oldest entry was written. What an eviction
+    left half deleted (:data:`EVICTED`) counts in the size but is no entry."""
 
     name: str
     entries: int
@@ -208,10 +217,12 @@ def stats(root: Path, namespaces: Iterable[str] = NAMESPACES) -> list[NamespaceS
         except OSError:
             children = []
         for child in children:
-            entries += 1
             n, b = tree_size(Path(child.path))
             files += n
             size += b
+            if EVICTED in child.name:
+                continue
+            entries += 1
             used = last_used(Path(child.path))
             if used is not None and (oldest is None or used < oldest):
                 oldest = used
@@ -221,7 +232,8 @@ def stats(root: Path, namespaces: Iterable[str] = NAMESPACES) -> list[NamespaceS
 
 def last_used(entry: Path) -> float | None:
     """When a cache entry was last used: a source tree's marker mtime (touched at each use),
-    else the entry's own mtime."""
+    else the entry's own mtime, which is when it was written (reading a JSON entry does not
+    touch it)."""
     for candidate in (entry / SOURCES_MARKER, entry):
         try:
             return candidate.stat().st_mtime
@@ -267,6 +279,8 @@ def source_entries(root: Path) -> list[SourceEntry]:
     except OSError:
         return entries
     for child in children:
+        if EVICTED in child.name:
+            continue  # being deleted
         marker = Path(child.path) / SOURCES_MARKER
         try:
             stat = marker.stat()
@@ -314,16 +328,28 @@ def sources_over_cap(
 
 
 def evict_tree(path: Path) -> bool:
-    """Remove a source tree: renamed away first, so that it disappears at once rather than
-    file by file, then deleted. False when it could not be renamed (on Windows, a tree a file
-    of which is open: it is in use, and stays)."""
-    gone = path.with_name(f"{path.name}.tmp-evicted")
+    """Remove a source tree: renamed away first, to a name of its own (one an earlier eviction
+    left behind is not in the way), so that it disappears at once rather than file by file,
+    then deleted. False when it could not be renamed (on Windows, a tree a file of which is
+    open: it is in use, and stays)."""
+    gone = path.with_name(f"{path.name}{EVICTED}-{os.urandom(4).hex()}")
     try:
         path.rename(gone)
     except OSError:
         return False
     shutil.rmtree(gone, ignore_errors=True)
     return True
+
+
+def remove_evicted_leftovers(root: Path) -> None:
+    """Delete what an interrupted :func:`evict_tree` left under ``root/sources``: trees
+    already renamed away, which nothing reads."""
+    try:
+        leftovers = [c.path for c in os.scandir(root / "sources") if EVICTED in c.name]
+    except OSError:
+        return
+    for path in leftovers:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def touch(path: Path) -> None:

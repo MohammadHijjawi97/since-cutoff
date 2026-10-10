@@ -2,7 +2,7 @@
 name: since-cutoff
 description: Find which dependency APIs this project's Python code uses changed after the model's training cutoff (no model calls), write short AGENTS.md or CLAUDE.md notes from the API diff, each with its source, and keep them in step with the lockfile; optionally measure which of the changes the model gets wrong. Use when the user asks whether the model knows their library versions, when code keeps failing on renamed or removed library APIs, or after upgrading dependencies. Trigger with requests such as "does the model know my openai version", "scan my dependencies for API changes" or "check whether the library notes are up to date".
 license: MIT
-compatibility: Needs since-cutoff on PATH, or uv or pipx to run it, and network access to PyPI. The run command also needs model access (the claude CLI or a provider API key) and the basedpyright type checker (pip install since-cutoff[run], or uvx --with basedpyright since-cutoff run); scan, sync and status make no model calls, and status works offline.
+compatibility: Needs since-cutoff on PATH, or uv or pipx to run it, and network access to PyPI. The run command also needs model access (the claude CLI or a provider API key) and the basedpyright type checker (pip install "since-cutoff[run]", or uvx --with basedpyright since-cutoff run); scan, sync and status make no model calls, and status works offline.
 allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff sync:*), Bash(since-cutoff status:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(since-cutoff unapply:*), Bash(uvx since-cutoff:*), Bash(uvx --with basedpyright since-cutoff:*), Bash(pipx run since-cutoff:*), Read
 metadata:
   author: Mohammad Hijjawi

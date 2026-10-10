@@ -1438,8 +1438,9 @@ def _cmd_cache(args: argparse.Namespace) -> int:
 
 
 def cache_info_lines(root: Path, kinds: list[NamespaceStats], cap: int | None) -> list[str]:
-    """``cache info``: the path, one row per kind (size, entries, files, when its least
-    recently used entry was last used), the total, and the cap on the sources."""
+    """``cache info``: the path, one row per kind (size, entries, files, and the oldest: when
+    its oldest entry was written, or for the sources, when the least recently used tree was
+    last used), the total, and the cap on the sources."""
     from datetime import date
 
     from since_cutoff.cache import MB
@@ -1471,7 +1472,8 @@ def cache_info_lines(root: Path, kinds: list[NamespaceStats], cap: int | None) -
         cells += [files.rjust(widths[3]), oldest.ljust(widths[4])]
         lines.append(("  ".join(cells) + "  " + note).rstrip())
     if cap is None:
-        lines.append("sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB=0)")
+        setting = os.environ.get("SINCE_CUTOFF_CACHE_MAX_MB", "").strip()
+        lines.append(f"sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB={setting})")
     else:
         lines.append(
             f"sources cap: {cap // MB:,} MB (SINCE_CUTOFF_CACHE_MAX_MB); over it, the least "

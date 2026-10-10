@@ -438,7 +438,7 @@ starts (0.4.0 and later).
    project files: Claude Code is run with `--tools ""`, no MCP servers, no slash commands and an
    empty working directory.
 4. **Scoring.** The code is type-checked with
-   [basedpyright](https://github.com/DetachHead/basedpyright) (the `since-cutoff[run]`
+   [basedpyright](https://github.com/DetachHead/basedpyright) (the `"since-cutoff[run]"`
    extra) twice: against the locked version
    and against the cutoff version, each in an isolated environment that contains that package
    version and its own runtime dependencies, nothing else. Only diagnostics that involve the
@@ -647,7 +647,9 @@ meaning the same as `checks.example_type_checks`).
   cost money. The extracted package sources are capped at `SINCE_CUTOFF_CACHE_MAX_MB` (2048 by
   default; 0 for no cap): after a new version is extracted, the least recently used trees are
   removed until the sources fit, never one the running scan uses or one used in the last hour,
-  which another process may be reading.
+  which another process may be reading; the first removal in a run prints one line saying how
+  many trees and MB went. In `cache info`, "oldest" is when a kind's oldest entry was written;
+  only the sources record their use, so for them it is the least recently used tree's last use.
 
 ## Safety
 

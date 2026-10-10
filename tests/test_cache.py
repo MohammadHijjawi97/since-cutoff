@@ -135,10 +135,13 @@ def test_the_sources_cap_comes_from_the_environment(monkeypatch, caplog) -> None
     for off in ("0", "-5", " "):
         monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", off)
         assert max_sources_bytes() == (None if off.strip() else 2048 * MB)
-    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "lots")
-    with caplog.at_level(logging.WARNING, logger="since_cutoff.cache"):
-        assert max_sources_bytes() == 2048 * MB
-    assert "SINCE_CUTOFF_CACHE_MAX_MB='lots' is not a number" in caplog.text
+    # float() takes infinities and NaN; none of them is a size (int(inf) would raise).
+    for nonsense in ("lots", "inf", "-inf", "nan", "1e400", "Infinity"):
+        monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", nonsense)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="since_cutoff.cache"):
+            assert max_sources_bytes() == 2048 * MB
+        assert f"SINCE_CUTOFF_CACHE_MAX_MB={nonsense!r} is not a number" in caplog.text
 
 
 def make_tree(root: Path, key: str, *, size: int, used_ago: float, record: bool = True) -> Path:
@@ -208,3 +211,26 @@ def test_evict_tree_removes_the_tree_and_leaves_nothing_behind(tmp_path) -> None
     assert evict_tree(tree) is True
     assert list((tmp_path / "sources").iterdir()) == []
     assert evict_tree(tree) is False  # already gone
+
+
+@pytest.mark.parametrize("leftover", ["a-1.0.tmp-evicted", "a-1.0.tmp-evicted-0123abcd"])
+def test_what_an_interrupted_eviction_left_is_no_tree_and_in_nobodys_way(
+    tmp_path, leftover
+) -> None:
+    # The process stopped after renaming a-1.0 away and before deleting it (0.6.0 named every
+    # one ``<key>.tmp-evicted``); a-1.0 was then extracted again.
+    gone = make_tree(tmp_path, leftover, size=100, used_ago=3 * 86400)
+    tree = make_tree(tmp_path, "a-1.0", size=10, used_ago=86400)
+    assert [e.key for e in source_entries(tmp_path)] == ["a-1.0"]
+    sources = {k.name: k for k in stats(tmp_path, ["sources"])}["sources"]
+    assert (sources.entries, sources.files, sources.bytes) == (1, 4, gone_size(gone, tree))
+    assert sources.oldest == pytest.approx(time.time() - 86400, abs=60)
+    assert evict_tree(tree) is True  # the leftover's name is not in the way
+    assert [p.name for p in (tmp_path / "sources").iterdir()] == [leftover]
+    cache_module.remove_evicted_leftovers(tmp_path)
+    assert list((tmp_path / "sources").iterdir()) == []
+    cache_module.remove_evicted_leftovers(tmp_path / "none")  # no cache: nothing to do
+
+
+def gone_size(*trees: Path) -> int:
+    return sum(p.stat().st_size for t in trees for p in t.rglob("*") if p.is_file())

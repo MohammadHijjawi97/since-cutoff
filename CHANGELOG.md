@@ -17,15 +17,19 @@
   at every session start, no longer loads rich or the reports either; what it still pays for
   is the project's imports, which the hash of the dependencies is made of.
 - `since-cutoff cache info` prints where the cache is and, for each kind (PyPI metadata,
-  sources, diffs, model output, ...), its size, its entries and files, and when its least
-  recently used entry was last used. `cache clear --sources`, `--diffs` and `--pypi` clear
+  sources, diffs, model output, ...), its size, its entries and files, and the oldest: when
+  its oldest entry was written, or for the sources, which record their use, when the least
+  recently used tree was last used. `cache clear --sources`, `--diffs` and `--pypi` clear
   one kind and leave the model's answers to `run`, which cost money, alone (#30).
 - The extracted package sources, the bulk of the cache (4 GB on a machine that scanned many
   projects), are capped: `SINCE_CUTOFF_CACHE_MAX_MB` (default 2048; 0 for no cap). After a new
   version is extracted, the least recently used trees are removed until the sources fit,
   never a tree the running scan uses or one used in the last hour, which another process may
   be reading. Trees extracted by earlier versions are measured once, at the first extraction
-  after upgrading.
+  after upgrading, which may remove many at once: the first removal in a run prints one line
+  with how many trees and MB went (the rest are in the `--debug` log), as later scans download
+  them again. A value that is not a number (`inf` and `nan` too) gives a warning and the
+  default.
 - `sync --json` reports proposals and write results for scripts, with progress on stderr.
   It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.

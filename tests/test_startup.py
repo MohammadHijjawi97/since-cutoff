@@ -51,23 +51,44 @@ NOT_FOR_STATUS = (
     "rich.console",
     "rich.progress",
 )
-SCRIPT = """
+# Records, for each module, the module (and line) whose import statement loaded it first, so
+# that a failure names who imports a heavy module: the import machinery's frames are skipped.
+WHO = """
 import json, sys
+importers = {}
+class Who:
+    def find_spec(self, name, path=None, target=None):
+        frame = sys._getframe(1)
+        while frame and frame.f_globals.get("__name__", "").startswith(
+            ("importlib", "_frozen_importlib")
+        ):
+            frame = frame.f_back
+        if frame and name not in importers:
+            importers[name] = f"{frame.f_globals.get('__name__')} line {frame.f_lineno}"
+        return None
+sys.meta_path.insert(0, Who())
+"""
+SCRIPT = (
+    WHO
+    + """
 import since_cutoff.cli as cli
 try:
     code = cli.main(sys.argv[1:])
 except SystemExit as exc:
     code = exc.code
-print("MODULES", json.dumps({"code": code, "modules": sorted(sys.modules)}))
+"""
+)
+REPORT = """
+print("MODULES", json.dumps({"code": code, "modules": sorted(sys.modules), "by": importers}))
 """
 
 
-def run(args: list[str], cache: Path) -> tuple[int, str, list[str]]:
-    """Exit code, stdout and the modules imported after ``since-cutoff <args>`` in a fresh
-    interpreter."""
+def run(args: list[str], cache: Path, script: str = SCRIPT) -> tuple[int, str, dict[str, str]]:
+    """Exit code, stdout and the modules imported after ``since-cutoff <args>`` (or
+    ``script``) in a fresh interpreter, each with the module and line that imported it."""
     env = {**os.environ, "SINCE_CUTOFF_CACHE": str(cache), "PYTHONIOENCODING": "utf-8"}
     proc = subprocess.run(
-        [sys.executable, "-c", SCRIPT, *args],
+        [sys.executable, "-c", script + REPORT, *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -77,15 +98,29 @@ def run(args: list[str], cache: Path) -> tuple[int, str, list[str]]:
     )
     out, marker = proc.stdout.rsplit("MODULES ", 1)
     result = json.loads(marker)
-    return result["code"], out, result["modules"]
+    return result["code"], out, {m: result["by"].get(m, "?") for m in result["modules"]}
+
+
+def loaded(forbidden: tuple[str, ...], modules: dict[str, str]) -> list[str]:
+    """The forbidden modules that were imported, each with who imported it."""
+    return [f"{m}, imported by {modules[m]}" for m in forbidden if m in modules]
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--version"], ["cache", "path"], ["cache", "info"]])
 def test_help_version_and_cache_import_neither_the_engine_nor_rich(tmp_path, args) -> None:
     code, out, modules = run(args, tmp_path / "cache")
     assert code == 0, out
-    assert [m for m in HEAVY if m in modules] == []
+    assert loaded(HEAVY, modules) == []
     assert "since_cutoff.cli" in modules
+
+
+def test_a_heavy_import_names_the_module_that_made_it(tmp_path) -> None:
+    """When a command imports what it must not, the failure says which module imported it
+    (sync imports the engine at its top)."""
+    _, _, modules = run([], tmp_path / "cache", WHO + "import since_cutoff.sync\ncode = 0\n")
+    [engine] = loaded(("since_cutoff.engine",), modules)
+    assert engine.startswith("since_cutoff.engine, imported by since_cutoff.sync line ")
+    assert modules["since_cutoff.sync"].startswith("__main__ line ")
 
 
 def test_help_is_the_full_help(tmp_path) -> None:
@@ -104,7 +139,7 @@ def test_status_hook_imports_neither_rich_nor_the_reports(tmp_path) -> None:
     (root / "main.py").write_text("import toylib\n")
     code, out, modules = run(["status", "--hook", str(root)], tmp_path / "cache")
     assert (code, out) == (0, "")  # no block: nothing to say
-    assert [m for m in NOT_FOR_STATUS if m in modules] == []
+    assert loaded(NOT_FOR_STATUS, modules) == []
 
 
 def test_the_per_package_default_in_the_help_is_the_one_sync_uses() -> None:

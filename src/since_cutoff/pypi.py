@@ -38,6 +38,7 @@ from since_cutoff.cache import (
     evict_tree,
     last_used,
     max_sources_bytes,
+    remove_evicted_leftovers,
     sources_over_cap,
     touch,
     tree_size,
@@ -114,6 +115,8 @@ class PyPI:
         # after :meth:`source` returns, so the cap on the sources never evicts them.
         self._served: set[str] = set()
         self._trim_lock = threading.Lock()
+        # The first trim that evicts says so on the terminal (a warning); later ones are logged.
+        self._evictions_reported = False
         # Release lists served from a cache entry older than METADATA_TTL because PyPI could
         # not be reached: canonical name -> (the entry, the day it was fetched, when it was
         # last tried). Reused for STALE_REUSE seconds, so that each later lookup in a scan does
@@ -280,12 +283,17 @@ class PyPI:
         return tree
 
     def _trim_sources(self) -> None:
+        """Evict the least recently used trees while the sources are over the cap. The first
+        trim of this process that evicts any prints one line (a warning): the first one after an
+        upgrade may remove many trees at once, which later scans download again."""
         cap = max_sources_bytes()
         if cap is None:
             return
         with self._trim_lock:
+            remove_evicted_leftovers(self.cache.root)
             with self._locks_guard:
                 keep = set(self._served)
+            trees = evicted = 0
             for entry in sources_over_cap(self.cache.root, cap, keep):
                 # Under the tree's own lock, so that it is not read by another thread of this
                 # process meanwhile; one that is busy (being extracted or served) stays.
@@ -299,6 +307,8 @@ class PyPI:
                     if served or (used is not None and used > entry.last_used):
                         continue  # served, or used by another process since the plan was made
                     if evict_tree(entry.path):
+                        trees += 1
+                        evicted += entry.bytes
                         log.info(
                             "evicted the sources %s (%.1f MB): the extracted sources are over "
                             "the %d MB cap (SINCE_CUTOFF_CACHE_MAX_MB)",
@@ -310,6 +320,18 @@ class PyPI:
                         log.info("could not evict the sources %s: in use", entry.key)
                 finally:
                     lock.release()
+            if trees:
+                level = logging.INFO if self._evictions_reported else logging.WARNING
+                self._evictions_reported = True
+                log.log(
+                    level,
+                    "removed %d least recently used source %s (%s MB) from the cache: the "
+                    "extracted sources are over the %s MB cap (SINCE_CUTOFF_CACHE_MAX_MB)",
+                    trees,
+                    "tree" if trees == 1 else "trees",
+                    f"{evicted / MB:,.1f}",
+                    f"{cap // MB:,}",
+                )
 
     def _source(self, name: str, version: str, key: str) -> tuple[SourceTree, bool]:
         """The tree, and whether this call extracted it."""

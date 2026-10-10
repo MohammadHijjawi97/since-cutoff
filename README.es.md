@@ -138,12 +138,17 @@ uvx since-cutoff scan
 # escribe esas notas en AGENTS.md (muestra el diff y pregunta antes); repítelo tras actualizar
 uvx since-cutoff sync
 
-# opcional: mide en qué cambios se equivoca tu modelo y prueba las notas (llama al modelo)
+# opcional: mide en qué cambios se equivoca tu modelo y prueba las notas (llama al modelo;
+# --with añade el comprobador de tipos basedpyright, que solo necesita run)
 uvx --with basedpyright since-cutoff run
 ```
 
 También puedes instalarlo con `pipx install since-cutoff` (o `pip install since-cutoff`) y
-ejecutar `since-cutoff`. Ejecútalo desde la raíz del proyecto: lee `uv.lock`, `poetry.lock`,
+ejecutar `since-cutoff`. `run` comprueba los tipos de las respuestas del modelo con
+[basedpyright](https://github.com/DetachHead/basedpyright), un extra de 180 MB que los demás
+comandos nunca usan: `pip install "since-cutoff[run]"` (o `pipx install "since-cutoff[run]"`)
+lo instala; sin él, `run` se detiene enseguida y lo dice.
+Ejecútalo desde la raíz del proyecto: lee `uv.lock`, `poetry.lock`,
 `pdm.lock`, `pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` o
 un `.venv` (no `setup.py` ni `setup.cfg`). Sin `--model`, usa el modelo con el que está
 configurado tu agente de programación, según los ajustes de Claude Code, Codex, OpenCode o
@@ -807,8 +812,13 @@ reservadas; `verified` se mantiene y significa lo mismo que `checks.example_type
   y la herramienta MCP `project_changes` se lo da al agente que la llamó, que pasa los resultados
   de las herramientas a su modelo.
 - **Guarda** los resultados en `.since-cutoff/` dentro de tu proyecto (el propio directorio se
-  excluye de git) y en una caché local (`since-cutoff cache path` la muestra y
-  `since-cutoff cache clear` la borra). `sync` (cuando aceptas, o con `--yes`) y `run --apply`
+  excluye de git) y en una caché local: `since-cutoff cache info` muestra dónde está y su tamaño
+  por tipo, `since-cutoff cache clear` la borra, o con `--sources`, `--diffs` o `--pypi` solo
+  ese tipo (las respuestas del modelo a `run`, que cuestan dinero, se conservan). Las fuentes
+  extraídas de los paquetes, la mayor parte, tienen un límite de 2 GB
+  (`SINCE_CUTOFF_CACHE_MAX_MB`; 0 para no tener límite): tras extraer una versión nueva se
+  borran las usadas hace más tiempo, nunca una que use un análisis en curso, y la primera
+  eliminación de una ejecución imprime una línea que dice cuánto se borró. `sync` (cuando aceptas, o con `--yes`) y `run --apply`
   escriben un único bloque delimitado en AGENTS.md o CLAUDE.md y dejan el resto del archivo
   intacto, byte a byte; `since-cutoff unapply` elimina el bloque.
 - **Sin telemetría**, sin cuenta y sin datos personales. Las ejecuciones repetidas se sirven

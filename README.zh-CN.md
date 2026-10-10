@@ -89,11 +89,12 @@ uvx since-cutoff scan
 # 把这些说明写进 AGENTS.md（先显示 diff 并征求确认）；升级依赖后再运行一次
 uvx since-cutoff sync
 
-# 可选：测出你的模型会写错哪些变更，并测试这些说明（会调用模型）
+# 可选：测出你的模型会写错哪些变更，并测试这些说明（会调用模型；
+# --with 会加上只有 run 需要的 basedpyright 类型检查器）
 uvx --with basedpyright since-cutoff run
 ```
 
-也可以用 `pipx install since-cutoff`（或 `pip install since-cutoff`）安装，然后运行 `since-cutoff`。请在项目根目录运行：它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
+也可以用 `pipx install since-cutoff`（或 `pip install since-cutoff`）安装，然后运行 `since-cutoff`。`run` 用 [basedpyright](https://github.com/DetachHead/basedpyright) 对模型的回答做类型检查，这是一个 180 MB 的 extra，其他命令都用不到：`pip install "since-cutoff[run]"`（或 `pipx install "since-cutoff[run]"`）会安装它；没有它时，`run` 会立即停止并说明原因。请在项目根目录运行：它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
 
 `scan` 在示例项目上的输出：
 
@@ -499,7 +500,7 @@ AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明�
 - **获取**：从 PyPI 获取公开的包元数据和 wheel，从 models.dev 获取模型的训练截止日期（内置快照，可离线使用）。Git、本地路径、workspace 和私有源中的依赖，绝不会按名称去公共 PyPI 上查找。`status` 不获取任何内容。
 - **发送**：只有 `run` 会发送提示词，并且只发给你选择的模型服务商，内容包括包名、版本、变更 API 的公开签名和文档字符串、生成的任务，以及（用于写说明的）模型自己的回答。从不包含你的源代码。`scan`、`sync`、`status`、MCP 服务器、GitHub Action 和 pre-commit 钩子不向任何模型发送任何内容。
 - **显示你的代码在哪里用到了有变更的 API**（目前是文件名）：显示在终端和 `.since-cutoff/` 中，不会发送到任何地方。是否传出由你决定：`--markdown` 和 `--annotate github` 会把它写进 CI 任务的摘要和注解，MCP 工具 `project_changes` 会把它返回给调用它的 Agent，而 Agent 会把工具结果传给它所用的模型。
-- **保存**：结果保存在项目中的 `.since-cutoff/` 目录（该目录会自动被 git 忽略）和一个本地缓存里（`since-cutoff cache path` 显示缓存位置，`since-cutoff cache clear` 清除缓存）。`sync`（在你同意后，或使用 `--yes` 时）和 `run --apply` 会在 AGENTS.md 或 CLAUDE.md 中写入一个带标记的区块，文件其余部分逐字节保持不变；`since-cutoff unapply` 可以移除这个区块。
+- **保存**：结果保存在项目中的 `.since-cutoff/` 目录（该目录会自动被 git 忽略）和一个本地缓存里：`since-cutoff cache info` 显示缓存位置和各类内容的大小，`since-cutoff cache clear` 清除缓存，加上 `--sources`、`--diffs` 或 `--pypi` 则只清除该类（`run` 得到的模型回答要花钱才能重新生成，会被保留）。解压出的包源码占缓存的大部分，上限为 2 GB（`SINCE_CUTOFF_CACHE_MAX_MB`；0 表示不设上限）：解压新版本后，最久未使用的源码会被删除，但正在运行的扫描所用的绝不会删除；一次运行中的第一次删除会打印一行，说明删除了多少。`sync`（在你同意后，或使用 `--yes` 时）和 `run --apply` 会在 AGENTS.md 或 CLAUDE.md 中写入一个带标记的区块，文件其余部分逐字节保持不变；`since-cutoff unapply` 可以移除这个区块。
 - **没有遥测**，不需要账号，不收集个人数据。重复运行直接读取缓存，所以不花钱，结果也可复现（`--fresh` 会重新询问模型）。详见 [PRIVACY.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/PRIVACY.md)（英文）。
 
 ## 局限

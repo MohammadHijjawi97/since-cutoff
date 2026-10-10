@@ -785,7 +785,8 @@ meaning the same as `checks.example_type_checks`).
   clear` removes it, or with `--sources`, `--diffs` or `--pypi` only that kind (the model's
   answers to `run`, which cost money, are kept). The extracted package sources, the bulk of it,
   are capped at 2 GB (`SINCE_CUTOFF_CACHE_MAX_MB`; 0 for no cap): after a new version is
-  extracted, the least recently used ones go, never one a running scan uses. `sync` (after
+  extracted, the least recently used ones go, never one a running scan uses, and the first
+  removal in a run prints one line saying how much went. `sync` (after
   you agree, or with `--yes`) and `run --apply` write one marked block into AGENTS.md or CLAUDE.md
   and leave the rest of the file byte-for-byte unchanged; `since-cutoff unapply` removes the
   block.
