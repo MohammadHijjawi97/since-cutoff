@@ -211,6 +211,8 @@ The explainer below covers this section in 2½ minutes.
 
 ## Using it
 
+Problems with command output or an MCP client? See the [troubleshooting guide](docs/troubleshooting.md).
+
 ```bash
 # the changed APIs your code uses, with a note for each (no model calls, no API key)
 uvx since-cutoff scan

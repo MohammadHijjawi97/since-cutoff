@@ -42,6 +42,7 @@ PAGES = (
     "docs/es/index.md",
     "docs/fr/index.md",
     "docs/ai-stack.md",
+    "docs/troubleshooting.md",
     "PRIVACY.md",
     "CONTRIBUTING.md",
     "skills/since-cutoff/SKILL.md",
@@ -51,6 +52,7 @@ ENGLISH = (
     "docs/how-it-works.md",
     "docs/index.md",
     "docs/ai-stack.md",
+    "docs/troubleshooting.md",
     "PRIVACY.md",
     "CONTRIBUTING.md",
     "skills/since-cutoff/SKILL.md",
@@ -236,3 +238,17 @@ def test_the_slug_is_githubs() -> None:
     assert _slug("Mantener las notas al día: sync y status") == (
         "mantener-las-notas-al-día-sync-y-status"
     )
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    (
+        "No dependency could be checked",
+        "Not written: there is no terminal to ask in",
+        "the notes block was edited by hand",
+    ),
+)
+def test_troubleshooting_quotes_current_cli_text(fragment: str) -> None:
+    source = (ROOT / "src/since_cutoff/cli.py").read_text(encoding="utf-8")
+    assert fragment in source
+    assert fragment in _text("docs/troubleshooting.md")

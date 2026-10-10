@@ -13,6 +13,6 @@ body:
     id: what
     attributes:
       label: What happened
-      description: Paste the output (and `since-cutoff --version`, your OS and Python version).
+      description: Paste the output (with version, OS and Python). First review https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/troubleshooting.md.
     validations:
       required: true
