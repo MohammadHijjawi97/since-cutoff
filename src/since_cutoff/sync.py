@@ -674,7 +674,8 @@ class TargetStatus:
             "format": block.version if block is not None else None,
             "model": meta.get("model"),
             "cutoff": meta.get("cutoff"),
-            "margin": block_margin(meta) if block is not None else None,
+            # As results.json and ``sync --json`` name it (the meta line keeps it as ``margin``).
+            "cutoff_margin": block_margin(meta) if block is not None else None,
             "tool": meta.get("tool"),
             "scope": meta.get("scope"),
             "versions_from": meta.get("versions_from"),

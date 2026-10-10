@@ -274,7 +274,7 @@ def test_a_block_compared_from_another_day_is_out_of_date(status, sc, tmp_path) 
     ) in out
     code, out = status(root, "--cutoff-margin", "0")
     assert code == EXIT_OK and "compare from" not in out
-    assert json.loads(status(root, "--json")[1])["targets"][0]["margin"] == 0
+    assert json.loads(status(root, "--json")[1])["targets"][0]["cutoff_margin"] == 0
     # The same block as an earlier since-cutoff wrote it: no `margin` in the meta line.
     write(root / "AGENTS.md", agents(root).replace(',"margin":0', ""))
     code, out = status(root)

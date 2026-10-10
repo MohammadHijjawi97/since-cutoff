@@ -11,9 +11,13 @@
   `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and the action's `cutoff-margin`
   input set the margin; 0 compares from the cutoff itself, as before. The model line says both
   days ("training cutoff 2025-07-31, comparing from releases up to 2025-07-01"), and so do the
-  reports, `results.json` (`compare_from`, `settings.cutoff_margin`) and the notes block's header
-  and meta line, so `status` and `sync --check` report a block compared from another day as out
-  of date.
+  reports, `results.json` (`compare_from`, `settings.cutoff_margin`, also in `sync --json` and
+  `status --json`) and the notes block's header and meta line, so `status` and `sync --check`
+  report a block compared from another day as out of date. A block written by an earlier
+  since-cutoff compared from the cutoff itself and is reported out of date until `since-cutoff
+  sync` rewrites it (`--cutoff-margin 0` keeps the old comparison). The block's package line
+  says which release the notes compare from, `**anthropic 1.8.0** (compared from 0.56.0)`; it
+  said "0.56.0 at the cutoff", which the margin made false, and both forms are read.
 - A module that takes its names from another distribution with `from x import *` is compared
   with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
   mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under
@@ -22,10 +26,14 @@
   downloaded at the version the project locks (or the newest its requirement allows on the
   comparison date, for the release at the cutoff), under the usual download limit and cache, and
   its names are compared under the paths that re-export them (`mcp.types.Tool.inputSchema`
-  removed). An object a release only re-exports from elsewhere is now compared inside too:
-  griffe stops at the alias. When the sibling cannot be downloaded, the scan, the report and the
-  MCP tools warn that changes to those modules are not reported. Cached diffs are keyed on the
-  siblings read, and on the source schema, with the diff schema.
+  removed). Only a star import that runs counts: not one in a docstring, a function or an `if
+  TYPE_CHECKING:` block. An object a release only re-exports from elsewhere is now compared too,
+  where griffe stops at the alias: a class's members (inherited ones included), a function's
+  parameters and a change of kind, reported under the re-exporting path. When the sibling cannot be downloaded,
+  the scan, the report and the MCP tools warn that changes to those modules are not reported.
+  Cached diffs are keyed on the siblings read, and on the source schema, with the diff schema;
+  which distributions each release star-imports is kept in the cache, so a cached diff is still
+  served from the pinned release alone, with nothing else to download.
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.

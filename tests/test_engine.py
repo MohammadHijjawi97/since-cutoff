@@ -19,6 +19,7 @@ from since_cutoff.engine import (
     Engine,
     PackageScan,
     Settings,
+    star_imports_from_outside,
 )
 from since_cutoff.errors import PackageIndexError
 from since_cutoff.notes import BLOCK_END, BLOCK_START, NOTE_DIFF, TAG_DIFF
@@ -204,6 +205,79 @@ def test_names_a_module_takes_from_another_distribution_are_compared(tmp_path, c
         assert "mcplike.types.Tool.inputSchema" in used, attempt
     assert cache.get("diffs", Engine._diff_key(pkg, ("new:mcplike-types==2.0",))) is not None
     assert cache.get("diffs", Engine._diff_key(pkg)) is None
+
+
+@pytest.mark.parametrize("package", ["toylib", "mcplike"])
+def test_a_cached_diff_is_served_from_the_pinned_release_alone(
+    tmp_path, cache, fake_pypi, scripted, package
+):
+    """The key of a cached diff names the distributions each release takes names from, which
+    the first scan read from both releases' sources and kept in the store: the next scan serves
+    the diff with only the pinned release's sources, as before there were siblings, so a cache
+    that lost the release at the cutoff (or the sibling), or no network for them, is no
+    failure."""
+    if package == "mcplike":
+        fake_pypi = mcplike_pypi(tmp_path, cache)
+        project = load_project(make_project(tmp_path, '"mcplike==2.0"', code=MCPLIKE_CODE))
+        pinned, siblings = ("mcplike", "2.0"), [{**MCPLIKE_SIBLING, "modules": ["mcplike.types"]}]
+    else:
+        project = load_project(make_project(tmp_path))
+        pinned, siblings = ("toylib", "2.0"), []
+    engine = make_engine(cache, fake_pypi, scripted)
+    first = engine.scan(project, engine.resolve_target()).package(package)
+    assert first.status == CHANGED and first.cutoff_version == "1.0"
+    assert cache.get("diffs", Engine._siblings_key(package, "1.0")) == []
+    assert cache.get("diffs", Engine._siblings_key(package, "2.0")) == siblings
+
+    class Offline(FakePyPI):
+        def source(self, name: str, version: str) -> SourceTree:
+            if (name, version) != pinned:
+                raise PackageIndexError(f"could not download {name}-{version}: network error")
+            return super().source(name, version)
+
+    offline = Offline(cache, fake_pypi._releases, fake_pypi._trees)
+    engine = make_engine(cache, offline, scripted)
+    scan = engine.scan(project, engine.resolve_target())
+    again = scan.package(package)
+    assert (again.status, again.reason, scan.warnings) == (CHANGED, None, [])
+    assert [(c.kind, c.path) for c in again.changes] == [(c.kind, c.path) for c in first.changes]
+
+
+MCPLIKE_SIBLING = {
+    "name": "mcplike-types",
+    "package": "mcplike_types",
+    "modules": ["mcplike.types"],
+    "requirement": "mcplike-types==2.0",
+}
+
+
+def test_star_imports_that_run_make_a_sibling(tmp_path):
+    """A star import in a docstring, inside a function, or under ``if TYPE_CHECKING:`` defines
+    no name when the module runs: it must not make a distribution a sibling to download. One
+    under ``try`` or on the other side of a ``TYPE_CHECKING`` test does, and so does every one
+    in a module that does not parse. The standard library and the tree's own modules never."""
+    root = write_tree(
+        tmp_path / "t",
+        {
+            "pkg/__init__.py": '"""Usage:\n\n    from numpy import *\n"""\nfrom attrs import *\n',
+            "pkg/checked.py": (
+                "import typing\nif typing.TYPE_CHECKING:\n    from requests import *\n"
+                "else:\n    from yaml import *\nif not typing.TYPE_CHECKING:\n"
+                "    from attrs import *\n"
+            ),
+            "pkg/inner.py": "def f():\n    from scipy import *\n\nclass C:\n    from h5py import *\n",
+            "pkg/optional.py": "try:\n    from orjson import *\nexcept ImportError:\n    pass\n",
+            "pkg/own.py": "from pkg.optional import *\nfrom os.path import *\n",
+            "pkg/old.py": "from legacylib import *\nprint 'python 2'\n",
+        },
+    )
+    tree = SourceTree("pkg", "1.0", root, ("pkg",))
+    assert star_imports_from_outside(tree) == {
+        "attrs": ["pkg", "pkg.checked"],
+        "yaml": ["pkg.checked"],
+        "orjson": ["pkg.optional"],
+        "legacylib": ["pkg.old"],
+    }
 
 
 def test_a_sibling_distribution_that_cannot_be_downloaded_is_a_warning(tmp_path, cache, scripted):

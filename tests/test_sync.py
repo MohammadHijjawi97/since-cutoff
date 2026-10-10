@@ -230,7 +230,7 @@ def test_a_bumped_package_is_checked_again(sc, tmp_path) -> None:
         "• pyproject.toml changed since the notes in AGENTS.md were written: toylib 2.0 -> 2.1"
         in out
     )
-    assert "-**toylib 2.0** (1.0 at the cutoff)\n+**toylib 2.1** (1.0 at the cutoff)" in out
+    assert "-**toylib 2.0** (compared from 1.0)\n+**toylib 2.1** (compared from 1.0)" in out
     assert (
         "AGENTS.md is out of date: toylib 2.0 in the notes, 2.1 in pyproject.toml. Run "
         "`since-cutoff sync`." in out
@@ -241,7 +241,7 @@ def test_a_bumped_package_is_checked_again(sc, tmp_path) -> None:
     assert code == EXIT_OK
     assert "✓ Updated AGENTS.md: toylib checked again for 2.1 (2 notes, text unchanged)." in out
     assert agents(root).startswith(MINE + "\n" + BLOCK_START)
-    assert "**toylib 2.1** (1.0 at the cutoff)" in agents(root)
+    assert "**toylib 2.1** (compared from 1.0)" in agents(root)
 
 
 def test_a_package_no_longer_a_dependency_is_dropped(sc, tmp_path) -> None:

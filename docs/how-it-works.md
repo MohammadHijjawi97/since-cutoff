@@ -77,9 +77,14 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    locks or, for the release at the cutoff, the newest its requirement allowed on the
    comparison date (a few hundred KB, under the same download limit and cache); its names are
    reported under the paths that re-export them (`mcp.types.Tool.inputSchema` was removed:
-   mcp-types spells it `input_schema`). When that distribution cannot be downloaded, the scan
-   warns that changes to those modules are not reported. Only star imports are followed, and
-   only of a distribution the release's own requirements name.
+   mcp-types spells it `input_schema`), and so is what else changed in an object the release
+   now only re-exports, where griffe stops at the alias: a class's members (inherited ones
+   included), a function's parameters, a change of kind. When that distribution cannot be
+   downloaded, the scan warns that changes to those modules are not reported. Only star imports
+   that run are followed (not one in a docstring, a function or an `if TYPE_CHECKING:` block),
+   and only of a distribution the release's own requirements name. Which distributions a
+   release star-imports is kept in the cache with its diff, so a cached diff is served from the
+   pinned release alone, as before.
    since-cutoff reports only changes that break code written for the old version:
 
    | kind | example |
@@ -340,7 +345,7 @@ model, the cutoff and the day the comparison releases were published by ("the tr
 of `claude-sonnet-4-5` (2025-07-31, comparing from releases up to 2025-07-01)"), the file the
 versions come from and the since-cutoff version, says what the tags mean, that no library code
 was run, and "Where these lines conflict with what you remember, follow these lines", and one
-group per package: `**anthropic 1.8.0** (0.56.0 at the cutoff)`, the release the notes compare
+group per package: `**anthropic 1.8.0** (compared from 0.56.0)`, the release the notes compare
 from, followed by its bullets.
 
 ### `sync`

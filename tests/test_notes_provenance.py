@@ -125,7 +125,7 @@ the replacement is named in the library's own deprecation text and exists in the
 [type-checked] an example that basedpyright accepts for the pinned version. No library code was \
 run. Where these lines conflict with what you remember, follow these lines.
 
-**anthropic 1.8.0** (0.60.0 at the cutoff)
+**anthropic 1.8.0** (compared from 0.60.0)
 - `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. \
 since-cutoff found no replacement in anthropic's deprecation text. [diff]
 """
@@ -637,6 +637,24 @@ def test_parse_block_reads_format_2_and_detects_hand_edits(tmp_path) -> None:
     broken = target.read_bytes().decode().replace('"v":2', '"v":2,,')
     assert parse_block(broken).edited is True  # type: ignore[union-attr]
     assert parse_block("# no block here\n") is None
+
+
+def test_parse_block_reads_both_forms_of_the_package_line() -> None:
+    """The package line says which release the notes compare from, ``(compared from 0.60.0)``;
+    a block written before there was a margin said ``(0.60.0 at the cutoff)``, and the notes
+    it holds are read the same (``sync`` rewrites it). A package line with neither has no
+    comparison release."""
+    notes = [diff_note([change(param="temperature")])]
+    block = render_block(notes, model="m", cutoff=CUTOFF, version_source="uv.lock")
+    assert "\n**anthropic 1.8.0** (compared from 0.60.0)\n" in block
+    legacy = block.replace("(compared from 0.60.0)", "(0.60.0 at the cutoff)")
+    bare = block.replace(" (compared from 0.60.0)", "")
+    for text in (block, legacy, bare):
+        parsed = parse_block(text)
+        assert parsed is not None
+        anthropic = parsed.packages["anthropic"]
+        assert anthropic.version == "1.8.0" and len(anthropic.bullets) == 1
+        assert anthropic.cutoff_version == (None if text is bare else "0.60.0")
 
 
 def test_parse_block_reads_the_blocks_0_3_wrote() -> None:

@@ -98,10 +98,14 @@ log = logging.getLogger(__name__)
 # ``mcp/types/__init__.py`` is ``from mcp_types import *``, and mcp requires mcp-types) is
 # compared with that distribution read next to the release (engine.Sibling: load_api's
 # ``extra_roots``), under the paths that re-export the names (``mcp.types.Tool``); and an
-# object the new release only re-exports from elsewhere is compared inside too
-# (_Differ._realiased: griffe stops at the alias), so ``Tool.inputSchema`` -> ``input_schema``
-# is a removal under ``mcp.types.Tool``. The diff's cache key has the distributions read next
-# to each release (Engine._diff_key).
+# object the new release only re-exports from elsewhere is compared too, where griffe stops at
+# the alias (_Differ._realiased, _pair_breakages: a class's members, inherited ones included, a
+# function's parameters, a change of kind), under the re-exporting path, so ``Tool.inputSchema`` ->
+# ``input_schema`` is a removal under ``mcp.types.Tool`` and a parameter ``mcp_types.Tool``'s
+# method lost is a ``param_removed`` of ``mcp.types.Tool``. Only a star import that runs makes
+# a sibling (engine._star_imported: not one in a docstring, a function or an ``if
+# TYPE_CHECKING:`` block). The diff's cache key has the distributions read next to each release
+# (Engine._diff_key), which the cache keeps per release (Engine._siblings_key).
 DIFF_SCHEMA = 21
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
@@ -920,6 +924,9 @@ class _Differ:
         # The parsed __getattr__ of the lazy module each module swaps in (see _served_lazily).
         self._lazy_hooks: dict[int, tuple[Any, ast.AST] | None] = {}
         self._tables: dict[tuple[int, str], set[str]] = {}
+        # The target of each re-export the new release put where the old one defined an object,
+        # by the target's path, to the old object's path (see _realiased, _reexported_as).
+        self._realiased_paths: dict[str, str] = {}
         self.fuzzy = True
 
     def run(self) -> list[APIChange]:
@@ -1012,10 +1019,11 @@ class _Differ:
         ``from mcp_types import *``). griffe compares an object with an alias by resolving the
         alias, then stops: the old object's path is already among the paths it has seen, so a
         field the target renamed (``Tool.inputSchema`` -> ``input_schema``) went unreported.
-        Each such pair is compared here on its own; what the pair's module gained or lost is
-        griffe's as before."""
-        import griffe
-
+        Each such pair is compared here on its own (:func:`_pair_breakages`: the members of a
+        class, the signature of a function, a change of kind); what the pair's module gained or
+        lost is griffe's as before. The breakages on the target's side carry the target's path
+        (``mcp_types.Tool.model_validate``), which :meth:`_reexported_as` maps back to the name
+        the old release defined (``mcp.types.Tool.model_validate``)."""
         found: list[Any] = []
         for module in _walk_modules(self.old):
             new_module = self.new_object(module.path)
@@ -1024,8 +1032,7 @@ class _Differ:
             for name, old_member in list(module.members.items()):
                 if name.startswith("_") or getattr(old_member, "is_alias", False):
                     continue
-                kind = _kind_of(old_member)
-                if kind not in ("class", "function"):
+                if _kind_of(old_member) not in ("class", "function"):
                     continue
                 new_member = new_module.members.get(name)
                 if new_member is None or not getattr(new_member, "is_alias", False):
@@ -1034,12 +1041,41 @@ class _Differ:
                     target = new_member.final_target
                 except Exception:
                     continue  # unresolved: griffe skipped it, and so does this
-                if _kind_of(target) != kind:
-                    continue
+                if _kind_of(target) not in ("class", "function"):
+                    continue  # now a value or a module: not an API of the same shape
+                self._realiased_paths.setdefault(str(target.path), f"{module.path}.{name}")
                 try:
-                    found.extend(griffe.find_breaking_changes(old_member, target))
+                    found.extend(_pair_breakages(old_member, target))
                 except Exception as exc:
                     log.debug("cannot compare %s with %s: %s", old_member.path, target.path, exc)
+        return found
+
+    def _reexported_as(self, path: str) -> str | None:
+        """The old release's path of an object griffe reports under the path of the target of
+        a re-export (:meth:`_realiased`): ``pkg_types.Client.send`` is ``pkg.types.Client.send``
+        when ``pkg.types`` defined ``Client`` and now star-imports it. None for any other path,
+        and for a path the old release has an object at too (the old ``pkg.impl.Client``, when
+        both releases have one): that object is compared on its own, and the breakage is its."""
+        parts = path.split(".")
+        for i in range(len(parts), 0, -1):
+            public = self._realiased_paths.get(".".join(parts[:i]))
+            if public is not None:
+                return None if find_object(self.old, path) else ".".join([public, *parts[i:]])
+        return None
+
+    def _old_of(self, obj: Any) -> Any:
+        """The old release's object at the path of ``obj``, the new release's object griffe
+        reports a parameter or kind breakage on; ``obj`` itself when there is none."""
+        path = self._reexported_as(str(obj.path)) or str(obj.path)
+        return _get(self.old, _rel(path, self.old.path)) or obj
+
+    def _new_of(self, obj: Any) -> Any:
+        """The new release's object at the path of ``obj`` (griffe's object for a parameter or
+        kind breakage): by its path, or ``obj`` itself when the path leads into another
+        distribution read next to the release (:meth:`_realiased`), where no lookup reaches."""
+        found = self.new_object(obj.path)
+        if found is None and self._reexported_as(str(obj.path)) is not None:
+            return obj
         return found
 
     # ---------------------------------------------------------------- helpers
@@ -1112,14 +1148,14 @@ class _Differ:
                 return None
             return self._removal(obj)
         # For parameter and kind breakages griffe reports the NEW object; look up the old one.
-        old_obj = _get(self.old, _rel(obj.path, self.old.path)) or obj
+        old_obj = self._old_of(obj)
         if kind == "OBJECT_CHANGED_KIND":
             before = str(getattr(b.old_value, "value", b.old_value))
             if _kind_of(old_obj) != before:
                 # Reported through an alias: griffe gives the target's path, not the name that
                 # changed, so the old object cannot be located reliably.
                 return None
-            new_obj = self.new_object(obj.path)
+            new_obj = self._new_of(obj)
             if self._conditional(old_obj) or self._conditional(new_obj):
                 return None  # defined per Python version or platform: the kind depends on it
             if _compatible_kind_change(old_obj, new_obj, self):
@@ -1143,7 +1179,7 @@ class _Differ:
             "PARAMETER_CHANGED_KIND",
         }:
             return None
-        new_fn = self.new_object(obj.path)
+        new_fn = self._new_of(obj)
         if new_fn is None:
             return None
         old_fn = old_obj
@@ -1229,9 +1265,13 @@ class _Differ:
             handled, handled_text = self.still_handled(new_fn, param)
             names = _parameter_names(new_fn)
             extras = [n for n in REQUEST_EXTRAS if n in names]
+        # Under the new path, which public_path knows; under the old one when the new release
+        # only re-exports the callable from elsewhere (_realiased: its own path may be in
+        # another distribution, which is no path of this package).
+        subject = old_fn if self._reexported_as(str(new_fn.path)) else new_fn
         change = self._change(
             ckind,
-            new_fn,
+            subject,
             old_obj=old_fn,
             new_obj=new_fn,
             parameter=param,
@@ -3077,6 +3117,29 @@ def _walk_modules(root: Any) -> Iterator[Any]:
         for member in list(mod.members.values()):
             if not getattr(member, "is_alias", False) and getattr(member, "is_module", False):
                 stack.append(member)
+
+
+def _pair_breakages(old: Any, new: Any) -> list[Any]:
+    """griffe's breakages between ``old`` and ``new``, two versions of one class or function
+    that griffe's own walk does not compare (:meth:`_Differ._realiased`).
+
+    ``find_breaking_changes(old, new)`` compares the *members* of the two objects: for a class
+    that is its methods and fields, without a base it lost or a change of kind, and for a
+    function it is nothing, so a parameter the new one dropped went unreported. The two are
+    compared here as the one member of a throwaway module each, under the old object's name
+    (the target of the re-export may have another: mcp 2.2's ``RegistrationRequest =
+    OAuthClientMetadata``), which is how griffe meets the members of a package: a kind change, a
+    lost base and a function's parameters included. The modules are not told about their member
+    (``set_member`` would make them its parent).
+    """
+    import griffe
+
+    holders = []
+    for obj in (old, new):
+        holder = griffe.Module("_since_cutoff")
+        holder.members[old.name] = obj
+        holders.append(holder)
+    return list(griffe.find_breaking_changes(*holders))
 
 
 def iter_public_objects(root: Any) -> Iterator[tuple[Any, str]]:

@@ -175,10 +175,10 @@ de línea CRLF, y `since-cutoff unapply` elimina el bloque. Para el proyecto de 
 termina así:
 
 ```markdown
-**anthropic 1.8.0** (0.56.0 at the cutoff)
+**anthropic 1.8.0** (compared from 0.56.0)
 - `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
-**huggingface-hub 2.0.0** (0.33.1 at the cutoff)
+**huggingface-hub 2.0.0** (compared from 0.33.1)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
 <!-- since-cutoff:end -->
 ```
@@ -878,7 +878,8 @@ La fecha de comparación decide tres cosas:
 
 Un modelo puede conocer una versión posterior a su fecha de corte declarada, o no conocer versiones
 publicadas poco antes, así que el escaneo puede listar cambios que el modelo ya maneja bien y pasar
-por alto algunos que no. Si el modelo escribe de verdad la API antigua solo lo muestra `run`, que se
+por alto algunos que no. El margen sirve para el segundo caso; `--cutoff-margin 0` compara desde la
+propia fecha de corte. Si el modelo escribe de verdad la API antigua solo lo muestra `run`, que se
 lo pregunta: sin herramientas y diciéndole qué versión fija el proyecto.
 
 ## Comparación con otras herramientas

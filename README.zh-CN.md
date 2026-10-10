@@ -107,10 +107,10 @@ uvx since-cutoff run
 `since-cutoff sync`（0.4.0 及以后）把 `scan` 显示的说明写进一个带标记的区块：写在 AGENTS.md 中；只有 CLAUDE.md 时写在 CLAUDE.md 中；已经有区块的，就更新那个区块（`--target` 可以指定其他文件）。它会显示一个统一格式的 diff，并询问 `Write this to AGENTS.md? [y/N]`；`--yes` 不询问直接写入；没有可以询问的终端时，它什么也不写。区块以外的文本逐字节保持不变（包括 CRLF 换行），`since-cutoff unapply` 可以移除这个区块。对于示例项目，区块的结尾是：
 
 ```markdown
-**anthropic 1.8.0** (0.56.0 at the cutoff)
+**anthropic 1.8.0** (compared from 0.56.0)
 - `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
 
-**huggingface-hub 2.0.0** (0.33.1 at the cutoff)
+**huggingface-hub 2.0.0** (compared from 0.33.1)
 - `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
 <!-- since-cutoff:end -->
 ```
