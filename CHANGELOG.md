@@ -21,15 +21,15 @@
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
 - With both AGENTS.md and CLAUDE.md and no block yet, `sync` and `run --apply` write the block
-  to both files when CLAUDE.md does not import AGENTS.md, and to AGENTS.md alone when it does
-  (#13): Claude Code reads only CLAUDE.md unless it imports AGENTS.md with `@AGENTS.md`
-  (outside code spans and fenced blocks, as Claude Code reads imports), and Codex, Cursor and
-  Copilot read only AGENTS.md. The block went to AGENTS.md alone, where Claude Code never saw
-  it. `scan`, `sync` and now `status` (its text and `status --json`; `status --hook` stays
-  quiet) say "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one
-  copy, add a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target
-  CLAUDE.md`". A block already in AGENTS.md alone stays the only one, with the tip that
-  Claude Code does not read it, now also from `status`.
+  to both files when CLAUDE.md does not import AGENTS.md, and to AGENTS.md alone when it does,
+  is not UTF-8 or is a link to AGENTS.md (#13): Claude Code reads only CLAUDE.md unless it
+  imports AGENTS.md with `@AGENTS.md` (outside code spans and fenced blocks, as Claude Code
+  reads imports), and Codex, Cursor and Copilot read only AGENTS.md. The block went to
+  AGENTS.md alone, where Claude Code never saw it. `scan`, `sync` and now `status` (its text
+  and `status --json`; `status --hook` stays quiet) say "CLAUDE.md does not import AGENTS.md,
+  so the notes go to both files: to keep one copy, add a line `@AGENTS.md` to CLAUDE.md and
+  run `since-cutoff unapply --target CLAUDE.md`". A block already in AGENTS.md alone stays the
+  only one, with the tip that Claude Code does not read it, now also from `status`.
 - The model registry takes the first listing of a model id that has a training cutoff, and
   only among those prefers the requested provider, then the maker's own listing (#87). The
   maker's entry for a new model often has no cutoff yet while a gateway's or reseller's has,

@@ -1635,7 +1635,9 @@ def block_targets(root: Path, explicit: str | None = None) -> list[Path]:
        where it was written (``run --apply --target CLAUDE.md``) and none is left behind;
     3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists;
        with both files, AGENTS.md and CLAUDE.md, unless CLAUDE.md imports AGENTS.md
-       (:func:`imports_agents`), which is then the only one (issue #13).
+       (:func:`imports_agents`) or cannot be read, when AGENTS.md is the only one (issue #13).
+
+    A CLAUDE.md that is a link to AGENTS.md is that file: AGENTS.md alone.
 
     Claude Code reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md
     imports it with ``@AGENTS.md``; the agents that read AGENTS.md (Codex, Cursor, Copilot)
@@ -1644,30 +1646,57 @@ def block_targets(root: Path, explicit: str | None = None) -> list[Path]:
     """
     if explicit:
         return [default_target(root, explicit)]
+    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
+    if _same_file(agents, claude):  # CLAUDE.md is a link to AGENTS.md: one file
+        return [agents]
     found = [root / name for name in INSTRUCTION_FILES if has_markers(root / name)]
     if found:
         return found
-    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents.exists() and claude.is_file() and not imports_agents(claude):
+    if agents.exists() and _misses_agents(agents, claude):
         return [agents, claude]
     return [default_target(root)]
 
 
 # ``@AGENTS.md`` (or ``@./AGENTS.md``) after a space or at the start of a line: Claude Code's
-# import, which it does not read inside a code span or a fenced block.
+# import, which it does not read inside a code span or a fenced block. Lines keep a ``\r``
+# (files are read as they are), which a closing fence may end with.
 _AGENTS_IMPORT = re.compile(r"(?<!\S)@(?:\./)?AGENTS\.md(?![\w/-])")
-_FENCED = re.compile(r"(?ms)^[ \t]{0,3}(`{3,}|~{3,}).*?(?:^[ \t]{0,3}\1[ \t]*$|\Z)")
+_FENCED = re.compile(r"(?ms)^[ \t]{0,3}(`{3,}|~{3,}).*?(?:^[ \t]{0,3}\1[ \t]*\r?$|\Z)")
 _CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
+
+
+def _imports(text: str) -> bool:
+    return bool(_AGENTS_IMPORT.search(_CODE_SPAN.sub("", _FENCED.sub("", text))))
 
 
 def imports_agents(claude: Path) -> bool:
     """Whether CLAUDE.md imports AGENTS.md with ``@AGENTS.md``, outside code spans and fenced
     blocks, as Claude Code reads imports. A file that cannot be read imports nothing."""
     try:
-        text = _read(claude)
+        return _imports(_read(claude))
     except (OSError, UnicodeDecodeError):
         return False
-    return bool(_AGENTS_IMPORT.search(_CODE_SPAN.sub("", _FENCED.sub("", text))))
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` are one file (a symbolic or hard link); False when one is not
+    there."""
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
+def _misses_agents(agents: Path, claude: Path) -> bool:
+    """Whether Claude Code does not read AGENTS.md: CLAUDE.md is a file of its own that does
+    not import it (:func:`imports_agents`). False when CLAUDE.md is AGENTS.md (a link) and when
+    it cannot tell: no CLAUDE.md, or one that cannot be read (not UTF-8), as before #13."""
+    if not claude.is_file() or _same_file(agents, claude):
+        return False
+    try:
+        return not _imports(_read(claude))
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 # What says to add: ``@AGENTS.md`` in CLAUDE.md is how Claude Code reads AGENTS.md too.
@@ -1686,10 +1715,11 @@ def agents_import_tip(root: Path, targets: Sequence[Path]) -> str | None:
     """What to do when CLAUDE.md does not import AGENTS.md (:func:`imports_agents`) and the
     notes go to AGENTS.md (``targets``): :data:`TWO_COPIES_TIP` when they go to CLAUDE.md
     too, :data:`AGENTS_IMPORT_TIP` when they do not (a block already in AGENTS.md alone), as
-    Claude Code then reads only CLAUDE.md. None otherwise.
+    Claude Code then reads only CLAUDE.md. None otherwise, also when CLAUDE.md is a link to
+    AGENTS.md or cannot be read.
     """
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents not in targets or not claude.is_file() or imports_agents(claude):
+    if agents not in targets or not _misses_agents(agents, claude):
         return None
     return TWO_COPIES_TIP if claude in targets else AGENTS_IMPORT_TIP
 

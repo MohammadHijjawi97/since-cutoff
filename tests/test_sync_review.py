@@ -40,6 +40,7 @@ from since_cutoff.notes import (
     TAG_TYPE_CHECKED,
     TWO_COPIES_TIP,
     Note,
+    agents_import_tip,
     block_targets,
     imports_agents,
     parse_block,
@@ -461,6 +462,59 @@ def test_a_tip_when_a_block_in_agents_md_alone_is_not_imported(sc, status, tmp_p
     assert f"  ({AGENTS_IMPORT_TIP})" in status(root)[1].splitlines()
     code, out = sc("sync", root, *SONNET, "--target", "CLAUDE.md", "--dry-run")
     assert code == EXIT_OK and "does not import" not in out
+
+
+def test_the_import_after_a_fenced_block_in_a_crlf_claude_md(sc, tmp_path) -> None:
+    """A CLAUDE.md with Windows line breaks: the fence closes on its ``\\r\\n`` line, so the
+    ``@AGENTS.md`` after it is an import and only AGENTS.md gets the block."""
+    root = make_app(tmp_path)
+    write(root / "AGENTS.md", MINE)
+    crlf = "# C\r\n\r\n```\r\nmake test\r\n```\r\n\r\n@AGENTS.md\r\n"
+    (root / "CLAUDE.md").write_bytes(crlf.encode())
+    assert imports_agents(root / "CLAUDE.md")
+    assert block_targets(root) == [root / "AGENTS.md"]
+    code, out = sc("sync", root, *SONNET, "--yes")
+    assert code == EXIT_OK and "does not import" not in out
+    assert (root / "CLAUDE.md").read_bytes() == crlf.encode()
+
+
+@pytest.mark.parametrize("link", ["hard", "symbolic"])
+def test_a_claude_md_that_is_a_link_to_agents_md_is_one_file(sc, status, tmp_path, link) -> None:
+    """``ln AGENTS.md CLAUDE.md`` (or ``ln -s``): one file, which Claude Code reads, so one
+    target, AGENTS.md, and no tip to import it into itself."""
+    root = make_app(tmp_path)
+    write(root / "AGENTS.md", MINE)
+    try:
+        if link == "hard":
+            os.link(root / "AGENTS.md", root / "CLAUDE.md")
+        else:
+            (root / "CLAUDE.md").symlink_to("AGENTS.md")
+    except OSError as exc:  # a symbolic link needs a privilege on Windows
+        pytest.skip(f"cannot make a {link} link here: {exc}")
+    agents_md = root / "AGENTS.md"
+    assert block_targets(root) == [agents_md]
+    assert agents_import_tip(root, [agents_md]) is None
+    code, out = sc("sync", root, *SONNET, "--yes")
+    assert code == EXIT_OK and "does not import" not in out and "CLAUDE.md" not in out
+    assert agents(root).count(BLOCK_START) == 1
+    assert block_targets(root) == [agents_md]  # the block is under both names
+    code, out = status(root)
+    assert code == EXIT_OK and "CLAUDE.md" not in out
+
+
+def test_a_claude_md_that_is_not_utf8_gets_no_block(sc, status, tmp_path) -> None:
+    """A CLAUDE.md that cannot be read: whether it imports AGENTS.md cannot be told, so the
+    notes go to AGENTS.md alone, as before #13, and sync and status still work."""
+    root = make_app(tmp_path)
+    write(root / "AGENTS.md", MINE)
+    latin1 = b"# Caf\xe9 rules\n\n@AGENTS.md\n"
+    (root / "CLAUDE.md").write_bytes(latin1)
+    assert block_targets(root) == [root / "AGENTS.md"]
+    assert agents_import_tip(root, [root / "AGENTS.md"]) is None
+    code, out = sc("sync", root, *SONNET, "--yes")
+    assert code == EXIT_OK and "does not import" not in out
+    assert BLOCK_START in agents(root) and (root / "CLAUDE.md").read_bytes() == latin1
+    assert status(root)[0] == EXIT_OK
 
 
 # ---------------------------------------------------------------- wording
