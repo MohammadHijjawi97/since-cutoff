@@ -30,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from since_cutoff import net
+from since_cutoff import net, prompts
 from since_cutoff.apidiff import DEPRECATED, PARAM_REMOVED, REMOVED, APIChange
 from since_cutoff.cache import DiskCache
 from since_cutoff.engine import NEW, Engine, ModelTarget, ScanResult, Settings
@@ -231,6 +231,30 @@ def test_the_strongest_cue_anywhere_in_the_text_wins() -> None:
     assert [r.text for r in note.replacements] == ["pkg.new_func"]
 
 
+def test_the_cue_of_the_sentence_that_names_the_api_beats_a_later_use_instead() -> None:
+    """Ranked over the whole text, "use ... instead" came first, so the second sentence's
+    fallback (`compat`) was named as the replacement of what the first says was renamed."""
+    c = change(
+        REMOVED,
+        "pkg.old",
+        hint="`old` was renamed to `new`. If you need the legacy behaviour, use `compat` instead.",
+        library_names=["pkg.new", "pkg.compat"],
+    )
+    note = diff_note([c])
+    assert note.line == (
+        "`pkg.old` was removed; do not use it. Use `pkg.new` instead. [diff + library]"
+    )
+    assert [r.text for r in note.replacements] == ["pkg.new"]
+    # Without the API's name, the first sentence is the one: the same.
+    unnamed = change(
+        REMOVED,
+        "pkg.old",
+        hint="This was renamed to `new`. If you need the legacy behaviour, use `compat` instead.",
+        library_names=["pkg.new", "pkg.compat"],
+    )
+    assert [r.text for r in diff_note([unnamed]).replacements] == ["pkg.new"]
+
+
 def test_a_pointer_at_a_name_is_quoted_and_is_not_a_replacement() -> None:
     """A "see `X`" and a sentence-initial "Use `X` to ..." mention a name without saying that
     it replaces anything. They were recorded as stated replacements, tagged [library]; they are
@@ -384,6 +408,7 @@ def test_the_url_cannot_end_the_block_or_open_a_code_span() -> None:
         ),
         ({"Funding": "https://github.com/sponsors/samuelcolvin"}, None),
         ({"Source": "https://github.com/orgs/o/discussions"}, None),
+        ({"Homepage": "https://github.com/users/o/projects/1"}, None),
         # A Homepage before a Funding URL that happens to name a repository; any case.
         (
             {"Funding": "https://github.com/a/funding", "Homepage": "https://github.com/a/b"},
@@ -674,7 +699,7 @@ def test_the_heading_and_the_listing_name_the_call_form_too() -> None:
     real = _mcp_2_3_server()
     assert real.describe() == (
         "`mcp.server.lowlevel.server.Server.__init__` called with `on_set_logging_level=`, "
-        "`on_roots_list_changed=`, `on_progress=` is deprecated (mcp 2.3.0): Passing any of "
+        "`on_roots_list_changed=` or `on_progress=` is deprecated (mcp 2.3.0): Passing any of "
         "them emits an MCPDeprecationWarning at runtime."
     )
     assert changes_text([real]) == (
@@ -697,6 +722,16 @@ def test_the_heading_and_the_listing_name_the_call_form_too() -> None:
     )
     assert long.describe() == "`sdk.cached`: one call form (an overload) is deprecated (pkg 2.0)"
     assert changes_text([long])[1] == "is deprecated in one call form (an overload)"
+
+
+def test_the_prompts_that_quote_describe_are_version_3() -> None:
+    """The task and note prompts quote APIChange.describe(); its wording for a deprecated call
+    form changed what `run` sends, so tasks and answers cached under version 2 (whose keys
+    hold PROMPT_VERSION, not the prompt) are not reused."""
+    real = _mcp_2_3_server()
+    assert prompts.PROMPT_VERSION == 3
+    assert real.describe() in prompts.task_prompt(real, ["mcp"], 1)
+    assert real.describe() in prompts.note_prompt(real, "import mcp\n", [])
 
 
 def _file(text: str, name: str = "app/main.py"):

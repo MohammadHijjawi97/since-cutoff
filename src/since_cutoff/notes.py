@@ -877,7 +877,7 @@ def _library_evidence(
         if text
     ]
     for text, version, where, said in texts:
-        stated = _stated_replacement(text, names)
+        stated = _stated_replacement(text, names, what.rsplit(".", 1)[-1])
         if stated is None or not stated.replacement:
             continue  # nothing stated, or a pointer at a name: quoted below, as advice
         found = stated.names
@@ -946,8 +946,9 @@ def library_names(change: APIChange, lookup: ApiLookup | None = None) -> list[st
 # instead."); after "replaced by", "renamed to", "in favour of" or "deprecated: use", up to the
 # end of the clause. A name right after the cue is stated directly; one that the clause leads
 # up to ("replaced by newer agents based on `FunctionAgent`") is stated in that sentence. The
-# cues are tried in this order over the whole text, so that "see `Helper` for the background.
-# Use `new_func` instead." names `new_func`. The last two point at a name without saying to
+# cues are tried in this order in the sentence that names the deprecated API (all but the last
+# two), then over the whole text, so that "see `Helper` for the background. Use `new_func`
+# instead." names `new_func`. The last two point at a name without saying to
 # use it: a sentence-initial "Use" states a replacement only when nothing but names follows
 # ("Please use fetch."; "Use `strict=False` to keep the previous lenient parsing." is
 # advice), and "see `X`" never does.
@@ -977,10 +978,12 @@ class _Stated:
     replacement: bool
 
 
-def _stated_replacement(text: str, names: list[str]) -> _Stated | None:
-    """The ones of ``names`` that ``text`` names after a cue (:data:`_CUES`, the strongest cue
-    anywhere in the text first), and how: directly, or in a sentence that leads up to them or
-    says more ("replaced by newer agents based on `FunctionAgent`", "in favor of the
+def _stated_replacement(text: str, names: list[str], subject: str = "") -> _Stated | None:
+    """The ones of ``names`` that ``text`` names after a cue (:data:`_CUES`: a cue that states
+    a replacement in the sentence naming ``subject``, the deprecated API, or else in the first
+    sentence; then the strongest cue anywhere in the text), and how: directly, or in a
+    sentence that leads up to them or says more ("replaced by newer agents based on
+    `FunctionAgent`", "in favor of the
     http-based alternatives implemented in [`HfApi`]", "use StateGraph with a 'messages' key
     instead"), and whether the cue states them as the replacement at all ("see `Config` for
     the available options" and "Use `strict=False` to keep the previous lenient parsing" do
@@ -988,23 +991,38 @@ def _stated_replacement(text: str, names: list[str]) -> _Stated | None:
     `force_download=True`" is advice, not a replacement). Markup around a name (Sphinx roles,
     MkDocs' ``[`X`]``) does not count."""
     sentences = _sentences(text)
-    for cue in _CUES:
-        matches = sorted(
-            ((i, m) for i, sentence in enumerate(sentences) for m in cue.finditer(sentence)),
-            key=lambda im: (im[0], im[1].start("rest")),
-        )
-        for _, m in matches:
-            tokens = [t.strip(".") for t in _TOKEN.findall(m.group("rest"))]
-            said = [(t, _named_as(t, names)) for t in tokens if t]
-            found = _unique(n for _, n in said if n is not None)
-            if not found:
-                continue
-            direct = all(n is not None or t.lower() in ("or", "and") for t, n in said)
-            weak = m.groupdict().get("weak")
-            if weak is None:
-                return _Stated(found, direct, True)
-            # A sentence-initial "Use" that names nothing else states it; "see" never does.
-            return _Stated(found, direct, direct and weak.lower() != "see")
+    # A cue that states a replacement in the sentence that names the deprecated API (else the
+    # first) beats a later "use ... instead": "`old` was renamed to `new`. If you need the
+    # legacy behaviour, use `compat` instead." names `new`.
+    at = next((i for i, s in enumerate(sentences) if subject and _mentions(s, subject)), 0)
+    strong = [cue for cue in _CUES if "weak" not in cue.groupindex]
+    for cues, among in ((strong, sentences[at : at + 1]), (_CUES, sentences)):
+        for cue in cues:
+            stated = _stated_by(cue, among, names)
+            if stated is not None:
+                return stated
+    return None
+
+
+def _stated_by(cue: re.Pattern[str], sentences: list[str], names: list[str]) -> _Stated | None:
+    """What ``cue`` states of ``names`` at its first match in ``sentences`` that names one of
+    them (:func:`_stated_replacement`); None when no match does."""
+    matches = sorted(
+        ((i, m) for i, sentence in enumerate(sentences) for m in cue.finditer(sentence)),
+        key=lambda im: (im[0], im[1].start("rest")),
+    )
+    for _, m in matches:
+        tokens = [t.strip(".") for t in _TOKEN.findall(m.group("rest"))]
+        said = [(t, _named_as(t, names)) for t in tokens if t]
+        found = _unique(n for _, n in said if n is not None)
+        if not found:
+            continue
+        direct = all(n is not None or t.lower() in ("or", "and") for t, n in said)
+        weak = m.groupdict().get("weak")
+        if weak is None:
+            return _Stated(found, direct, True)
+        # A sentence-initial "Use" that names nothing else states it; "see" never does.
+        return _Stated(found, direct, direct and weak.lower() != "see")
     return None
 
 

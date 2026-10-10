@@ -10,9 +10,12 @@
   on llama_index.core.agent.workflow.FunctionAgent" and huggingface-hub's "['Repository'] is
   deprecated in favor of the http-based alternatives implemented in [`HfApi`]" (the doc markup
   dropped) are quoted, tagged `[diff + library]`; "renamed to X" and a sentence-initial "Use X."
-  count as well, and the strongest cue anywhere in the text wins ("see `Helper` for the
-  background. Use `new_func` instead." names `new_func`). "see X" and advice ("Use `strict=False`
-  to keep the previous lenient parsing") are quoted under `[diff]`, not taken as replacements.
+  count as well. A cue in the sentence that names the deprecated API (else the first sentence)
+  wins over a later "use ... instead" ("`old` was renamed to `new`. If you need the legacy
+  behaviour, use `compat` instead." names `new`), and otherwise the strongest cue anywhere in the
+  text ("see `Helper` for the background. Use `new_func` instead." names `new_func`). "see X" and
+  advice ("Use `strict=False` to keep the previous lenient parsing") are quoted under `[diff]`,
+  not taken as replacements.
   Where the text names nothing, the note points at the package's changelog with the pinned
   version ("See https://github.com/encode/httpx/blob/master/CHANGELOG.md (0.28.1).": the
   Changelog URL in its PyPI metadata, else the releases page of the GitHub repository its Source,
@@ -20,7 +23,7 @@
   URL being `github.com/sponsors/samuelcolvin`), and says "found no replacement" only when PyPI
   lists neither. The cached PyPI metadata now keeps a package's project URLs, summary and home
   page (`PyPI.project_urls`, `PyPI.summary`); a copy cached before is fetched again once, and
-  read as it is when PyPI cannot be reached.
+  read as it is when PyPI cannot be reached, without asking PyPI again for the rest of the scan.
 - A function deprecated in one call form only (a PEP 702 `@deprecated` on one `@overload`) is
   named by the parameters that form alone takes (diff schema 21, `call_form_only`): mcp 2.2's
   note read "`Server` called as `__init__(self, name: str, *, version: str = ..., ...)` is
@@ -30,7 +33,8 @@
   when it passes one of them. When one of the form's own parameters cannot be passed by keyword
   (cachetools' positional-only `info`, a `**kwargs`), the note, the terminal heading and `--all`
   quote the form's signature instead, when it is at most 120 characters, and otherwise say that
-  one call form (an overload) is deprecated.
+  one call form (an overload) is deprecated. The task and note prompts quote that description:
+  they are prompt version 3, so `run` does not reuse tasks or answers cached under version 2.
 - A removed parameter of an SDK method that still takes `extra_body` points there alone (the
   note named `extra_query` too, which is for query fields, and then said it found no
   replacement): "If the API still needs them, pass them through its `extra_body` argument."

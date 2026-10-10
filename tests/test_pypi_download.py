@@ -12,6 +12,8 @@ import sys
 import tarfile
 import time
 import tracemalloc
+import urllib.error
+import urllib.request
 import zipfile
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -21,7 +23,7 @@ import pytest
 
 from since_cutoff import pypi as pypi_module
 from since_cutoff.cache import DiskCache
-from since_cutoff.engine import Engine, Settings, stale_warning
+from since_cutoff.engine import NEW, Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
 from since_cutoff.project import load_project
 from since_cutoff.pypi import (
@@ -264,6 +266,48 @@ def test_a_scan_says_which_release_lists_are_older_copies(index, cache, slept, t
     index.add("other", "1.0", "other-1.0-py3-none-any.whl", wheel({"other/__init__.py": ""}))
     other = write_tree(tmp_path / "other-app", {"requirements.txt": "other==1.0\n"})
     assert engine.scan(load_project(other), engine.resolve_target()).warnings == []
+
+
+def test_offline_a_copy_cached_by_0_5_is_asked_for_once_per_scan(
+    cache, slept, tmp_path, monkeypatch
+) -> None:
+    """A copy within METADATA_TTL from before the metadata kept the URLs, PyPI unreachable:
+    each read of the scan (release, project_urls, version_at, releases, summary) asked PyPI
+    again, 3 attempts each, 15 for one package. The copy is kept for STALE_REUSE as an older
+    one is, and since it is fresh by date the scan does not call it stale."""
+    attempts: list[str] = []
+
+    def refused(req: urllib.request.Request, *args: Any, **kwargs: Any) -> Any:
+        attempts.append(req.full_url)
+        raise urllib.error.URLError(ConnectionRefusedError("connection refused"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
+    wheel_file = {
+        "filename": "toy-1.0-py3-none-any.whl",
+        "url": "https://files.example/toy-1.0-py3-none-any.whl",
+        "size": 1,
+        "upload_time_iso_8601": "2025-01-10T12:00:00.000000Z",
+        "yanked": False,
+    }
+    old_shape = {"info": {"name": "toy", "version": "1.0", "summary": "Toy"}}
+    cache.set("pypi", "toy", {**old_shape, "releases": {"1.0": [wheel_file]}})
+    app = write_tree(
+        tmp_path / "app", {"requirements.txt": "toy==1.0\n", "main.py": "import toy\n"}
+    )
+    settings = Settings(model="scripted:scripted-1", cutoff=date(2024, 12, 31), jobs=2)
+    pypi = PyPI(cache)
+    engine = Engine(
+        settings,
+        store=cache,
+        llm_cache=cache,
+        pypi=pypi,
+        provider_factory=lambda spec: ScriptedModel(),
+    )
+    scan = engine.scan(load_project(app), engine.resolve_target())
+    toy = scan.package("toy")
+    assert (toy.status, toy.summary, toy.changelog) == (NEW, "Toy", None)
+    assert len(attempts) <= 3
+    assert scan.warnings == [] and scan.stale == {} and pypi.stale == {}
 
 
 def test_the_warning_names_every_older_copy() -> None:

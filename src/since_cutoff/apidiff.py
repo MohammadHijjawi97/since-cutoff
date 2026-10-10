@@ -461,7 +461,8 @@ class APIChange:
             if self.parameter:
                 return f"`{call}`: parameter `{self.parameter}` is deprecated{pkg}{extra}"
             if self.call_form_only:
-                keywords = ", ".join(f"`{p}=`" for p in self.call_form_only)
+                named = [f"`{p}=`" for p in self.call_form_only]
+                keywords = f"{', '.join(named[:-1])} or {named[-1]}" if named[1:] else named[0]
                 return f"`{path}` called with {keywords} is deprecated{pkg}{extra}"
             if self.call_form and len(self.call_form) <= CALL_FORM_LIMIT:
                 return f"`{path}` called as `{self.call_form}` is deprecated{pkg}{extra}"

@@ -8,7 +8,8 @@ from typing import Any
 
 from since_cutoff.apidiff import APIChange
 
-PROMPT_VERSION = 2
+# 3: APIChange.describe(), which both prompts quote, names a deprecated call form (0.6).
+PROMPT_VERSION = 3
 
 # --------------------------------------------------------------- task writer
 TASK_SYSTEM = (

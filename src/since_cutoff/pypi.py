@@ -143,6 +143,7 @@ _GITHUB_NOT_OWNERS = frozenset(
         "team",
         "topics",
         "trending",
+        "users",
     }
 )
 _GITHUB_REPO = re.compile(
@@ -190,8 +191,9 @@ class PyPI:
         # Release lists served from a cache entry older than METADATA_TTL because PyPI could
         # not be reached: canonical name -> (the entry, the day it was fetched, when it was
         # last tried). Reused for STALE_REUSE seconds, so that each later lookup in a scan does
-        # not wait for the retries again.
-        self._stale: dict[str, tuple[dict[str, Any], date, float]] = {}
+        # not wait for the retries again. The day is None for a copy within METADATA_TTL that
+        # only lacks the URLs (PyPI.project): reused the same way, but it is not stale.
+        self._stale: dict[str, tuple[dict[str, Any], date | None, float]] = {}
 
     @property
     def stale(self) -> dict[str, date]:
@@ -200,7 +202,9 @@ class PyPI:
         A package leaves it once PyPI answers for it again.
         """
         with self._locks_guard:
-            return {name: day for name, (_, day, _) in sorted(self._stale.items())}
+            return {
+                name: day for name, (_, day, _) in sorted(self._stale.items()) if day is not None
+            }
 
     def _lock(self, key: str) -> threading.Lock:
         with self._locks_guard:
@@ -211,7 +215,8 @@ class PyPI:
         """The package's PyPI JSON, cut down to what the scan reads: ``info`` (name, version,
         summary, project_urls, home_page) and ``releases``. Cached for METADATA_TTL; a cached
         copy from before the info held the URLs is fetched again, and read as it is when PyPI
-        cannot be reached (it is no older than the TTL: only the URLs are missing)."""
+        cannot be reached (it is no older than the TTL: only the URLs are missing), for
+        STALE_REUSE seconds without asking PyPI again, and not counted in :attr:`stale`."""
         key = canonicalize_name(name)
         cached = self.cache.get("pypi", key, max_age=METADATA_TTL)
         old_shape: dict[str, Any] | None = None
@@ -235,8 +240,10 @@ class PyPI:
         except net.HTTPError as exc:
             if exc.status == 404:
                 raise PackageIndexError(f"'{name}' is not on PyPI") from exc
-            if old_shape is not None:
-                return dict(old_shape)  # fresh enough; the notes point at no changelog
+            if old_shape is not None:  # fresh enough; the notes point at no changelog
+                with self._locks_guard:
+                    self._stale[key] = (old_shape, None, time.monotonic())
+                return dict(old_shape)
             fallback = self._stale_copy(key) if exc.transient else None
             if fallback is not None:
                 return fallback
