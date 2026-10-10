@@ -280,8 +280,8 @@ class Tools:
                 is looked up.
             cutoff: your training cutoff instead of `model`, as "YYYY-MM" or "YYYY-MM-DD",
                 e.g. "2025-02".
-            from_version: compare from this version instead of the one at the cutoff, e.g.
-                "0.29.1".
+            from_version: compare from this version instead of the latest release 30 days
+                before the cutoff, or the margin given, e.g. "0.29.1".
             to_version: the version the project uses, e.g. "2.0.0" (default: the latest
                 release on PyPI).
             symbol: only changes to what this names, e.g. "hf_hub_download",

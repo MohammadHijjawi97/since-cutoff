@@ -136,8 +136,9 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
      `gemini-extension.json`, and the skill's `metadata.version` in
      `skills/since-cutoff/SKILL.md`;
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
-   - the README pins: the pre-commit `rev: vX.Y.Z` in `README.md` and `README.zh-CN.md`, and
-     the `since-cutoff-version` default in the action's input table;
+   - the README pins, in each of the four READMEs (`README.md`, `README.zh-CN.md`,
+     `README.es.md` and `README.fr.md`): the pre-commit `rev: vX.Y.Z` and the
+     `since-cutoff-version` default in the action's input table;
    - for 0.4.0 only: rename `hooks/hooks.json.in` to `hooks/hooks.json` (the plugin's
      SessionStart hook runs `since-cutoff status`, which 0.4.0 added), and from then on keep
      its `since-cutoff==X.Y.Z` pin current;

@@ -125,12 +125,17 @@ FIELDS: dict[str, Callable[[], Any]] = {
         "action.yml", rf'^  since-cutoff-version:\n(?:    .*\n)*?    default: "{_VERSION}"$'
     ),
     "CHANGELOG.md newest release": lambda: _match("CHANGELOG.md", rf"^## {_VERSION} - "),
-    "README.md pre-commit rev": lambda: _match("README.md", rf"^    rev: v{_VERSION}$"),
-    "README.md action input table": lambda: _match(
-        "README.md", rf"^\| `since-cutoff-version` \| `{_VERSION}` \|"
-    ),
-    "README.zh-CN.md pre-commit rev": lambda: _match("README.zh-CN.md", rf"^    rev: v{_VERSION}$"),
 }
+# Each README pins the release twice: the pre-commit `rev`, and the action's `since-cutoff-version`
+# default in its input table.
+READMES = ("README.md", "README.zh-CN.md", "README.es.md", "README.fr.md")
+for _readme in READMES:
+    FIELDS[f"{_readme} pre-commit rev"] = lambda name=_readme: _match(
+        name, rf"^    rev: v{_VERSION}$"
+    )
+    FIELDS[f"{_readme} action input table"] = lambda name=_readme: _match(
+        name, rf"^\| `since-cutoff-version` \| `{_VERSION}` \|"
+    )
 
 
 def versions() -> dict[str, str | None]:

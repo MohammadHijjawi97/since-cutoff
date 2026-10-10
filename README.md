@@ -12,6 +12,50 @@ can write calls your pinned versions no longer accept. since-cutoff shows where 
 API that changed after the model's training cutoff, and writes the short notes your assistant
 needs to avoid the old form.**
 
+since-cutoff is a command-line tool and MCP server for Python projects. `scan` reads your
+lockfile, takes each dependency's latest release on or before your coding model's training
+cutoff, compares that release's public API with the version you pin, statically, and shows which
+of the changed APIs your code uses, where, with a note for each. `sync` writes the notes into
+AGENTS.md or CLAUDE.md and keeps them in step with the lockfile; `status`, pre-commit hooks and a
+GitHub Action tell you when they fall behind. `run`, optional, measures which of the changes your
+model actually gets wrong and whether the notes help. Only `run` calls a model.
+
+[![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
+![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
+
+**English** | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
+
+## Install
+
+Python 3.10 or later, on Linux, macOS or Windows.
+
+```bash
+pipx install since-cutoff    # or: pip install since-cutoff
+```
+
+Or run it without installing: `uvx since-cutoff scan` downloads the current release and runs it
+(`uvx since-cutoff@latest scan` picks up new releases instead of the first one uv cached).
+
+Run it from your project root. It reads `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`,
+`Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` or a `.venv` (not `setup.py` or
+`setup.cfg`). Without `--model` it uses the model your coding agent is set up with, from the
+Claude Code, Codex, Gemini CLI, OpenCode or Aider settings; for any other model, pass `--model`
+(see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
+`scan`, `sync` and `status` call no model and need no API key; `run` sends prompts to the model
+provider and uses your API credits or Claude Code usage.
+
+Inside a coding agent, a skill runs these commands for you: see
+[In Claude Code](https://github.com/MohammadHijjawi97/since-cutoff#in-claude-code) and
+[In other coding agents](https://github.com/MohammadHijjawi97/since-cutoff#in-other-coding-agents).
+The [MCP server](https://github.com/MohammadHijjawi97/since-cutoff#use-it-from-any-agent-mcp)
+gives any agent the same diff.
+
+## Quick start
+
 The [sample project](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)
 calls `client.messages.create` and pins anthropic 1.8.0. The latest anthropic release at Claude
 Sonnet 4.5's training cutoff was 0.60.0, whose `create` still took `temperature`; 1.8.0 raises
@@ -48,6 +92,27 @@ public APIs. The parameters left the signature, which is not the same as the API
 field, so where the pinned method has an `extra_body` or `extra_query` argument the note says
 so instead of telling the assistant to drop the field.
 
+`since-cutoff sync` then writes the two notes. It prints the block as a diff and asks
+`Write this to AGENTS.md? [y/N]` (`--yes` writes without asking; `--dry-run` only shows the
+diff). For the sample project, the block ends with:
+
+```markdown
+**anthropic 1.8.0** (compared from 0.56.0)
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+
+**huggingface-hub 2.0.0** (compared from 0.33.1)
+- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
+<!-- since-cutoff:end -->
+```
+
+Above the bullets are the start marker, a meta line (the model, its cutoff, where the versions
+come from, a hash of the dependencies and a hash of the block's own text, so that a hand edit
+shows) and a header that names the model, the cutoff and the file the versions come from, says
+what the tags mean and that no library code was run. The whole block is about 420 tokens. Text
+outside the block keeps its bytes, and `since-cutoff unapply` removes the block. After an
+upgrade, run `sync` again; `sync --check` in CI and `status` offline tell you when the notes
+fall behind ([Keep the notes current](https://github.com/MohammadHijjawi97/since-cutoff#keep-the-notes-current-sync-and-status)).
+
 **Try it on your project.** No API key, no model call. In the project root:
 
 ```bash
@@ -62,16 +127,35 @@ wrong, and whether the notes help, is what
 [`since-cutoff run`](https://github.com/MohammadHijjawi97/since-cutoff#measure-your-model)
 measures; it calls your model and is optional.
 
-[![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
-![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
-[![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
-![Status: beta](https://img.shields.io/badge/status-beta-orange)
-[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
+## When to use it, and what it does not do
 
-<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="Watch the 2½-minute explainer (video with voice-over)"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ Watch the 2½-minute explainer (video with voice-over)</a></p>
+Use it when you write Python with a coding agent and pin dependencies that have released since
+the model's training cutoff; for the Python AI stack, that is most of them
+([The problem](https://github.com/MohammadHijjawi97/since-cutoff#the-problem)):
 
-**English** | [简体中文](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md) | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
+- `scan` for a look: the changed APIs your code uses, where, and a note for each;
+- `sync` to put the notes into AGENTS.md or CLAUDE.md and keep them current, and `sync --check`,
+  `status`, the pre-commit hooks or the GitHub Action to be told when they fall behind;
+- the MCP server to let an agent ask what changed in a library before it writes code;
+- `run` to find out whether your model actually writes the old API, and whether the notes fix it.
+
+It does not:
+
+- call a model, except `run`: `scan`, `sync`, `status`, the MCP server, the Action and the hooks
+  need no API key;
+- run package code or model-written code: packages are read statically, and answers are only
+  type-checked;
+- see behaviour changes behind an unchanged signature, or deprecations that only warn at run time;
+- name a replacement unless the library's own deprecation text states it;
+- say what the model memorised: the cutoff picks the comparison release, and only `run` asks the
+  model;
+- rewrite your code: for migrating code you already have, a codemod is the right tool
+  ([How it compares](https://github.com/MohammadHijjawi97/since-cutoff#how-it-compares));
+- cover other languages yet: Python only, TypeScript is
+  [#1](https://github.com/MohammadHijjawi97/since-cutoff/issues/1); and it names files, not
+  lines ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)).
+
+The full list is in [Limitations](https://github.com/MohammadHijjawi97/since-cutoff#limitations).
 
 ## The problem
 
@@ -90,10 +174,10 @@ unpinned, the tool uses the latest release):
 | anthropic | 0.60.0 | 1.8.0 | `messages.create(temperature=..., top_p=..., top_k=...)` is no longer accepted |
 | huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` left the signature in 1.0 (2.0.0 still accepts them at run time, ignores them and warns) |
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()` and `llm.predict()` removed |
-| openai | 1.98.0 | 3.19.2 | 21 breaking changes, 6 new deprecations |
+| openai | 1.98.0 | 3.19.2 | 22 breaking changes, 6 new deprecations |
 
 In that project, 7 of 9 dependencies changed their public API after the cutoff. The static diff
-flags 310 breaking changes and 23 new deprecations; the project's code uses 2 of the changed
+flags 307 breaking changes and 23 new deprecations; the project's code uses 2 of the changed
 APIs.
 
 It is not one model or one vendor. Across 36 widely used Python AI libraries and 21 models from
@@ -123,8 +207,12 @@ since-cutoff does three things about it:
 
 The same diff is available to agents through an [MCP server](https://github.com/MohammadHijjawi97/since-cutoff#use-it-from-any-agent-mcp)
 and to CI through a [GitHub Action and pre-commit hooks](https://github.com/MohammadHijjawi97/since-cutoff#use-in-ci).
+The explainer below covers this section in 2½ minutes.
 
-## Quick start
+<!-- The video is attached to the v0.5.0 release only (release.yml uploads dist/* alone), so its URL names that release. -->
+<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="Watch the 2½-minute explainer (video with voice-over)"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ Watch the 2½-minute explainer (video with voice-over)</a></p>
+
+## Using it
 
 ```bash
 # the changed APIs your code uses, with a note for each (no model calls, no API key)
@@ -137,16 +225,7 @@ uvx since-cutoff sync
 uvx since-cutoff run
 ```
 
-Or install it with `pipx install since-cutoff` (or `pip install since-cutoff`) and run
-`since-cutoff`. Run it from your project root: it reads `uv.lock`, `poetry.lock`, `pdm.lock`,
-`pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` or a `.venv`
-(not `setup.py` or `setup.cfg`). Without `--model` it uses the model your coding agent is set
-up with, from the Claude Code, Codex, Gemini CLI, OpenCode or Aider settings; for any other
-model, pass `--model` (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
-`scan`, `sync` and `status` call no model and need no API key; `run` sends prompts to the model
-provider and uses your API credits or Claude Code usage.
-
-What `scan` prints for the sample project:
+What `scan` prints for the sample project, in full:
 
 <p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="since-cutoff scan --model anthropic:claude-sonnet-4-5 on the sample project. Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31). huggingface-hub 0.33.1 -> 2.0.0: hf_hub_download, used in app/main.py, no longer has force_filename, local_dir_use_symlinks, resume_download and proxies in its signature; its note is tagged [diff], and a Runtime line says that 2.0.0's source still handles them, so calls passing them may run with a warning. anthropic 0.56.0 -> 1.8.0: Messages.create, called in app/main.py, no longer accepts temperature, top_k and top_p; its note is tagged [diff]. 2 notes ready for AGENTS.md; what uses this API and [diff] mean; 496 more changes in 7 packages that the code does not use."></p>
 
@@ -164,22 +243,9 @@ AGENTS.md, or in CLAUDE.md when only that file exists, and where a block already
 one (`--target` names another file). It prints a unified diff and asks
 `Write this to AGENTS.md? [y/N]`; `--yes` writes without asking, and with no terminal to ask in
 it writes nothing. Text outside the block keeps its bytes, CRLF line breaks included, and
-`since-cutoff unapply` removes the block. For the sample project, the block ends with:
-
-```markdown
-**anthropic 1.8.0** (compared from 0.56.0)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
-
-**huggingface-hub 2.0.0** (compared from 0.33.1)
-- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
-<!-- since-cutoff:end -->
-```
-
-Above the bullets are the start marker, a meta line (the model, its cutoff, where the versions
-come from, a hash of the dependencies and a hash of the block's own text, so that a hand edit
-shows) and a header that names the model, the cutoff and the file the versions come from, says
-what the tags mean and that no library code was run. The Runtime caveat stays out of the block:
-the advice ("do not pass them") is the same either way.
+`since-cutoff unapply` removes the block. The block for the sample project is in
+[Quick start](https://github.com/MohammadHijjawi97/since-cutoff#quick-start). The Runtime caveat
+stays out of the block: the advice ("do not pass them") is the same either way.
 
 Run `sync` again after you change the lockfile or the code. It adds notes for APIs your code
 starts using, checks a bumped package again, and drops a package's notes when it is no longer a
@@ -349,6 +415,64 @@ The model line shows both days. `scan` and
 (`claude-haiku-4-5`, `sonnet`) or with any provider models.dev lists (`google:gemini-2.5-pro`,
 Amazon Bedrock and Vertex AI ids included); `run` needs a provider from the table above.
 
+## FAQ
+
+**Is the training cutoff the date from which the model knows nothing about a library?** No.
+since-cutoff uses the cutoff only to choose a comparison point: for each dependency, by default
+the latest release published at least 30 days before that date, whose public API it diffs against
+the version you pin (`--cutoff-margin 0` restores the old behaviour: the newest release on or
+before the cutoff itself). Models know the months before their cutoff poorly and may know a
+release that came after it, so the scan can list changes the model already handles and miss some
+it does not. Whether the model writes the old API is what `run` measures. The dates come from
+[models.dev](https://models.dev); `since-cutoff models <name>` lists each model's cutoff next to
+its release date, which are months apart (claude-sonnet-4-5: cutoff 2025-07-31, released
+2025-09-29). More in
+[What the training cutoff is used for](https://github.com/MohammadHijjawi97/since-cutoff#what-the-training-cutoff-is-used-for).
+
+**What is sent where?** `scan`, `sync`, `status`, the MCP server, the GitHub Action and the
+pre-commit hooks read PyPI (metadata and wheels) and models.dev, and send nothing to any model.
+`run` sends prompts to the model provider you choose: package names, versions, the public
+signatures and docstrings of the changed APIs, the generated tasks and, for notes, the model's own
+answers; never your source code. Which files use a changed API is shown in the terminal and in
+`.since-cutoff/`, and goes further only where you send it: a CI summary with `--markdown`, or the
+agent that called the MCP tool `project_changes`. No telemetry. Details:
+[What it runs, sends and stores](https://github.com/MohammadHijjawi97/since-cutoff#what-it-runs-sends-and-stores)
+and [PRIVACY.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/PRIVACY.md).
+
+**Why do some notes say "since-cutoff found no replacement"?** A note names a replacement only
+when the library's own deprecation text states one and that name exists in your pinned version
+(tag `[diff + library]`). Otherwise the note states the change and says that no replacement was
+found: a guessed replacement that an agent then follows is worse than none. Names in the pinned
+version that merely look similar are shown in the terminal as "not confirmed as replacements";
+`sync --suggestions` writes them into the notes, tagged `[not confirmed]`. Where the pinned method
+still has an `extra_body` or `extra_query` argument, as anthropic's `Messages.create()` does, the
+note points to it, since a request parameter that left the signature may still be accepted by the
+API.
+
+**AGENTS.md or CLAUDE.md?** `sync` writes to AGENTS.md; to CLAUDE.md when only that file
+exists; and into whichever of the two already has a block (`--target` names any file). Claude
+Code reads CLAUDE.md, and AGENTS.md only when CLAUDE.md imports it with a line `@AGENTS.md`;
+when the notes go to AGENTS.md and CLAUDE.md does not import it, `scan` and `sync` say so. To
+keep one copy, add `@AGENTS.md` to CLAUDE.md. To keep a block in both files, write the second
+one once with `sync --target CLAUDE.md --model <the same model>`; from then on `sync` updates
+both and `status` reports both. Writing to both by default is
+[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+
+**How much do the notes cost in tokens?** The agent reads the block on every turn. For the
+sample project it is about 420 tokens, of which the two notes are about 160; the rest is the
+header that names the model and the cutoff and says what the tags mean (counted at four
+characters per token, as since-cutoff does). `sync` writes notes only for the changed APIs your
+code uses (`--scope imported` adds up to 5 per imported package), and a model-written note has
+at most 60 words. In the benchmark, the blocks were 285 to 505 tokens, and sessions with the
+notes used 0.73 times the total tokens of sessions without them. `run` reports each block's size
+in tokens.
+
+**Does it work offline?** `status` reads nothing from the network. `scan` and `sync` need PyPI
+for each package's release list (cached for 12 hours; when PyPI cannot be reached, an older cached
+copy is used and the scan says from which day it is) and for the sources of each changed package;
+sources and diffs are cached, so later runs take seconds. Training cutoffs come from models.dev,
+with a bundled snapshot for offline use.
+
 ## Results
 
 What has been measured so far, each with its scope:
@@ -419,8 +543,8 @@ The notes written in the Claude Haiku 4.5 run (excerpt, verbatim; since-cutoff 0
 The huggingface-hub note is not quite right: `resume_download` left the signature in 1.0, not
 2.0.0, and 2.0.0 still accepts it at run time, ignores it and warns
 ([source](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)).
-Omitting it is still the right advice. The note 0.4.0 writes from the API diff for the same
-arguments is in [Keep the notes current](https://github.com/MohammadHijjawi97/since-cutoff#keep-the-notes-current-sync-and-status);
+Omitting it is still the right advice. The note that 0.4.0 and later write from the API diff for
+the same arguments is in [Quick start](https://github.com/MohammadHijjawi97/since-cutoff#quick-start);
 the runtime caveat is in the terminal, the report and the JSON, not in the block.
 
 The terminal summary of the Claude Opus 4.6 run, recorded with 0.1.0. The probe results are the

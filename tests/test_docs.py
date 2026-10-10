@@ -135,8 +135,19 @@ def _unwrapped(text: str) -> str:
 @pytest.mark.parametrize("name", READMES)
 def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     text = _text(name)
-    first = text.split("\n## ", 1)[0]
+    # The first screen: what it is, then the first two sections, Install and Quick start.
+    sections = text.split("\n## ", 3)
+    first = "\n## ".join(sections[:3])
     [console] = re.findall(r"```console\n(.*?)```", first, re.S)
+    # Install comes first: its commands are in the first section, within the first 50
+    # lines and before the scan output, which is in the second (0.5.0 opened with the
+    # scan output and showed the install commands at line 137, after The problem).
+    assert "pipx install since-cutoff" in sections[1]
+    assert "pip install since-cutoff" in sections[1]
+    install = text.index("pipx install since-cutoff")
+    assert text.count("\n", 0, install) < 50
+    assert install < text.index("```console")
+    assert sections[2].count("```console") == 1
     lines = console.splitlines()
     assert lines[0] == "$ uvx since-cutoff scan --model anthropic:claude-sonnet-4-5"
     assert lines[1] == (

@@ -5,7 +5,36 @@
 
 <h1 align="center">since-cutoff</h1>
 
+<!-- mcp-name: io.github.MohammadHijjawi97/since-cutoff -->
+
 **你的编程助手的训练数据截止于你的依赖最新版本发布之前，所以它可能写出你锁定的版本已经不再接受的调用。since-cutoff 指出你的代码在哪里用到了在模型训练截止日期之后发生变化的 API，并写出简短的说明，帮助你的助手避开旧写法。**
+
+since-cutoff 是一个面向 Python 项目的命令行工具和 MCP 服务器。`scan` 读取你的 lockfile，为每个依赖取你的编程模型训练截止日期当天或之前发布的最新版本，静态地把这个版本的公开 API 与你锁定的版本对比，并指出你的代码用到了哪些有变更的 API、在哪里用到，为每个 API 给出一条说明。`sync` 把这些说明写进 AGENTS.md 或 CLAUDE.md，并让它们与 lockfile 保持同步；说明过时时，`status`、pre-commit 钩子和 GitHub Action 会提醒你。`run`（可选）测量你的模型实际会写错哪些变更，以及这些说明是否有用。只有 `run` 会调用模型。
+
+[![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
+![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
+
+[English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | **简体中文** | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
+
+## 安装
+
+需要 Python 3.10 或更高版本，支持 Linux、macOS 和 Windows。
+
+```bash
+pipx install since-cutoff    # 或：pip install since-cutoff
+```
+
+也可以不安装直接运行：`uvx since-cutoff scan` 会下载当前版本并运行（`uvx since-cutoff@latest scan` 会使用新发布的版本，而不是 uv 第一次缓存的那个）。
+
+请在项目根目录运行。它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、Gemini CLI、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
+
+在编程 Agent 中，可以由技能替你运行这些命令：见[在 Claude Code 中使用](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在-claude-code-中使用)和[在其他编程 Agent 中使用](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在其他编程-agent-中使用)。[MCP 服务器](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在任意-agent-中使用mcp)把同样的对比结果提供给任意 Agent。
+
+## 快速开始
 
 [示例项目](https://github.com/MohammadHijjawi97/since-cutoff/tree/main/examples/agent-app)调用了 `client.messages.create`，并锁定 anthropic 1.8.0。在 Claude Sonnet 4.5 的训练截止日期，anthropic 的最新版本是 0.60.0，它的 `create` 还接受 `temperature`；1.8.0 遇到这个参数会抛出 `TypeError`。`scan` 的输出（只保留 anthropic 部分；它从 0.56.0 开始对比，即截止日期前 30 天发布的最新版本：模型对截止日期前几周的了解最少）：
 
@@ -32,6 +61,19 @@ anthropic 0.56.0 -> 1.8.0 (0.56.0 was the latest release 30 days before the cuto
 
 `app/main.py` 中的调用没有传这些参数中的任何一个，所以被标为“uses this API”（用到了这个 API），而不是“old form”（旧写法）：它现在能正常运行，但一个按 0.60.0 写代码的助手在修改这个调用时，可能会加上 `temperature=0.2`。这条说明就是 `since-cutoff sync` 写进 AGENTS.md、用来防止这种情况的内容；它的标签 `[diff]` 表明了它的依据：对两个版本公开 API 的静态对比。参数从函数签名中移除，并不等于 API 不再接受这个字段；所以当锁定版本的方法带有 `extra_body` 或 `extra_query` 参数时，说明会指出这一点，而不是让助手删掉这个字段。
 
+接着，`since-cutoff sync` 写入这两条说明。它以 diff 的形式显示区块，并询问 `Write this to AGENTS.md? [y/N]`（`--yes` 不询问直接写入；`--dry-run` 只显示 diff）。对于示例项目，区块的结尾是：
+
+```markdown
+**anthropic 1.8.0** (compared from 0.56.0)
+- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
+
+**huggingface-hub 2.0.0** (compared from 0.33.1)
+- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
+<!-- since-cutoff:end -->
+```
+
+在这些条目之上是开始标记、一行元数据（模型、它的截止日期、版本的来源、依赖的哈希值，以及区块自身文本的哈希值，这样手动修改就能被发现），以及一段开头说明：写明模型、截止日期和版本来自哪个文件，解释各个标签的含义，并说明没有运行任何库的代码。整个区块约 420 个 token。区块以外的文本逐字节保持不变，`since-cutoff unapply` 可以移除这个区块。升级依赖后再运行一次 `sync`；CI 中的 `sync --check` 和离线的 `status` 会在说明过时时提醒你（见[用 sync 和 status 保持说明最新](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#用-sync-和-status-保持说明最新)）。
+
 **在你的项目上试试。** 不需要 API key，不调用模型。在项目根目录运行：
 
 ```bash
@@ -40,16 +82,26 @@ uvx since-cutoff scan
 
 它会检测你的编程模型（也可以用 `--model` 指定），读取你的 lockfile，为每个依赖取模型训练截止日期当天或之前发布的最新版本，并静态地把这个版本的公开 API 与你锁定的版本对比：不运行任何包代码。截止日期只用来决定看哪些变更，并不代表模型记住了什么。你的模型是否真的会写错这些 API、说明是否有用，由 [`since-cutoff run`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#测量你的模型) 来测量；它会调用你的模型，是可选的。
 
-[![PyPI](https://img.shields.io/pypi/v/since-cutoff)](https://pypi.org/project/since-cutoff/)
-![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
-[![CI](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml/badge.svg)](https://github.com/MohammadHijjawi97/since-cutoff/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/LICENSE)
-![Status: beta](https://img.shields.io/badge/status-beta-orange)
-[![since-cutoff MCP server on Glama](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff/badges/score.svg)](https://glama.ai/mcp/servers/MohammadHijjawi97/since-cutoff)
+## 适用场景，以及它不做什么
 
-<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="观看 2 分半钟的讲解视频（带配音）"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ 观看 2 分半钟的讲解视频（带配音）</a></p>
+如果你用编程 Agent 写 Python，并且锁定的依赖在模型训练截止日期之后发布过新版本，就适合用它；在 Python AI 生态中，大多数库都是这样（见[问题是什么](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#问题是什么)）：
 
-[English](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.md) | **简体中文** | [Español](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md) | [Français](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md)
+- 用 `scan` 看一眼：你的代码用到的有变更的 API、在哪里用到，每个附一条说明；
+- 用 `sync` 把说明写进 AGENTS.md 或 CLAUDE.md 并保持最新，用 `sync --check`、`status`、pre-commit 钩子或 GitHub Action 在说明过时时得到提醒；
+- 用 MCP 服务器让 Agent 在写代码之前先问一下某个库改了什么；
+- 用 `run` 弄清你的模型是否真的会写旧 API，以及说明能否纠正它。
+
+它不做的事：
+
+- 调用模型（`run` 除外）：`scan`、`sync`、`status`、MCP 服务器、Action 和钩子都不需要 API key；
+- 运行包代码或模型写的代码：包只被静态读取，回答只经过类型检查；
+- 发现函数签名不变但行为改变的情况，以及只在运行时发出警告的弃用；
+- 给出替代写法，除非库自己的弃用文本中写明了替代写法；
+- 断言模型记住了什么：截止日期只用来选对比版本，只有 `run` 会去问模型；
+- 改写你的代码：要迁移已有代码，codemod 才是合适的工具（见[与其他工具的比较](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#与其他工具的比较)）；
+- 支持其他语言：目前只支持 Python，TypeScript 见 [#1](https://github.com/MohammadHijjawi97/since-cutoff/issues/1)；它给出的是文件名，不是行号（[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)）。
+
+完整列表见[局限](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#局限)。
 
 ## 问题是什么
 
@@ -62,9 +114,9 @@ uvx since-cutoff scan
 | anthropic | 0.60.0 | 1.8.0 | `messages.create(temperature=..., top_p=..., top_k=...)` 不再被接受 |
 | huggingface-hub | 0.34.3 | 2.0.0 | `hf_hub_download(resume_download=..., force_filename=..., local_dir_use_symlinks=...)` 这些参数在 1.0 中已从函数签名里去掉（2.0.0 在运行时仍接受它们，但会忽略并发出警告） |
 | langchain-core | 0.3.72 | 1.6.5 | `retriever.get_relevant_documents()` 和 `llm.predict()` 已移除 |
-| openai | 1.98.0 | 3.19.2 | 21 个破坏性变更，6 个新的弃用 |
+| openai | 1.98.0 | 3.19.2 | 22 个破坏性变更，6 个新的弃用 |
 
-在这个项目中，9 个依赖里有 7 个在截止日期之后改了公开 API。静态对比共标出 310 个破坏性变更和 23 个新的弃用；项目代码用到了其中 2 个有变更的 API。
+在这个项目中，9 个依赖里有 7 个在截止日期之后改了公开 API。静态对比共标出 307 个破坏性变更和 23 个新的弃用；项目代码用到了其中 2 个有变更的 API。
 
 这不是某一个模型或某一家厂商的问题。在 36 个常用的 Python AI 库和来自 OpenAI、Anthropic、Google、xAI、DeepSeek、Qwen、Moonshot、Mistral 的 21 个模型上，即使是测试中最新的模型（Claude Opus 5.5，训练截止 2026 年 6 月），这 36 个库里也有 20 个在它的截止日期之后发生了公开 API 的破坏性变更（[完整结果](https://mohammadhijjawi97.github.io/since-cutoff/ai-stack.html)，英文）：
 
@@ -79,9 +131,12 @@ since-cutoff 针对这个问题做三件事：
 2. **`sync`**：先给你看 diff，再把这些说明写进 AGENTS.md（或 CLAUDE.md）中一个带标记的区块，并让它们与你的 lockfile 保持同步；说明过时时，`sync --check` 和 `status` 会提醒 CI、pre-commit 和你的 Agent。每条说明都根据 API 对比结果写成，并带有一个标签，表明检查了什么。不调用模型。
 3. **`run`**（可选）：在不给工具、不给文档的情况下，让模型完成需要用到这些变更 API 的简短编程任务，再用类型检查器针对*两个*版本分别给每个回答打分：过时（stale）、写错（wrong）、已弃用（deprecated）或正确（correct）。全程没有 LLM 当评判。它为每个失败项写一条说明；模型写的说明只有在其中的示例能通过你所用版本的类型检查时才保留；然后在留出任务（held-out）上，分别在无说明和有说明的情况下重新测试模型。
 
-同样的对比结果也通过 [MCP 服务器](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在任意-agent-中使用mcp)提供给 Agent，通过 [GitHub Action 和 pre-commit 钩子](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在-ci-中使用)提供给 CI。
+同样的对比结果也通过 [MCP 服务器](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在任意-agent-中使用mcp)提供给 Agent，通过 [GitHub Action 和 pre-commit 钩子](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在-ci-中使用)提供给 CI。下面的讲解视频（英文）用两分半钟概括了这一节。
 
-## 快速开始
+<!-- 视频只附在 v0.5.0 这个发布版本上（release.yml 只上传 dist/*），所以它的 URL 写的是这个版本。 -->
+<p align="center"><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/explainer-thumbnail.png" width="560" alt="观看 2 分半钟的讲解视频（带配音）"></a><br><a href="https://github.com/MohammadHijjawi97/since-cutoff/releases/download/v0.5.0/since-cutoff-explainer.mp4">▶ 观看 2 分半钟的讲解视频（带配音）</a></p>
+
+## 使用方法
 
 ```bash
 # 你的代码用到的、有变更的 API，每个附一条说明（不调用模型，不需要 API key）
@@ -94,9 +149,7 @@ uvx since-cutoff sync
 uvx since-cutoff run
 ```
 
-也可以用 `pipx install since-cutoff`（或 `pip install since-cutoff`）安装，然后运行 `since-cutoff`。请在项目根目录运行：它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
-
-`scan` 在示例项目上的输出：
+`scan` 在示例项目上的完整输出：
 
 <p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="在示例项目上运行 since-cutoff scan --model anthropic:claude-sonnet-4-5。你的代码用到了 2 个在 claude-sonnet-4-5 训练截止日期（2025-07-31）之后发生变化的 API。huggingface-hub 0.33.1 -> 2.0.0：app/main.py 用到的 hf_hub_download 的签名中不再有 force_filename、local_dir_use_symlinks、resume_download 和 proxies；它的说明标为 [diff]，一行 Runtime 提示指出 2.0.0 的源码仍会处理这些参数，所以传入它们的调用可能会带着警告运行。anthropic 0.56.0 -> 1.8.0：app/main.py 调用的 Messages.create 不再接受 temperature、top_k 和 top_p；它的说明标为 [diff]。2 条说明可以写入 AGENTS.md；uses this API 和 [diff] 的含义；代码没有用到的另外 7 个包中的 496 个变更。"></p>
 
@@ -104,18 +157,7 @@ uvx since-cutoff run
 
 ### 用 sync 和 status 保持说明最新
 
-`since-cutoff sync`（0.4.0 及以后）把 `scan` 显示的说明写进一个带标记的区块：写在 AGENTS.md 中；只有 CLAUDE.md 时写在 CLAUDE.md 中；已经有区块的，就更新那个区块（`--target` 可以指定其他文件）。它会显示一个统一格式的 diff，并询问 `Write this to AGENTS.md? [y/N]`；`--yes` 不询问直接写入；没有可以询问的终端时，它什么也不写。区块以外的文本逐字节保持不变（包括 CRLF 换行），`since-cutoff unapply` 可以移除这个区块。对于示例项目，区块的结尾是：
-
-```markdown
-**anthropic 1.8.0** (compared from 0.56.0)
-- `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text. [diff]
-
-**huggingface-hub 2.0.0** (compared from 0.33.1)
-- `huggingface_hub.hf_hub_download()` no longer accepts `proxies`, `force_filename`, `local_dir_use_symlinks` or `resume_download`; do not pass them. huggingface-hub's deprecation text says there is no replacement for `force_filename`, `local_dir_use_symlinks` or `resume_download`. since-cutoff found no replacement for `proxies` in huggingface-hub's deprecation text. [diff]
-<!-- since-cutoff:end -->
-```
-
-在这些条目之上是开始标记、一行元数据（模型、它的截止日期、版本的来源、依赖的哈希值，以及区块自身文本的哈希值，这样手动修改就能被发现），以及一段开头说明：写明模型、截止日期和版本来自哪个文件，解释各个标签的含义，并说明没有运行任何库的代码。“Runtime:”这条提示不写进区块：无论如何，建议（“do not pass them”，不要传这些参数）都是一样的。
+`since-cutoff sync`（0.4.0 及以后）把 `scan` 显示的说明写进一个带标记的区块：写在 AGENTS.md 中；只有 CLAUDE.md 时写在 CLAUDE.md 中；已经有区块的，就更新那个区块（`--target` 可以指定其他文件）。它会显示一个统一格式的 diff，并询问 `Write this to AGENTS.md? [y/N]`；`--yes` 不询问直接写入；没有可以询问的终端时，它什么也不写。区块以外的文本逐字节保持不变（包括 CRLF 换行），`since-cutoff unapply` 可以移除这个区块。示例项目的区块见[快速开始](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#快速开始)。“Runtime:”这条提示不写进区块：无论如何，建议（“do not pass them”，不要传这些参数）都是一样的。
 
 修改 lockfile 或代码之后，再运行一次 `sync`。它会为代码新用到的 API 添加说明，重新检查升级过的包；当某个包不再是依赖、不再比截止日期时的版本新，或者你的代码不再用到它有变更的 API 时，删除这个包的说明，并说明原因。它会沿用区块写入时的模型和截止日期（这样，Agent 使用其他模型的同事就不会来回改写它），除非你传入 `--model` 或 `--cutoff`；`--model a,b` 取它们中最早的截止日期。没有任何变化时，它什么也不写，文件的字节和修改时间都保持不变。
 
@@ -125,9 +167,14 @@ uvx since-cutoff run
 | `since-cutoff sync --yes` | 不询问直接写入 | 0 |
 | `since-cutoff sync --dry-run` | 显示 diff，不写入任何内容 | 0 |
 | `since-cutoff sync --check` | 不写入任何内容（用于 CI 和 pre-commit） | 0 已是最新；3 已过时 |
+| `since-cutoff sync --json --yes` | 不询问直接写入；以 JSON 输出提议和写入结果 | 与 `sync --yes` 相同 |
+| `since-cutoff sync --json --check` | 以 JSON 输出提议；不写入任何内容 | 0 已是最新；3 已过时 |
+| `since-cutoff sync --json --dry-run` | 以 JSON 输出提议；不写入任何内容 | 0 |
 | `since-cutoff status` | 离线比较区块与 lockfile | 0 已是最新，或没有区块；3 已过时；1 标记损坏 |
 
 区块被手动修改过时，`sync` 和 `sync --check` 会显示 diff，不写入任何内容，并以退出码 4 结束；`sync --force` 会替换它。说明所涉及的某个包无法检查时（例如 PyPI 无法访问），`sync` 不写入任何内容，并以退出码 1 结束。
+
+`sync --json` 需要搭配 `--yes`、`--check` 或 `--dry-run`；缺少其中之一时，它不询问，直接以退出码 2 结束。标准输出只包含 JSON（用法错误时为空）；进度、diff 和错误都输出到 stderr。对象包含 `exit_code` 和 `targets`。每个目标文件报告 `target`、`action`、`changed`、`edited`、`written`、`model`、`cutoff`、`scope`、`notes`、`changes`（每个包的 `package`、`done` 和 `state`）、`retest` 和 `diff_lines`。`written` 用来区分已应用的提议、预览和被拒绝的手动修改。通常的退出码和 `--force` 的行为仍然适用。
 
 `since-cutoff status` 不联网，也不读取代码：它列出每个包的说明所对应的版本和 lockfile 中的版本、其他依赖是否有变化，以及你的编程 Agent 所配置的模型的训练截止日期是否早于说明所用的截止日期（并给出相应的 `sync --model` 命令）。`status --json` 供脚本使用。`status --hook` 只在说明过时时输出一行，并且总是以 0 退出，例如：
 
@@ -169,7 +216,7 @@ since-cutoff run --apply    # 把这次运行的说明写进区块
 npx skills add MohammadHijjawi97/since-cutoff
 ```
 
-这条命令通过开源的 [skills](https://github.com/vercel-labs/skills) 命令行工具，把同一个技能安装到 Codex、Cursor、Gemini CLI、GitHub Copilot、OpenCode 以及其他读取 `SKILL.md` 的 Agent 中。since-cutoff 也会从 Codex、OpenCode 和 Aider 的设置中读取模型；对于其他 Agent，需要告诉它要使用哪个模型，例如 `since-cutoff scan --model openai:gpt-5.4`。然后按下文的方法添加 MCP 服务器。
+这条命令通过开源的 [skills](https://github.com/vercel-labs/skills) 命令行工具，把同一个技能安装到 Codex、Cursor、Gemini CLI、GitHub Copilot、OpenCode 以及其他读取 `SKILL.md` 的 Agent 中。since-cutoff 也会从 Codex、Gemini CLI、OpenCode 和 Aider 的设置中读取模型；对于其他 Agent，需要告诉它要使用哪个模型，例如 `since-cutoff scan --model openai:gpt-5.4`。然后按下文的方法添加 MCP 服务器。
 
 效果较好的提示词：
 
@@ -195,18 +242,33 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 1. `SINCE_CUTOFF_MODEL`（完整写法，例如 `openai:gpt-5.4`）始终优先。
 2. 在 Claude Code 内部运行时（Claude Code 会为它执行的命令设置 `CLAUDECODE=1`），只看 Claude Code 自己的设置：先是 `ANTHROPIC_MODEL`，然后是项目的 `.claude/settings.local.json` 和 `.claude/settings.json`，最后是 `~/.claude/settings.json`。
-3. 在其他环境中，以最具体的设置为准：先是 `ANTHROPIC_MODEL` 或 `AIDER_MODEL`；然后是项目设置，从被扫描的目录向上查找到仓库根目录，离得最近的目录优先（不包括主目录及其上层目录）；最后是用户设置。在同一个目录中，各 Agent 按下表的顺序计算：
+3. 在其他环境中，以最具体的设置为准：先是 `ANTHROPIC_MODEL`、`GEMINI_MODEL` 或 `AIDER_MODEL`；然后是项目设置，从被扫描的目录向上查找到仓库根目录，离得最近的目录优先（不包括主目录及其上层目录）；最后是用户设置。在同一个目录中，各 Agent 按下表的顺序计算：
 
 | Agent | 项目设置 | 用户设置 |
 |---|---|---|
 | Claude Code | `.claude/settings.local.json`、`.claude/settings.json` | `~/.claude/settings.json` |
 | Codex | `.codex/config.toml`，包括其中选定的 profile | `$CODEX_HOME/config.toml` 或 `~/.codex/config.toml` |
+| Gemini CLI | `.gemini/settings.json` | `~/.gemini/settings.json` |
 | OpenCode | `opencode.json`、`opencode.jsonc` | `~/.config/opencode/` |
 | Aider | `.aider.conf.yml`，支持 Aider 的别名（`4o`、`flash`、`r1` 等） | `~/.aider.conf.yml` |
 
 如果没有任何设置指定模型，它会使用 Claude Code 的默认模型，并明确说明这一点。它只读取这些文件中的模型字段；遇到无法识别的模型名称时会停止运行，并在提示中指出是哪个设置。Agent 通过其他服务（GitHub Copilot、Amazon Bedrock、Vertex AI）使用的模型，会按开发它的厂商来命名，因此 `run` 调用的是该厂商的 API（`openai:` 需要 `OPENAI_API_KEY`）。`sync` 会沿用区块写入时的模型，不管你的 Agent 现在用的是哪个。
 
 训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期；`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`--cutoff-margin 30`（默认值；也可以用 `SINCE_CUTOFF_CUTOFF_MARGIN` 设置）从截止日期前 30 天或更早发布的最新版本开始对比，因为模型对截止日期前几周的了解最少；`--cutoff-margin 0` 则从截止日期当天的最新版本开始对比。模型行会同时显示这两个日期。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
+
+## 常见问题
+
+**训练截止日期是不是模型从那天起就对某个库一无所知的日期？** 不是。since-cutoff 只用截止日期来选一个对比点：对每个依赖，默认取那一天至少 30 天之前发布的最新版本，再把它的公开 API 与你锁定的版本对比（`--cutoff-margin 0` 恢复原来的行为：取截止日期当天或之前发布的最新版本）。模型对截止日期前几个月的内容掌握得不好，也可能知道截止日期之后发布的版本，所以扫描结果可能列出模型本来就会用对的变更，也可能漏掉它会写错的变更。模型是否会写旧 API，由 `run` 来测量。日期来自 [models.dev](https://models.dev)；`since-cutoff models <名称>` 会把每个模型的截止日期和发布日期并排列出，两者相差数月（claude-sonnet-4-5：截止 2025-07-31，发布于 2025-09-29）。详见[训练截止日期的用途](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#训练截止日期的用途)。
+
+**什么内容会被发送到哪里？** `scan`、`sync`、`status`、MCP 服务器、GitHub Action 和 pre-commit 钩子只读取 PyPI（元数据和 wheel 文件）和 models.dev，不向任何模型发送任何内容。`run` 会向你选择的模型服务商发送提示词：包名、版本、有变更 API 的公开签名和文档字符串、生成的任务，以及（为了写说明）模型自己的回答；绝不会发送你的源代码。哪些文件用到了有变更的 API，会显示在终端和 `.since-cutoff/` 中，只有你主动发送时才会传到别处：用 `--markdown` 生成的 CI 摘要，或调用了 MCP 工具 `project_changes` 的 Agent。没有遥测。详见[它会运行、发送和保存什么](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#它会运行发送和保存什么)和 [PRIVACY.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/PRIVACY.md)（英文）。
+
+**为什么有些说明写着“since-cutoff found no replacement”？** 只有当库自己的弃用文本写明了替代写法、且这个名称存在于你锁定的版本中时，说明才会给出替代写法（标签 `[diff + library]`）。否则，说明只陈述变更，并指出没有找到替代写法：猜出来的替代写法会被 Agent 照着用，比不给更糟。锁定版本中那些只是名字相似的内容，会在终端中以“not confirmed as replacements”显示；`sync --suggestions` 会把它们写进说明，标为 `[not confirmed]`。当锁定版本的方法仍带有 `extra_body` 或 `extra_query` 参数时（例如 anthropic 的 `Messages.create()`），说明会指出这一点，因为从签名中移除的请求参数可能仍被 API 接受。
+
+**写进 AGENTS.md 还是 CLAUDE.md？** `sync` 写进 AGENTS.md；只有 CLAUDE.md 时写进 CLAUDE.md；两者中已经有区块的，就写进那个（`--target` 可以指定任意文件）。Claude Code 读取 CLAUDE.md，只有当 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时才会读取 AGENTS.md；当说明写进了 AGENTS.md 而 CLAUDE.md 没有导入它时，`scan` 和 `sync` 会提示。要只保留一份，就在 CLAUDE.md 中加上 `@AGENTS.md`。要让两个文件都有区块，用 `sync --target CLAUDE.md --model <同一个模型>` 写一次第二个文件；此后 `sync` 会同时更新两个，`status` 也会同时报告两个。默认同时写入两个文件见 [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)。
+
+**这些说明要花多少 token？** Agent 每一轮都会读取这个区块。对示例项目来说，区块约 420 个 token，其中两条说明约 160 个；其余是开头说明，写明模型和截止日期并解释各个标签（按每 4 个字符一个 token 计算，与 since-cutoff 自己的算法一致）。`sync` 只为你的代码用到的有变更 API 写说明（`--scope imported` 为每个导入的包最多再加 5 条），模型写的说明最多 60 个英文单词。在基准测试中，区块在 285 到 505 个 token 之间，带说明的会话消耗的总 token 数是不带说明的 0.73 倍。`run` 会报告每个区块的 token 数。
+
+**能离线用吗？** `status` 完全不访问网络。`scan` 和 `sync` 需要从 PyPI 获取每个包的版本列表（缓存 12 小时；PyPI 无法访问时，使用更早的缓存副本，并在输出中说明它是哪一天的），以及每个有变更的包的源码；源码和对比结果都会缓存，所以之后的运行只需几秒。训练截止日期来自 models.dev，并内置一份快照供离线使用。
 
 ## 实测结果
 
@@ -254,7 +316,7 @@ Claude Haiku 4.5 那次运行写出的说明（节选，原文照录；since-cut
 <!-- since-cutoff:end -->
 ```
 
-huggingface-hub 那条说明并不完全准确：`resume_download` 是在 1.0 而不是 2.0.0 中从函数签名里去掉的，而且 2.0.0 在运行时仍接受它，只是忽略它并发出警告（[源码](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)）。不过“省略它”这个建议仍然是对的。0.4.0 根据 API 对比结果为这几个参数写出的说明见[用 sync 和 status 保持说明最新](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#用-sync-和-status-保持说明最新)；关于运行时的提示出现在终端、报告和 JSON 中，不在区块里。
+huggingface-hub 那条说明并不完全准确：`resume_download` 是在 1.0 而不是 2.0.0 中从函数签名里去掉的，而且 2.0.0 在运行时仍接受它，只是忽略它并发出警告（[源码](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)）。不过“省略它”这个建议仍然是对的。0.4.0 根据 API 对比结果为这几个参数写出的说明见[快速开始](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#快速开始)；关于运行时的提示出现在终端、报告和 JSON 中，不在区块里。
 
 下图是 Claude Opus 4.6 那次运行的终端摘要，用 0.1.0 录制。探测结果与上表一致。卡片上的对比数量是 0.1.0 的数字（“725 changes flagged”）；对比逻辑修正之后，0.2.0 的 `scan` 对同一截止日期报告 513 个破坏性变更和 48 个新的弃用。卡片上的“changes fixed”数量及其 95% 置信区间也是 0.1.0 的算法：这个区间属于这个数量，而不是 5% -> 65% 这两个比率；而且 0.2.0 及更早的版本即使某个留出任务在没有说明时就已经答对，也会把该变更算作已修复。
 
