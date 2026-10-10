@@ -8,7 +8,7 @@ the code; it does not require setting provider keys for commands that do not cal
 
 | Group | Variable | Read by | Effect when set |
 |---|---|---|---|
-| since-cutoff | `SINCE_CUTOFF_MODEL` | Model detection in `run`, `scan`, `sync`, `status` and MCP tools | Explicit `provider:model` default; `--model` takes precedence. `sync` otherwise keeps the model of an existing block. |
+| since-cutoff | `SINCE_CUTOFF_MODEL` | Model detection in `run`, `scan`, `sync` and `status` CLI commands | Explicit `provider:model` default; `--model` takes precedence. `sync` otherwise keeps the model of an existing block. |
 | since-cutoff | `SINCE_CUTOFF_CACHE` | Commands/tools using the disk cache, including `cache path` and `cache clear` | Cache root, with `~` expanded; overrides platform defaults below. |
 | since-cutoff | `SINCE_CUTOFF_NO_PROCESSES` | Engine diffing in `run`, `scan`, `sync` and MCP tools | Any nonempty value disables process workers, including the string `0`; diffs run in-process. |
 | Coding agents | `CLAUDECODE` | Model detection; `run`'s Claude Code subprocess | Nonempty other than `0` restricts detection to Claude Code settings (after `SINCE_CUTOFF_MODEL`). Removed from the child environment to avoid nested-session detection. |
@@ -44,7 +44,7 @@ Paths are relative to the selected project unless marked as user settings or cac
 
 | Files/directories | Read by | Writes and purpose |
 |---|---|---|
-| `pyproject.toml`, `requirements*.txt` and referenced requirement files; `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`; `.python-version` | Project loading in `run`, `scan`, `sync`, `status`, MCP project tools | Read only: dependency declarations, versions and Python target. The first supported lockfile supplies locked versions. |
+| `pyproject.toml`, `requirements*.txt` and referenced requirement files; `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`, `pylock.*.toml`, `Pipfile`, `Pipfile.lock`; `.python-version` | Project loading in `run`, `scan`, `sync`, `status`, MCP project tools | Read only: dependency declarations, versions and Python target. The first supported lockfile supplies locked versions. |
 | `.venv`, `venv`, `env`, `.env` distribution metadata | Project loading when an environment is available | Read only: installed versions; not an instruction to execute the project's package code. |
 | Project `.py` / `.pyi` sources | `run`, `scan`, `sync`, MCP project-change tools | Read statically for imports/API use. `status` does not rescan source usage. |
 | Project/parent `.claude/settings.local.json`, `.claude/settings.json`; user `~/.claude/settings.json` | Model detection | Read only, subject to `CLAUDE_CONFIG_DIR`. |
