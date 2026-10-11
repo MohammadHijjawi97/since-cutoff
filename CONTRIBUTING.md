@@ -39,6 +39,57 @@ welcome, and first-time contributors are very welcome.
 | `providers/` | Model providers (Claude Code CLI, Anthropic, OpenAI-compatible APIs) |
 | `cli.py` | Command-line interface |
 
+### Module relationships and I/O boundaries
+
+The arrows below represent **imports or calls present in the source**, not an
+assertion that every branch executes for every command. `scan`, `sync`,
+`status` and the MCP tools do not invoke a model; `Engine.run()` does.
+
+```mermaid
+flowchart LR
+  CLI["cli.py (commands)"] --> ENG["engine.py (scan / run)"]
+  MCP["mcp_server.py (tools)"] --> ENG
+  CLI --> REPORT["report.py (outputs)"]
+  CLI --> SYNC["sync.py (notes/status)"]
+  SYNC --> ENG
+  ENG --> PROJECT["project.py (lockfiles / code imports)"]
+  ENG --> HOSTS["hosts.py (agent model settings)"]
+  ENG --> MODELS["models.py (training cutoffs)"]
+  ENG --> PYPI["pypi.py (releases / sources)"]
+  ENG --> API["apidiff.py (static API changes)"]
+  ENG --> SEL["selection.py (used changes)"]
+  ENG --> NOTES["notes.py (evidence-tagged notes)"]
+  ENG --> CACHE["cache.py (disk cache)"]
+  ENG --> PROMPTS["prompts.py (run tasks)"]
+  ENG --> CHECK["checker.py (static type checks)"]
+  ENG --> BASE["baselines.py (comparators)"]
+  ENG --> TASK["taskfile.py (task I/O)"]
+  ENG --> PROVIDERS["providers/ (run only)"]
+  PYPI --> NET["net.py (PyPI / downloads)"]
+  MODELS --> NET
+  PROVIDERS --> MODEL(("model API / Claude CLI"))
+  subgraph "Additional result and aggregation modules"
+    STATS["stats.py (statistical analysis)"]
+  end
+  classDef network stroke:#d78400,stroke-width:2px,stroke-dasharray:5 4;
+  classDef model stroke:#c358ad,stroke-width:3px;
+  class NET network;
+  class MODEL model;
+```
+
+Network boundaries (dashed outline) are reached by `pypi.py` and `models.py`
+through `net.py`; the model boundary (solid outline) is reached via
+`providers/` from the `run` path. `stats.py` computes result statistics;
+its absence of a direct arrow deliberately avoids inventing a direct
+import from the engine. UI/report output is handled by `report.py` through
+the CLI; note synchronization enters via `sync.py`.
+
+Source cross-checks: `cli.py` imports `engine`, `sync` and `report`;
+`mcp_server.py` imports `engine`; `sync.py` imports `engine`;
+`engine.py` imports the project, host/model, PyPI, diff, selection,
+notes, cache, prompt, checker, baseline, taskfile and provider modules;
+`pypi.py` and `models.py` explicitly import `net`.
+
 ## Development setup
 
 ```bash
