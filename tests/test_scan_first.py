@@ -121,7 +121,7 @@ def text_of(lines: list[Any]) -> str:
 GOLDEN = """\
 Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31)
 
-toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml pins 2.0)
+toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; pyproject.toml pins 2.0)
   Client.send: temperature was removed; stream is now keyword-only                          old form
     main.py:2        Client().send('hi', temperature=0.2) - passes temperature to send
     sub/other.py:2   Client().send('x') - calls send
@@ -570,7 +570,8 @@ def test_an_api_is_named_as_the_code_knows_it(tmp_path) -> None:
 # ------------------------------------------------------------------------- JSON
 def test_json_lists_the_used_apis_with_where_and_how(scan: ScanResult) -> None:
     data = json.loads(json.dumps(to_json(scan), default=str))
-    assert next(iter(data)) == "report_schema" and data["report_schema"] == 2
+    assert next(iter(data)) == "report_schema" and data["report_schema"] == 3
+    assert data["settings"]["griffe_version"]
     assert data["used"] == {
         "apis": 2,
         "changes": 3,
@@ -649,7 +650,10 @@ def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
         "Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff "
         "(2025-07-31), 1 of them in the old form. Old form: valid for 1.0;" in md
     )
-    assert "### toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml" in md
+    assert (
+        "### toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; "
+        "pyproject.toml"
+    ) in md
     assert (
         "- **`Client.send`: `temperature` was removed; `stream` is now keyword-only** · old form"
         in md
@@ -875,3 +879,25 @@ def test_a_cached_diff_adds_no_progress_line_to_a_log(app, cache, fake_pypi) -> 
     rich.advance(label=None)
     rich.done()
     assert "diffed" not in out.getvalue()
+
+
+def test_a_diff_another_griffe_made_is_made_again(app, cache, fake_pypi, monkeypatch) -> None:
+    """griffe reads the sources, and it is a range dependency: after an upgrade, the diffs the
+    old one made are not served again; with the same griffe, the cached diff is."""
+
+    def diffed(griffe: str) -> bool:
+        monkeypatch.setattr("since_cutoff.engine.griffe_version", lambda: griffe)
+        reporter = _Labels()
+        engine = Engine(
+            Settings(cutoff=date(2025, 7, 31)),
+            store=cache,
+            llm_cache=cache,
+            pypi=fake_pypi,
+            reporter=reporter,
+        )
+        engine.scan(load_project(app), ModelTarget.cutoff_only(date(2025, 7, 31)))
+        return "toylib" in reporter.labels
+
+    assert diffed("2.3.0")
+    assert not diffed("2.3.0")
+    assert diffed("2.4.0")

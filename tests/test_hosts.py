@@ -138,6 +138,7 @@ def test_inside_claude_code_only_its_own_settings_count(root: Path, home: Path) 
     inside = {"CLAUDECODE": "1"}
     assert detect(root, home, **inside) is None  # Claude Code's default, not GPT
     assert detect(root, home, **inside, AIDER_MODEL="4o") is None
+    assert detect(root, home, **inside, GEMINI_MODEL="gemini-2.5-pro") is None
     assert not_found_hint(inside) == CLAUDE_CODE_NOT_FOUND_HINT
     assert not_found_hint({}) == NOT_FOUND_HINT
     # scan and sync test no model: they use its cutoff.
@@ -183,6 +184,40 @@ def test_broken_files_are_skipped(root: Path, home: Path) -> None:
     (root / ".aider.conf.yml").write_bytes(b"model: \xff\xfe\n")  # not UTF-8
     write(home / ".aider.conf.yml", "model: 'gpt-4.1'\n")
     assert detect(root, home) == ("openai:gpt-4.1", "~/.aider.conf.yml")
+
+
+# -------------------------------------------------------------- Gemini CLI
+def test_gemini_cli_environment_project_and_user_precedence(root: Path, home: Path) -> None:
+    write(home / ".gemini" / "settings.json", '{"model": "gemini-2.5-flash"}')
+    write(root / ".gemini" / "settings.json", '{"model": {"name": "gemini-2.5-pro"}}')
+
+    assert detect(root, home) == ("google:gemini-2.5-pro", ".gemini/settings.json")
+    assert detect(root, home, GEMINI_MODEL="gemini-2.5-flash-lite") == (
+        "google:gemini-2.5-flash-lite",
+        "GEMINI_MODEL",
+    )
+
+    (root / ".gemini" / "settings.json").unlink()
+    assert detect(root, home) == ("google:gemini-2.5-flash", "~/.gemini/settings.json")
+
+
+def test_gemini_cli_supports_string_and_nested_model_and_skips_broken_json(
+    root: Path, home: Path
+) -> None:
+    write(root / ".gemini" / "settings.json", '{"model": "gemini-2.5-flash"}')
+    assert detect(root, home) == ("google:gemini-2.5-flash", ".gemini/settings.json")
+
+    write(root / ".gemini" / "settings.json", '{"model": ')
+    write(home / ".gemini" / "settings.json", '{"model": {"name": "gemini-2.5-pro"}}')
+    assert detect(root, home) == ("google:gemini-2.5-pro", "~/.gemini/settings.json")
+
+
+def test_gemini_cli_unknown_alias_is_reported_not_guessed(root: Path, home: Path) -> None:
+    found = detect_model(root, env={"GEMINI_MODEL": "auto"}, home=home)
+    assert found is not None and found.spec == "" and found.problem is not None
+    assert found.problem.startswith(
+        "Gemini CLI's model 'auto' (in GEMINI_MODEL) is not a model or alias"
+    )
 
 
 # --------------------------------------------------------------- Claude Code
@@ -299,7 +334,39 @@ def test_aider_aliases_are_the_models_they_stand_for(
     assert detect(root, home) == (spec, ".aider.conf.yml")
 
 
-@pytest.mark.parametrize("model", ["my-local-model", "openai", "deepseek/"])
+@pytest.mark.parametrize(
+    ("model", "spec"),
+    [
+        ("dashscope/qwen3-coder-plus", "alibaba:qwen3-coder-plus"),
+        ("moonshot/kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
+        ("glm-4.6", "zai:glm-4.6"),
+        ("llama-3.3-70b-instruct", "llama:llama-3.3-70b-instruct"),
+    ],
+)
+def test_aider_recognises_additional_model_makers(
+    root: Path, home: Path, model: str, spec: str
+) -> None:
+    write(root / ".aider.conf.yml", f"model: {model}\n")
+    assert detect(root, home) == (spec, ".aider.conf.yml")
+
+
+@pytest.mark.parametrize(
+    ("model", "spec"),
+    [
+        ("qwen3-coder-plus", "alibaba:qwen3-coder-plus"),
+        ("kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
+        ("glm-4.6", "zai:glm-4.6"),
+        ("llama-3.3-70b-instruct", "llama:llama-3.3-70b-instruct"),
+    ],
+)
+def test_opencode_bare_ids_resolve_to_their_makers(
+    root: Path, home: Path, model: str, spec: str
+) -> None:
+    write(root / "opencode.json", json.dumps({"model": model}))
+    assert detect(root, home) == (spec, "opencode.json")
+
+
+@pytest.mark.parametrize("model", ["my-local-model", "openai", "qwen", "deepseek/"])
 def test_a_model_name_since_cutoff_cannot_place_is_reported_not_guessed(
     root: Path, home: Path, model: str
 ) -> None:
@@ -312,12 +379,12 @@ def test_a_model_name_since_cutoff_cannot_place_is_reported_not_guessed(
 
 
 def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, home: Path) -> None:
-    write(root / "opencode.json", '{"model": "lmstudio/qwen3-coder"}')
-    assert detect(root, home) == ("lmstudio:qwen3-coder", "opencode.json")
+    write(root / "opencode.json", '{"model": "lmstudio/my-local-model"}')
+    assert detect(root, home) == ("lmstudio:my-local-model", "opencode.json")
     with pytest.raises(ProviderError) as info:
-        check_spec("lmstudio:qwen3-coder")
-    assert "'openai-compatible:qwen3-coder' with --base-url" in str(info.value)
-    assert "'<provider>:lmstudio:qwen3-coder', or," in str(info.value)
+        check_spec("lmstudio:my-local-model")
+    assert "'openai-compatible:my-local-model' with --base-url" in str(info.value)
+    assert "'<provider>:lmstudio:my-local-model', or," in str(info.value)
 
 
 # ------------------------------------------------------ provider/model names
@@ -332,6 +399,7 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("google", "gemini-2.5-pro", "google:gemini-2.5-pro"),
         ("vertex_ai", "gemini-2.5-pro", "google:gemini-2.5-pro"),
         ("github-copilot", "gpt-5.4", "openai:gpt-5.4"),
+        ("github-copilot", "kimi-k2.7-code", "moonshotai:kimi-k2.7-code"),
         ("github-copilot", "o3", "openai:o3"),
         (
             "amazon-bedrock",
@@ -341,7 +409,7 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("google-vertex-anthropic", "claude-opus-4-1@20250805", "anthropic:claude-opus-4-1"),
         ("opencode", "grok-code", "xai:grok-code"),
         ("mistral", "devstral-medium-2507", "mistral:devstral-medium-2507"),
-        ("groq", "llama-3.3-70b-versatile", "groq:llama-3.3-70b-versatile"),
+        ("groq", "llama-3.3-70b-versatile", "llama:llama-3.3-70b-versatile"),
         (None, "sonnet", "anthropic:sonnet"),
         (None, "my-local-model", "my-local-model"),
     ],
@@ -446,8 +514,8 @@ def test_scan_tests_the_model_in_the_project_settings(app, capsys, offline_cli) 
     assert cli.main(["scan", str(app)]) == 0
     out = capsys.readouterr().out
     assert (
-        "Model claude-sonnet-4-5, training cutoff 2025-07-31 "
-        "(from models.dev, model from .claude/settings.json)" in out
+        "Model claude-sonnet-4-5, training cutoff 2025-07-31, comparing from releases up to "
+        "2025-07-01 (from models.dev, model from .claude/settings.json)" in out
     )
     assert "No model setting found" not in out
     report = (app / ".since-cutoff" / "report.md").read_text(encoding="utf-8")
@@ -500,7 +568,10 @@ def test_an_explicit_claude_code_model_ignores_the_detection(
     assert cli.main(["scan", str(app), "--model", "claude-code"]) == 0
     out = capsys.readouterr().out
     # As before detection: the user's settings, never the project's, and no source named.
-    assert "Model claude-haiku-4-5, training cutoff 2025-02-28 (from models.dev)" in out
+    assert (
+        "Model claude-haiku-4-5, training cutoff 2025-02-28, comparing from releases up to "
+        "2025-01-29 (from models.dev)" in out
+    )
     assert "No model setting found" not in out
 
 
@@ -508,8 +579,8 @@ def test_a_model_since_cutoff_cannot_call_is_scanned_but_not_run(app, capsys, of
     write(app / "opencode.json", '{"model": "google/gemini-2.5-pro"}')
     assert cli.main(["scan", str(app)]) == 0
     assert (
-        "Model gemini-2.5-pro, training cutoff 2025-01-31 (from models.dev, model from opencode.json)"
-        in (capsys.readouterr().out)
+        "Model gemini-2.5-pro, training cutoff 2025-01-31, comparing from releases up to "
+        "2025-01-01 (from models.dev, model from opencode.json)" in (capsys.readouterr().out)
     )
     assert cli.main(["run", str(app)]) == 1
     err = " ".join(capsys.readouterr().err.split())

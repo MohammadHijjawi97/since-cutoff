@@ -1,5 +1,139 @@
 # Changelog
 
+## Unreleased
+
+- The comparison release is the latest release published at least 30 days before the model's
+  training cutoff, not at the cutoff itself. A model's training data lags its stated cutoff, so
+  it knows the last weeks before the cutoff least: llama-index-core 0.13.0, which removed
+  `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on 2025-07-30, the day before
+  claude-sonnet-4-5's cutoff, and a scan of a project pinning 0.14.25 said the code used none
+  of the APIs that changed; it now reports both removals. `--cutoff-margin DAYS`,
+  `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and the action's `cutoff-margin`
+  input set the margin; 0 compares from the cutoff itself, as before. The model line says both
+  days ("training cutoff 2025-07-31, comparing from releases up to 2025-07-01"), and so do the
+  reports, `results.json` (`compare_from`, `settings.cutoff_margin`, also in `sync --json` and
+  `status --json`) and the notes block's header and meta line, so `status` and `sync --check`
+  report a block compared from another day as out of date. A block written by an earlier
+  since-cutoff compared from the cutoff itself and is reported out of date until `since-cutoff
+  sync` rewrites it (`--cutoff-margin 0` keeps the old comparison). The block's package line
+  says which release the notes compare from, `**anthropic 1.8.0** (compared from 0.56.0)`; it
+  said "0.56.0 at the cutoff", which the margin made false, and both forms are read. A
+  dependency first released within the margin counts as new to the model, and the scan, the
+  MCP tools and `sync` say it was "first released 2025-07-15, within 30 days of the cutoff", not
+  "after the cutoff"; one the model knows is "the latest release 30 days before the cutoff".
+- A module that takes its names from another distribution with `from x import *` is compared
+  with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
+  mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under
+  `mcp.types` while mcp-types had renamed every field to snake_case, so
+  `types.Tool(name=..., inputSchema=...)` broke unreported. The sibling distribution is
+  downloaded at the version the project locks (or the newest its requirement allows on the
+  comparison date, for the release at the cutoff), under the usual download limit and cache, and
+  its names are compared under the paths that re-export them (`mcp.types.Tool.inputSchema`
+  removed). Only a star import that runs counts: not one in a docstring, a function or an `if
+  TYPE_CHECKING:` block. An object a release only re-exports from elsewhere is now compared too,
+  where griffe stops at the alias: a class's members (inherited ones included), a function's
+  parameters and a change of kind, reported under the re-exporting path. When the sibling cannot be downloaded,
+  the scan, the report and the MCP tools warn that changes to those modules are not reported.
+  Cached diffs are keyed on the siblings read, and on the source schema, with the diff schema;
+  which distributions each release star-imports is kept in the cache, so a cached diff is still
+  served from the pinned release alone, with nothing else to download.
+- README: a newcomer now sees, in order, what it is, how to install it (uvx, pipx, pip), a
+  Quick start on the sample project with the real `scan` output and the block `sync` writes,
+  when to use it and what it does not do, then the existing sections. New FAQ: the training
+  cutoff against the release date, what is sent where, why some notes name no replacement,
+  AGENTS.md and CLAUDE.md, the notes' cost in tokens, offline use. The counts come from 0.5.0's
+  scan (307 breaking changes and 23 new deprecations in the sample project). The Chinese,
+  Spanish and French READMEs follow the same structure, and now also describe the Gemini CLI
+  model detection and `sync --json`, which only the English README had.
+- Docs site: index.md and ai-stack.md describe 0.5.0 (scan, sync, status, pre-commit, the Action
+  and the MCP server) and ai-stack.md's counts come from a re-run with 0.5.0; a nav bar links
+  the pages and the GitHub docs (#67); the link-preview text no longer says "verified AGENTS.md
+  notes" (#51); benchmark.md says it is the study as run with 0.4.1's notes.
+- README (all four languages) and how-it-works.md: the intro, the Quick start, "The problem",
+  the MCP and `[diff]` tables, the `sync` and block descriptions describe the comparison release
+  as the latest release published at least 30 days before the model's training cutoff by
+  default; they still said "on or before the cutoff".
+- `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
+  default in all four READMEs (the Spanish and French pins and the translated action tables
+  were not checked).
+- `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
+  environment for every other setting (#94). The variable overrode the flag; the order is now
+  the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
+- `sync --json` reports proposals and write results for scripts, with progress on stderr.
+  It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
+- Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
+- Without `--model`, Gemini CLI's model is detected from `GEMINI_MODEL`, then the project's
+  `.gemini/settings.json`, then the user's settings; both string and nested `model.name` forms
+  are supported, and unknown aliases are reported instead of guessed.
+- Bare and routed Qwen, Kimi, GLM and Llama model ids are recognised as their model makers
+  (Alibaba, Moonshot AI, Z.ai and Llama), so cutoff lookup prefers first-party entries over
+  reseller listings.
+- The MCP server has two prompts, `check_project` and `before_upgrade`, that ask the agent to call
+  the existing read-only tools; listing them needs no network or API key.
+- `--help` and `--version` piped into a reader that goes away (`since-cutoff --help | head -1`)
+  end with exit code 141 and no traceback also when stdout is unbuffered (`PYTHONUNBUFFERED`,
+  set in many containers). argparse wrote them itself, past the check for a closed pipe:
+  Python 3.10 printed a `BrokenPipeError` traceback and exited with 1, and 3.11 and later
+  exited with 0.
+- With griffe 2.3.1 or later, a parameter dropped from a function that still takes `**kwargs`
+  (`f(x, verbose=False)` becoming `f(x, **kwargs)`) was reported as removed, a breaking change,
+  although calls that pass it still work. griffe 2.3.1 changed how a parameter's kind prints,
+  and the check for `**kwargs` read that text instead of the kind's name.
+- PEP 702's `@deprecated` imported through a library's compatibility module (`from
+  pkg._compat import deprecated`, where `_compat` imports it from `typing_extensions` or, on
+  Python 3.13 and later, `warnings`) is reported as PEP 702's (#44). It was taken for the
+  library's own decorator, which `run` does not probe because type checkers do not report
+  it, and was missed on an `@overload`. Diffs cached by earlier versions are recomputed once
+  (diff schema 20).
+- When PyPI cannot be reached (no network, a timeout, 429 or 5xx after the retries), a
+  package's release list cached more than 12 hours ago is used instead of failing, and the
+  scan and the MCP tools warn from which day each such copy is: releases published after it
+  are unknown (#54). A version the older copy does not list is reported as missing from it,
+  not from PyPI. A 404, or any other answer from PyPI, is still an error.
+- A module that the pinned release ships compiled, with no `.py` source and no `.pyi` stub
+  (`fast.py` -> `fast.cpython-312-x86_64-linux-gnu.so`, or a compiled module that lost its
+  stub), is no longer reported as removed, nor is what it defines or a name a readable
+  module still imports from it (#52). Since only sources are extracted, the diff could not
+  tell it from a removal. A name a readable module stopped importing from it is still
+  removed. A top-level package whose `__init__` is compiled hides only the names it defines; a
+  compiled subpackage `__init__` hides that subpackage, since griffe cannot enter a directory
+  without an `__init__.py` inside a regular package, and the scan warns. The source tree now
+  records the compiled modules (extension modules
+  in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
+  and the scan, the report and the MCP tools warn that changes to such a module, private
+  ones included, and to the names taken from it are not reported. After upgrading, cached
+  sources are downloaded and extracted again once (source schema 3) and cached diffs are
+  recomputed (diff schema 21).
+- The API diff is the same on every machine: griffe read a package's sibling modules in the
+  order the file system lists them, so an object that several of them import from a private
+  module took its public path from that order. mcp 1.28.1 -> 2.2.0's switch to `httpx2` had 20
+  places instead of 23 where `mcp.client.streamable_http` came before `mcp.client.sse`: only
+  `sse` still imports `McpHttpClientFactory`, so its `__call__` (`timeout`, `auth` and its
+  return) did not match between the releases. Modules are now read in the order of their names
+  (diff schema 21, with the notes' evidence below).
+- Cached API diffs are keyed on the installed griffe's version too: griffe reads the sources and
+  is a range dependency, so after an upgrade the diffs the old one made are made again instead
+  of served from the cache. `results.json`, `scan --json` (`settings.griffe_version`,
+  `report_schema` 3) and report.md record which griffe it was. Diffs cached by an earlier
+  since-cutoff are made once more (and diff schema 21 would make them again anyway), so the mcp
+  switch above shows its 23 places there too.
+- Notes name the replacement a library's warning gives in more cases. A message built before its
+  `warnings.warn` call (`message = (...)`, then `warnings.warn(message)`) is read, a replacement
+  the text states in quotes counts like one in backticks, and every alternative it gives is
+  named ("Use a, b, or c instead"): httpx 0.28's note now says "`Client()` no longer accepts
+  `proxies`; do not pass it. Use `proxy` or `mounts` instead of `proxies`. [diff + library]",
+  where it said it found no replacement, and click 8.2's `BaseCommand` and `MultiCommand` name
+  `click.Command` and `click.Group`.
+- A parameter in the place of a removed one, with its type, is no longer a "probable rename"
+  when a version note in the pinned release's docstring (`.. versionadded::`,
+  `.. versionchanged::`) says the new one was added or the old one removed: click 8.2's
+  `CliRunner` took `catch_exceptions` where 8.1 took `mix_stderr`, and the note told agents to
+  pass `catch_exceptions`, which changes what the runner does.
+- `scripts/record_diff_fixtures.py` re-records the real diffs in `tests/fixtures/diffs` from
+  PyPI, after a diff schema bump for example; `--check` only says which would change. Two new
+  golden pairs, httpx 0.27.2 -> 0.28.1 and click 8.1.8 -> 8.2.0, pin what their changelogs
+  document and the notes an agent gets for them (`tests/test_golden_diffs.py`).
+
 ## 0.5.0 - 2026-09-28
 
 - The skill's `allowed-tools` include `since-cutoff unapply`, which its steps already tell the

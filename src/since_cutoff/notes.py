@@ -65,8 +65,10 @@ from since_cutoff.apidiff import (
     object_replacements,
     parameter_replacements,
     signature_parameters,
+    stated_alternatives,
 )
 from since_cutoff.errors import SinceCutoffError
+from since_cutoff.models import DEFAULT_CUTOFF_MARGIN, compare_date
 
 BLOCK_START = "<!-- since-cutoff:start -->"
 BLOCK_END = "<!-- since-cutoff:end -->"
@@ -718,12 +720,12 @@ def _library_evidence(
     source = f"{change.package} {version}" + (f" {where}" if where else "")
     what = change.parameter or api_name(change)
     stated = _stated_replacement(text, names)
-    if stated is not None:
-        shown = _shown_name(stated)
+    if stated:
+        shown = _listed([_shown_name(s) for s in stated], "or")
         sentence = (
-            f"Use `{shown}` instead of `{what}`." if change.parameter else f"Use `{shown}` instead."
+            f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
         )
-        return sentence, Replacement(stated, EVIDENCE_LIBRARY, source, what)
+        return sentence, Replacement(stated[0], EVIDENCE_LIBRARY, source, what)
     quote = _quote(text, best)
     if not quote:
         return None
@@ -772,17 +774,24 @@ def library_names(change: APIChange, lookup: ApiLookup | None = None) -> list[st
     return list(dict.fromkeys(found))
 
 
-def _stated_replacement(text: str, names: list[str]) -> str | None:
-    """The one of ``names`` that ``text`` states as the replacement ("Use `stop` instead."),
-    or None when the text only mentions them ("If you want to force a new download, use
+def _stated_replacement(text: str, names: list[str]) -> list[str] | None:
+    """The ones of ``names`` that ``text`` states as the replacement, the first it gives
+    first ("Use `stop` instead."; httpx 0.27's "Use 'proxy' or 'mounts' instead."), or None
+    when the text only mentions them ("If you want to force a new download, use
     `force_download=True`" is advice, not a replacement)."""
     for pattern in STATED_REPLACEMENT:
         for m in re.finditer(pattern, text, re.IGNORECASE):
-            said = m.group("n").strip(".")
-            for n in names:
-                if n == said or n.endswith("." + said) or said.endswith("." + n):
-                    return n
+            said = [_named_as(s, names) for s in (m.group("n").strip("."), *stated_alternatives(m))]
+            if said[0] is not None:
+                return list(dict.fromkeys(n for n in said if n is not None))
     return None
+
+
+def _named_as(said: str, names: list[str]) -> str | None:
+    """The one of ``names`` that ``said`` names: itself, or by its last parts."""
+    return next(
+        (n for n in names if n == said or n.endswith("." + said) or said.endswith("." + n)), None
+    )
 
 
 # A sentence of a deprecation message that only says what the bullet says already ("X is
@@ -1359,11 +1368,15 @@ def render_block(
     tool: str = __version__,
     suggestions: bool = False,
     per_package: int | None = None,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     """The notes block (format 2) for AGENTS.md / CLAUDE.md.
 
     ``deps`` is :func:`deps_hash` of every dependency scanned (by default, of the packages and
-    versions the notes are about); ``scope`` what the notes cover (SCOPE_*). The first line is
+    versions the notes are about); ``scope`` what the notes cover (SCOPE_*); ``margin`` how many
+    days before the cutoff the comparison releases were published by (``--cutoff-margin``; the
+    header says the day, and the meta line keeps the number, so that ``status`` sees a block
+    compared from another day). The first line is
     0.3's marker, so 0.3's ``unapply`` still finds and removes a block written by 0.4.
     ``suggestions`` (``sync --suggestions``: the notes name similar names, ``[not confirmed]``)
     is recorded in the meta line, only when set, so that the next ``sync`` keeps it; so is
@@ -1381,12 +1394,14 @@ def render_block(
     for n in notes:
         by_pkg.setdefault((n.change.package, n.change.to_version), []).append(n)
     used_tags = {t for n in notes for t in n.tag_list}
-    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags)]
+    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags, margin)]
     checked: list[str] = []
     for (pkg, version), items in sorted(by_pkg.items()):
         olds = _unique(n.change.from_version for n in items if n.change.from_version)
-        at_cutoff = f" ({olds[0]} at the cutoff)" if len(olds) == 1 else ""
-        body += ["", f"**{pkg} {version}**{at_cutoff}"]
+        # The release the notes compare from: the latest published ``margin`` days before the
+        # cutoff, which the header says (a block from before the margin said "at the cutoff").
+        compared = f" (compared from {olds[0]})" if len(olds) == 1 else ""
+        body += ["", f"**{pkg} {version}**{compared}"]
         seen: set[str] = set()
         # A switched dependency first: it concerns every object of it the code hands over.
         for n in sorted(items, key=lambda n: (n.change.kind != DEPENDENCY_SWITCHED, n.api, n.line)):
@@ -1405,6 +1420,7 @@ def render_block(
         "tool": tool,
         "model": model or None,
         "cutoff": cutoff.isoformat(),
+        "margin": margin,
         "versions_from": version_source,
         "deps": deps,
         "body": body_hash(text),
@@ -1432,16 +1448,31 @@ def model_names(model: str | None) -> list[str]:
 
 
 def _header(
-    model: str, cutoff: date, version_source: str, scope: str, tool: str, tags: set[str]
+    model: str,
+    cutoff: date,
+    version_source: str,
+    scope: str,
+    tool: str,
+    tags: set[str],
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     # The model's name comes from the user or a settings file: it must not end the block either.
     name = _one_line(_code(model))
     names = model_names(name)
     day = cutoff.isoformat()
+    # As the model line of ``scan`` says it: "training cutoff 2025-07-31, comparing from
+    # releases up to 2025-07-01" (--cutoff-margin 30).
+    from_day = (
+        f", comparing from releases up to {compare_date(cutoff, margin).isoformat()}"
+        if margin > 0
+        else ""
+    )
     if len(names) > 1:
-        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day})"
+        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day}{from_day})"
+    elif name:
+        who = f"the training cutoff of `{name}` ({day}{from_day})"
     else:
-        who = f"the training cutoff of `{name}` ({day})" if name else f"{day}"
+        who = f"{day} ({from_day[2:]})" if from_day else day
     source = _one_line(_code(version_source))
     versions = (
         "the latest versions on PyPI"
@@ -1525,7 +1556,9 @@ class PackageNotes:
     """One package's section of a block."""
 
     version: str
-    cutoff_version: str | None  # format 2 only: "(0.60.0 at the cutoff)"
+    # Format 2 only: the release the notes compare from, "(compared from 0.56.0)" (a block
+    # written before there was a margin: "(0.60.0 at the cutoff)").
+    cutoff_version: str | None
     bullets: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)  # (text, tags)
 
 
@@ -1547,8 +1580,11 @@ _LEGACY_HEADER = re.compile(
     r"Generated by \[since-cutoff\]\([^)]*\) for `(?P<model>[^`]*)` \(training cutoff "
     r"(?P<cutoff>\d{4}-\d{2}-\d{2})\), checked against `(?P<source>[^`]*)`\."
 )
+# ``**anthropic 1.8.0** (compared from 0.56.0)``, or, from a block written before there was a
+# margin, ``**anthropic 1.8.0** (0.60.0 at the cutoff)``.
 _PACKAGE_LINE = re.compile(
-    r"^\*\*(?P<pkg>\S+) (?P<version>\S+)\*\*(?: \((?P<cutoff>\S+) at the cutoff\))?$"
+    r"^\*\*(?P<pkg>\S+) (?P<version>\S+)\*\*"
+    r"(?: \((?:compared from (?P<cutoff>\S+)|(?P<at_cutoff>\S+) at the cutoff)\))?$"
 )
 
 
@@ -1592,7 +1628,7 @@ def parse_block(text: str, name: str = "AGENTS.md") -> ParsedBlock | None:
     for line in inner:
         m = _PACKAGE_LINE.match(line.strip())
         if m is not None:
-            current = PackageNotes(m.group("version"), m.group("cutoff"))
+            current = PackageNotes(m.group("version"), m.group("cutoff") or m.group("at_cutoff"))
             packages[m.group("pkg")] = current
         elif current is not None and line.startswith("- "):
             current.bullets.append(split_tags(line[2:].strip()))

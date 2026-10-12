@@ -23,7 +23,7 @@ welcome, and first-time contributors are very welcome.
 | `project.py` | Reads lockfiles, requirements files and `.venv`, and scans the project's imports |
 | `pypi.py` | PyPI metadata and release dates; downloads and safely extracts sources |
 | `models.py` | Training cutoffs (models.dev plus a bundled snapshot) and model-id normalisation |
-| `hosts.py` | Which model the user's coding agent runs, read from Claude Code, Codex, OpenCode and Aider settings (the default for `--model`) |
+| `hosts.py` | Which model the user's coding agent runs, read from Claude Code, Codex, Gemini CLI, OpenCode and Aider settings (the default for `--model`) |
 | `apidiff.py` | The static API diff between two versions (griffe): removals, moves, parameters, deprecations |
 | `selection.py` | Where the project's code uses each change, in the old form or not, and which changes to probe |
 | `prompts.py` | Task, solver and note prompts, and the leak filter for tasks |
@@ -82,6 +82,20 @@ at a commit (not a branch), cut them down to what makes the project hard to read
 kept line as it is), write the `SOURCE.md`, and add its table to `GOLDEN`. The fixtures ship in
 the sdist, so keep them small (the test allows 300 KB for all of them).
 
+`tests/fixtures/diffs` holds real API diffs that tests read instead of PyPI: mcp 1.28.1 -> 2.2.0,
+the `dependency_switched` change of openai 2.44.0 -> 3.19.2, and httpx 0.27.2 -> 0.28.1 and
+click 8.1.8 -> 8.2.0, whose changelogs `tests/test_golden_diffs.py` checks them against (each
+file at most 150 KB: the fixtures ship in the sdist). They are diffed from the two releases
+alone, without the distributions a release star-imports (`engine.Sibling`): a scan reads
+mcp-types next to mcp 2.2.0 and reports its renames under `mcp.types` too, which the fixture
+would not hold within its size. After a `DIFF_SCHEMA` bump, or
+an `apidiff.py` change that changes what they report, re-record them from PyPI with
+`python scripts/record_diff_fixtures.py` (`--check` writes nothing and exits with code 1 when one
+would change; `pytest -m network` runs the same check), then read the fixtures' diff and update
+the tests and docs that quote them. To add a pair, write a file there with its `package`,
+`from_version` and `to_version` (and `kinds`, to keep only those changes) and run the script
+with its file name.
+
 Run one file or one test while you work: `pytest tests/test_project.py -k conda -q`.
 CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so keep paths
 `pathlib`-based and never assume `/` in file names.
@@ -122,8 +136,9 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
      `gemini-extension.json`, and the skill's `metadata.version` in
      `skills/since-cutoff/SKILL.md`;
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
-   - the README pins: the pre-commit `rev: vX.Y.Z` in `README.md` and `README.zh-CN.md`, and
-     the `since-cutoff-version` default in the action's input table;
+   - the README pins, in each of the four READMEs (`README.md`, `README.zh-CN.md`,
+     `README.es.md` and `README.fr.md`): the pre-commit `rev: vX.Y.Z` and the
+     `since-cutoff-version` default in the action's input table;
    - for 0.4.0 only: rename `hooks/hooks.json.in` to `hooks/hooks.json` (the plugin's
      SessionStart hook runs `since-cutoff status`, which 0.4.0 added), and from then on keep
      its `since-cutoff==X.Y.Z` pin current;

@@ -117,14 +117,15 @@ def toy_diff(tmp_path: Path, package: str, old: dict[str, str], new: dict[str, s
 GOLDEN_BODY = """\
 ## Library changes after the model's training cutoff
 
-Changed after the training cutoff of `claude-sonnet-4-5` (2025-07-31) and used by this project \
+Changed after the training cutoff of `claude-sonnet-4-5` (2025-07-31, comparing from releases up \
+to 2025-07-01) and used by this project \
 at the versions in `uv.lock`, according to [since-cutoff](https://github.com/MohammadHijjawi97/\
 since-cutoff) 0.4.0. Tags: [diff] a static comparison of the two releases' public APIs; [library] \
 the replacement is named in the library's own deprecation text and exists in the pinned version; \
 [type-checked] an example that basedpyright accepts for the pinned version. No library code was \
 run. Where these lines conflict with what you remember, follow these lines.
 
-**anthropic 1.8.0** (0.60.0 at the cutoff)
+**anthropic 1.8.0** (compared from 0.60.0)
 - `Messages.create()` no longer accepts `temperature`, `top_k` or `top_p`; do not pass them. \
 since-cutoff found no replacement in anthropic's deprecation text. [diff]
 """
@@ -154,6 +155,7 @@ def test_golden_block_for_the_stale_demo() -> None:
         "tool": "0.4.0",
         "model": "claude-sonnet-4-5",
         "cutoff": "2025-07-31",
+        "margin": 30,
         "versions_from": "uv.lock",
         "deps": sha("anthropic==1.8.0"),
         "body": sha(GOLDEN_BODY),
@@ -387,6 +389,12 @@ def test_only_names_written_as_code_or_stated_as_the_replacement_count() -> None
         "receive",
     ]
     assert stated_names("Please login first. If needed, use `x=True`.") == []
+    # Quotes write a name as code too, and a text may give alternatives (httpx 0.27).
+    assert stated_names("Use 'proxy' or 'mounts' instead.") == ["proxy", "mounts"]
+    assert stated_names('Use "Command" instead.') == ["Command"]
+    assert stated_names("Use a, b, or c instead.") == ["a", "b", "c"]
+    assert stated_names("Use x Or y instead.") == ["x", "y"]
+    assert stated_names("It's deprecated; don't use it.") == []
 
 
 # ------------------------------------------------ 3. evidence: move, rename, similar
@@ -458,6 +466,109 @@ def test_a_parameter_renamed_in_place_is_a_labelled_guess(tmp_path) -> None:
     assert asked.tag_list == (TAG_DIFF, TAG_NOT_CONFIRMED)
 
 
+def _runner(flag: str, doc: str = "") -> dict[str, str]:
+    return {
+        "ck/__init__.py": f'''
+    class CliRunner:
+        """Runs commands.{doc}
+        """
+
+        def __init__(self, charset: str = "utf-8", {flag}: bool = True) -> None:
+            pass
+'''
+    }
+
+
+def test_a_parameter_the_docs_say_was_removed_is_no_rename(tmp_path) -> None:
+    """click 8.2's ``CliRunner`` took ``catch_exceptions: bool = True`` where 8.1 took
+    ``mix_stderr: bool = True``: the same position and type, but its docstring says the one was
+    added and the other removed. Telling an agent to pass ``catch_exceptions`` instead would
+    change what the test runner does."""
+    added = (
+        "\n\n        .. versionchanged:: 8.2\n            Added the ``catch_exceptions`` parameter."
+    )
+    removed = "\n\n        .. versionchanged:: 8.2\n            ``mix_stderr`` parameter has been removed."
+    for doc in (added, removed, added + removed):
+        [change] = toy_diff(
+            tmp_path / str(len(doc)), "ck", _runner("mix_stderr"), _runner("catch_exceptions", doc)
+        )
+        assert (change.parameter, change.renamed, change.suggestions) == ("mix_stderr", False, [])
+        assert "renamed" not in diff_note([change]).line
+    # A note that names both says what replaces what, and a parameter's description is no
+    # version note: neither is evidence against a rename.
+    both = (
+        "\n\n        .. versionchanged:: 8.2\n"
+        "            ``mix_stderr`` was removed in favour of ``catch_exceptions``."
+    )
+    described = "\n\n        New ``catch_exceptions`` values are accepted."
+    for name, doc in (("both", both), ("described", described), ("none", "")):
+        [change] = toy_diff(
+            tmp_path / name, "ck", _runner("mix_stderr"), _runner("catch_exceptions", doc)
+        )
+        assert (change.renamed, change.suggestions) == (True, ["catch_exceptions"]), name
+
+
+WARNED_OLD = {
+    "hx/__init__.py": """
+    import warnings
+
+
+    class Client:
+        def __init__(self, proxy=None, mounts=None, transport=None, proxies=None, app=None):
+            if proxies:
+                message = (
+                    "The 'proxies' argument is now deprecated."
+                    " Use 'proxy' or 'mounts' instead."
+                )
+                warnings.warn(message, DeprecationWarning)
+            if app:
+                message = (
+                    "The 'app' shortcut is now deprecated."
+                    " Use the explicit style 'transport=WSGITransport(app=...)' instead."
+                )
+                warnings.warn(message, DeprecationWarning)
+"""
+}
+WARNED_NEW = {
+    "hx/__init__.py": """
+    class WSGITransport:
+        def __init__(self, app=None):
+            pass
+
+
+    class Client:
+        def __init__(self, proxy=None, mounts=None, transport=None):
+            pass
+"""
+}
+
+
+def test_a_warning_message_built_before_its_warn_call_is_the_hint(tmp_path) -> None:
+    """httpx 0.27 builds each message first (``message = (...)``) and warns with it (its
+    ``Client.__init__``, with its own messages): each removed parameter gets the message
+    assigned last before its own ``warn``, and the names it states are its replacements. httpx
+    0.28's ``Client(proxies=...)`` broke a great deal of code written for 0.27."""
+    changes = {c.parameter: c for c in toy_diff(tmp_path, "hx", WARNED_OLD, WARNED_NEW)}
+    proxies, app = changes["proxies"], changes["app"]
+    assert proxies.hint == (
+        "The 'proxies' argument is now deprecated. Use 'proxy' or 'mounts' instead."
+    )
+    assert app.hint == (
+        "The 'app' shortcut is now deprecated. Use the explicit style "
+        "'transport=WSGITransport(app=...)' instead."
+    )
+    assert diff_note([proxies]).line == (
+        "`Client()` no longer accepts `proxies`; do not pass it. Use `proxy` or `mounts` "
+        "instead of `proxies`. [diff + library]"
+    )
+    # Advice, not a stated replacement: quoted, and the rest said as before.
+    assert diff_note([app]).line == (
+        '`Client()` no longer accepts `app`; do not pass it. On `app`, hx 1.0 said: "Use the '
+        "explicit style 'transport=WSGITransport(app=...)' instead.\" since-cutoff found no "
+        "replacement in hx's deprecation text. [diff]"
+    )
+
+
 FORCE_FILENAME = {
     "pkg": "huggingface-hub",
     "name": "hf_hub_download",
@@ -526,6 +637,24 @@ def test_parse_block_reads_format_2_and_detects_hand_edits(tmp_path) -> None:
     broken = target.read_bytes().decode().replace('"v":2', '"v":2,,')
     assert parse_block(broken).edited is True  # type: ignore[union-attr]
     assert parse_block("# no block here\n") is None
+
+
+def test_parse_block_reads_both_forms_of_the_package_line() -> None:
+    """The package line says which release the notes compare from, ``(compared from 0.60.0)``;
+    a block written before there was a margin said ``(0.60.0 at the cutoff)``, and the notes
+    it holds are read the same (``sync`` rewrites it). A package line with neither has no
+    comparison release."""
+    notes = [diff_note([change(param="temperature")])]
+    block = render_block(notes, model="m", cutoff=CUTOFF, version_source="uv.lock")
+    assert "\n**anthropic 1.8.0** (compared from 0.60.0)\n" in block
+    legacy = block.replace("(compared from 0.60.0)", "(0.60.0 at the cutoff)")
+    bare = block.replace(" (compared from 0.60.0)", "")
+    for text in (block, legacy, bare):
+        parsed = parse_block(text)
+        assert parsed is not None
+        anthropic = parsed.packages["anthropic"]
+        assert anthropic.version == "1.8.0" and len(anthropic.bullets) == 1
+        assert anthropic.cutoff_version == (None if text is bare else "0.60.0")
 
 
 def test_parse_block_reads_the_blocks_0_3_wrote() -> None:

@@ -95,7 +95,11 @@ def driver(tmp_path: Path) -> list[str]:
 
 
 def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PYTHONIOENCODING", "PYTHONUTF8", "PYTHONUNBUFFERED")
+    }
     env.update(SINCE_CUTOFF_CACHE=str(tmp_path / "cli-cache"), **extra)
     env.pop("COLUMNS", None)
     return env
@@ -149,20 +153,32 @@ def test_output_to_nul_does_not_crash(tmp_path, driver) -> None:
         assert done.returncode == expected
 
 
+@pytest.mark.parametrize("unbuffered", [False, True], ids=["buffered", "unbuffered"])
 @pytest.mark.parametrize(
     "args",
-    [["scan", "APP", *CUTOFF], ["scan", "APP", *CUTOFF, "--json"], ["--help"]],
-    ids=["scan", "json", "help"],
+    [
+        ["scan", "APP", *CUTOFF],
+        ["scan", "APP", *CUTOFF, "--json"],
+        ["--help"],
+        ["scan", "--help"],
+        ["--version"],
+    ],
+    ids=["scan", "json", "help", "scan-help", "version"],
 )
-def test_a_closed_pipe_ends_the_run_quietly(tmp_path, driver, args) -> None:
+def test_a_closed_pipe_ends_the_run_quietly(tmp_path, driver, args, unbuffered) -> None:
     """``since-cutoff scan | head``: the reader goes away. No traceback and no exit code 120
-    from Python's last flush; the shell's code for a writer stopped by SIGPIPE instead."""
+    from Python's last flush; the shell's code for a writer stopped by SIGPIPE instead.
+
+    With PYTHONUNBUFFERED (set in many containers) argparse's own write of the help or the
+    version hit the closed pipe: Python 3.11 and later ignored it and exited with 0, 3.10
+    printed a BrokenPipeError traceback and exited with 1."""
     app = make_app(tmp_path)
+    env = _env(tmp_path, **({"PYTHONUNBUFFERED": "1"} if unbuffered else {}))
     proc = subprocess.Popen(
         [*driver, *(str(app) if a == "APP" else a for a in args)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=_env(tmp_path),
+        env=env,
     )
     assert proc.stdout is not None and proc.stderr is not None
     proc.stdout.close()  # before the child writes anything
@@ -407,7 +423,9 @@ def test_a_git_reference_is_named_in_the_skip_reason(tmp_path) -> None:
         deps["local-lib"].non_pypi_reason == "installed from file:///srv/local-lib, not from PyPI"
     )
     engine = Engine(Settings(), store=DiskCache(tmp_path / "c"), llm_cache=DiskCache(tmp_path))
-    scan = engine._scan_versions(deps["dacvae"], date(2025, 1, 1), load_project(tmp_path))
+    scan = engine._scan_versions(
+        deps["dacvae"], ModelTarget.cutoff_only(date(2025, 1, 1), margin=0), load_project(tmp_path)
+    )
     assert scan.status == SKIPPED and "secret" not in (scan.reason or "")
 
 
@@ -614,6 +632,8 @@ def test_modules_a_pth_file_puts_on_the_path_get_their_import_names(
     tree = _OneFile(DiskCache(tmp_path), "311", wheel).source("pywin32", "311")
     assert tree.import_names == ("adodbapi", "pywin", "pywintypes", "win32con")
     assert (tree.root / "pywin" / "scintilla" / "scintillacon.py").is_file()
+    # Compiled modules are named from the .pth directories too: win32/win32api.pyd is win32api.
+    assert tree.compiled == ("win32api",)
     # The diff finds the modules where they are imported from.
     old = write_tree(tmp_path / "old", {"win32con.py": "WM_USER = 1024\nWM_OLD = 1\n"})
     changes = _diff_trees(old, tree.root, ["win32con"])
@@ -687,9 +707,10 @@ def test_a_package_with_only_prereleases_existed_at_the_cutoff(cache) -> None:
     project = load_project(root)
     deps = {d.name: d for d in project.dependencies}
     engine = Engine(Settings(), store=cache, llm_cache=cache, pypi=pypi)
-    parser = engine._scan_versions(deps["sqlgpt-parser"], cutoff, project)
+    at_cutoff = ModelTarget.cutoff_only(cutoff, margin=0)
+    parser = engine._scan_versions(deps["sqlgpt-parser"], at_cutoff, project)
     assert parser.status == KNOWN  # not "first released after the cutoff"
-    beta = engine._scan_versions(deps["beta-only"], cutoff, project)  # not "no final releases"
+    beta = engine._scan_versions(deps["beta-only"], at_cutoff, project)  # not "no final releases"
     assert (beta.locked, beta.cutoff_version, beta.status) == ("0.62b1", "0.51b0", CHANGED)
 
 
