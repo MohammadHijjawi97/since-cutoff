@@ -66,6 +66,19 @@ jobs:
             echo "Coverage: not measured (the tests did not finish)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  oldest-griffe:
+    # The matrix resolves the newest griffe; this job runs the oldest that pyproject accepts.
+    # The two have differed (griffe 2.3.1 changed how parameter kinds print).
+    name: test (ubuntu-latest, py3.12, griffe 1.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e . pytest hypothesis "griffe==1.14.*"
+      - run: python -m pytest -m "not network"
+
   network:
     runs-on: ubuntu-latest
     steps:

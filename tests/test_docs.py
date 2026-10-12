@@ -137,8 +137,19 @@ def _unwrapped(text: str) -> str:
 @pytest.mark.parametrize("name", READMES)
 def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     text = _text(name)
-    first = text.split("\n## ", 1)[0]
+    # The first screen: what it is, then the first two sections, Install and Quick start.
+    sections = text.split("\n## ", 3)
+    first = "\n## ".join(sections[:3])
     [console] = re.findall(r"```console\n(.*?)```", first, re.S)
+    # Install comes first: its commands are in the first section, within the first 50
+    # lines and before the scan output, which is in the second (0.5.0 opened with the
+    # scan output and showed the install commands at line 137, after The problem).
+    assert "pipx install since-cutoff" in sections[1]
+    assert "pip install since-cutoff" in sections[1]
+    install = text.index("pipx install since-cutoff")
+    assert text.count("\n", 0, install) < 50
+    assert install < text.index("```console")
+    assert sections[2].count("```console") == 1
     lines = console.splitlines()
     assert lines[0] == "$ uvx since-cutoff scan --model anthropic:claude-sonnet-4-5"
     assert lines[1] == (
@@ -153,7 +164,7 @@ def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     )
     assert _unwrapped(console.rstrip().split("\n\n")[-1]) == ready
     # The block `sync` writes has the same bullet, under the package's line.
-    assert f"**anthropic 1.8.0** (0.60.0 at the cutoff)\n- {note}\n" in text
+    assert f"**anthropic 1.8.0** (compared from 0.56.0)\n- {note}\n" in text
     # One command that needs no API key.
     assert "```bash\nuvx since-cutoff scan\n```" in first
 
@@ -233,11 +244,24 @@ def test_the_slug_is_githubs() -> None:
     "fragment",
     (
         "No dependency could be checked",
+        "MB download limit (--max-download-mb)",
+        "could not find importable modules in",
         "Not written: there is no terminal to ask in",
-        "the notes block was edited by hand",
+        "The since-cutoff block in",
+        "was edited by hand; sync would replace it",
+        "unknown model '",
+        "Pass its training cutoff explicitly",
+        "models.dev has no knowledge cutoff for '",
+        "the `claude` CLI was not found on PATH",
+        "ANTHROPIC_API_KEY is not set",
+        "basedpyright is not installed (pip install basedpyright)",
+        "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md",
     ),
 )
-def test_troubleshooting_quotes_current_cli_text(fragment: str) -> None:
-    source = (ROOT / "src/since_cutoff/cli.py").read_text(encoding="utf-8")
+def test_troubleshooting_quotes_current_source_text(fragment: str) -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "src/since_cutoff").rglob("*.py"))
+    )
     assert fragment in source
     assert fragment in _text("docs/troubleshooting.md")

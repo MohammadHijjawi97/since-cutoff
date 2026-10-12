@@ -384,3 +384,41 @@ def test_python_m_since_cutoff_is_the_cli(monkeypatch, capsys) -> None:
         runpy.run_module("since_cutoff", run_name="__main__")
     assert exit_info.value.code == 0
     assert capsys.readouterr().out == f"since-cutoff {__version__}\n"
+
+
+def test_cutoff_margin_flag_variable_and_default(
+    tmp_path, capsys, scripted_cli, monkeypatch
+) -> None:
+    """The comparison release is the latest published ``--cutoff-margin`` days before the cutoff:
+    30 by default, ``SINCE_CUTOFF_CUTOFF_MARGIN`` otherwise, the flag over both. The model line
+    says the day, and results.json records the day and the margin."""
+    root = make_project(tmp_path)
+
+    def scan(*extra: str) -> tuple[int, str, Any]:
+        scripted_cli.append(ScriptedModel())
+        code = cli.main(["scan", str(root), *CUTOFF, *extra])
+        out = capsys.readouterr().out
+        result = json.loads((root / ".since-cutoff" / "results.json").read_text(encoding="utf-8"))
+        return code, out, result
+
+    code, out, result = scan()
+    assert code == 0
+    assert (
+        "Custom cutoff 2025-07-31, comparing from releases up to 2025-07-01 "
+        "(from --cutoff; no model given)" in out
+    )
+    assert (result["compare_from"], result["settings"]["cutoff_margin"]) == ("2025-07-01", 30)
+    code, out, result = scan("--cutoff-margin", "0")
+    assert code == 0 and "Custom cutoff 2025-07-31 (from --cutoff; no model given)" in out
+    assert (result["compare_from"], result["settings"]["cutoff_margin"]) == ("2025-07-31", 0)
+    monkeypatch.setenv("SINCE_CUTOFF_CUTOFF_MARGIN", "7")
+    code, out, result = scan()
+    assert "comparing from releases up to 2025-07-24" in out
+    assert (result["compare_from"], result["settings"]["cutoff_margin"]) == ("2025-07-24", 7)
+    code, out, result = scan("--cutoff-margin", "0")  # the flag wins over the variable
+    assert result["settings"]["cutoff_margin"] == 0
+    monkeypatch.setenv("SINCE_CUTOFF_CUTOFF_MARGIN", "soon")
+    scripted_cli.append(ScriptedModel())
+    assert cli.main(["scan", str(root), *CUTOFF]) == 1
+    err = capsys.readouterr().err
+    assert "SINCE_CUTOFF_CUTOFF_MARGIN: not a number of days: 'soon'" in err

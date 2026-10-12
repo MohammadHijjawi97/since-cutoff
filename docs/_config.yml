@@ -19,4 +19,4 @@ defaults:
         path: https://mohammadhijjawi97.github.io/since-cutoff/img/og.png
         width: 1200
         height: 630
-        alt: "since-cutoff: find which of your dependency APIs your coding model gets wrong, and fix it with verified AGENTS.md notes"
+        alt: "since-cutoff: find which of your dependency APIs changed after your coding model's training cutoff, and write short AGENTS.md notes from the API diff, each with its source"

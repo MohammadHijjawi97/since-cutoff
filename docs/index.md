@@ -5,16 +5,19 @@ description: Measuring which pinned library APIs a coding model gets wrong becau
 
 **English** · [Español](es/index.md) · [Français](fr/index.md)
 
-*Mohammad Hijjawi · September 2026 · [since-cutoff on GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
+*Mohammad Hijjawi · September 2026, updated October 2026 · [since-cutoff on GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
 
 <p align="center"><img src="img/hero.svg" width="640" alt="Your coding model learned your libraries before they changed. Claude Opus 4.6 on one sample project, measured with since-cutoff 0.1.0: on 7 of 16 probed API changes it used a name or parameter that has since been removed; with the notes, 5% to 65% of 20 held-out tasks were correct. Try it: uvx since-cutoff scan (no model calls, no API key)."></p>
 
 **since-cutoff** is an open-source command-line tool and MCP server for Python projects written
-with coding agents. It shows where your code uses a dependency API that changed after the
-model's training cutoff, writes short AGENTS.md notes about those changes from the API diff and
-keeps them in step with your lockfile, and can measure which of the changes the model gets wrong
-and whether the notes help. Each note is tagged with what was checked: stated from the API diff,
-or written by the model and kept only if its example type-checks against your version.
+with coding agents. `scan` shows where your code uses a dependency API that changed after the
+model's training cutoff, with a note for each stated from the API diff; `sync` writes the notes
+into AGENTS.md or CLAUDE.md and keeps them in step with your lockfile; `status`, pre-commit hooks
+and a GitHub Action tell you when they fall behind; the MCP server lets an agent ask what changed
+in a library before it writes code. Only the optional `run` calls a model: it measures which of
+the changes the model gets wrong and whether the notes help. Each note is tagged with what was
+checked: stated from the API diff, or written by the model and kept only if its example
+type-checks against your version.
 
 ```bash
 # the changed APIs your code uses, with a note for each (no model calls, no API key)
@@ -23,15 +26,18 @@ uvx since-cutoff scan
 # write the notes into AGENTS.md and keep them current (no model calls)
 uvx since-cutoff sync
 
-# measure the model, write notes, add them to AGENTS.md
-uvx since-cutoff run --apply
+# optional: measure which of the changes your model gets wrong, and test the notes (calls it)
+uvx since-cutoff run
 ```
 
 [Source and documentation on GitHub](https://github.com/MohammadHijjawi97/since-cutoff) ·
 [PyPI](https://pypi.org/project/since-cutoff/) ·
 [How it works, in detail](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/how-it-works.md)
 
-The rest of this page is the story behind it and the first measurements.
+The rest of this page is the story behind it and the first measurements, made with since-cutoff
+0.1.0 in September 2026. More recent measurements: [What your model hasn't seen](ai-stack.md)
+(36 libraries, 21 models, no model calls) and [the coding-agent benchmark](benchmark.md) (360
+Claude Code sessions).
 
 ---
 
@@ -60,8 +66,8 @@ Two models were tested: **Claude Haiku 4.5** (training cutoff February 2025) and
    model's cutoff, and diff its public API against the pinned version, statically (griffe, no code
    imported). That finds removed and moved objects, removed or newly required parameters,
    keyword/positional-only changes and new deprecation markers. For this project and Claude
-   Haiku 4.5's cutoff, 7 of the 9 dependencies changed; the current diff (0.2.0) flags 491
-   breaking changes and 50 new deprecations, some of them internals.
+   Haiku 4.5's cutoff, 7 of the 9 dependencies changed; the current diff (0.5.0) flags 475
+   breaking changes and 48 new deprecations, some of them internals.
 2. **Tasks that need the change.** For the highest-ranked changes, a task writer produces short,
    realistic coding tasks that require the changed functionality but never name the changed
    identifier or its replacement. One task is the probe; two are held out.
@@ -158,19 +164,20 @@ uvx since-cutoff scan
 # write the notes into AGENTS.md and keep them current (no model calls)
 uvx since-cutoff sync
 
-# measure, write notes, apply them to AGENTS.md
-uvx since-cutoff run --apply
+# optional: measure which of the changes your model gets wrong, and test the notes (calls it)
+uvx since-cutoff run
 ```
 
-It works with Claude Code (as a plugin), Anthropic, OpenAI, OpenRouter, DeepSeek, Ollama and
-any OpenAI-compatible server.
-`since-cutoff mcp` lets any MCP client (Codex, Cursor, VS Code, Gemini CLI) look up a library's
-changes before writing code, and a
-[GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff#github-action) runs the scan on
-pull requests and can check that the notes are current. It is Python-only for now; TypeScript is next. Feedback on the method is very
-welcome in the [issues](https://github.com/MohammadHijjawi97/since-cutoff/issues), and results
-from your own projects in
-[Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6). If you
-would like to contribute code, the
+`run` works with Claude Code (as a plugin), Anthropic, OpenAI, OpenRouter, DeepSeek, Ollama and
+any OpenAI-compatible server; `scan`, `sync` and `status` need only the model's cutoff.
+`since-cutoff status` (offline), `sync --check`, the
+[pre-commit hooks](https://github.com/MohammadHijjawi97/since-cutoff#pre-commit) and a
+[GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff#github-action) tell you when
+the notes fall behind; `since-cutoff mcp` lets any MCP client (Claude Code, Codex, Cursor, VS
+Code, Gemini CLI) look up a library's changes before writing code. It is Python-only for now;
+TypeScript is next. Feedback on the method is very welcome in the
+[issues](https://github.com/MohammadHijjawi97/since-cutoff/issues), and results from your own
+projects in [Share your results](https://github.com/MohammadHijjawi97/since-cutoff/discussions/6).
+If you would like to contribute code, the
 [good first issues](https://github.com/MohammadHijjawi97/since-cutoff/labels/good%20first%20issue)
 are a good place to start.

@@ -45,15 +45,47 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
    (`2025-07` means 31 July 2025). Without `--model`, the model is the one your coding agent is
    set up with (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
-3. **The comparison release** is the newest final, non-yanked release published on or before the
-   cutoff date (PyPI upload time). A package that had only pre-releases by
-   then is compared with the newest of them (development releases do not count). A package
-   first released after the cutoff, or whose release at the cutoff only reserved the name (no
-   modules, or only empty ones), is reported as first released after the cutoff.
+3. **The comparison release** is the newest final, non-yanked release published at least 30
+   days before the cutoff date (PyPI upload time): the latest release published on or before
+   the cutoff minus the margin. The margin is `--cutoff-margin DAYS`, or
+   `SINCE_CUTOFF_CUTOFF_MARGIN`, or the `cutoff_margin` parameter of the MCP tools; 0 compares
+   from the latest release at the cutoff itself. The default is 30 because a model's training
+   data lags its stated cutoff, so it knows the last weeks before the cutoff least: llama-index-core
+   0.13.0, which removed `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on
+   2025-07-30, the day before claude-sonnet-4-5's cutoff, and a scan without the margin
+   compared from 0.13.0 and reported no change the code used; with the margin it compares
+   from 0.12.45 and reports both. The model line says both days: "training cutoff 2025-07-31,
+   comparing from releases up to 2025-07-01", and `results.json` records `compare_from` and
+   `settings.cutoff_margin`. A package that had only pre-releases by the comparison date is
+   compared with the newest of them (development releases do not count). A package first
+   released after it, or whose release then only reserved the name (no modules, or only empty
+   ones), is reported as first released after the cutoff (within the margin of it, when it was).
 4. **The API diff.** Both versions are downloaded once (wheels, falling back to sdists; only
    `.py`/`.pyi` files are extracted) and loaded *statically* with
-   [griffe](https://mkdocstrings.github.io/griffe/). since-cutoff reports only changes that
-   break code written for the old version:
+   [griffe](https://mkdocstrings.github.io/griffe/). A module the pinned release ships
+   compiled, with no `.py` source and no `.pyi` stub (an extension module in a wheel, a Cython
+   `.pyx` in an sdist), cannot be read this way: when it had a source or a stub in the comparison release,
+   it is not reported as removed, nor is what it defines or what a readable module still
+   imports from it, and the scan warns that changes to it are not reported. A name a readable
+   module no longer imports from it is still removed. A top-level package whose `__init__` is
+   compiled hides only the names it defines; a compiled subpackage `__init__` hides that
+   subpackage (griffe cannot enter a directory without an `__init__.py` inside a regular
+   package), and the scan warns.
+   A module that takes its names from another distribution with `from x import *` (mcp 2.3's
+   `mcp/types/__init__.py` is `from mcp_types import *`, and its requirements pin mcp-types
+   2.3.0) is compared with that distribution read next to the release, at the version the project
+   locks or, for the comparison release, the newest its requirement allowed on the
+   comparison date (a few hundred KB, under the same download limit and cache); its names are
+   reported under the paths that re-export them (`mcp.types.Tool.inputSchema` was removed:
+   mcp-types spells it `input_schema`), and so is what else changed in an object the release
+   now only re-exports, where griffe stops at the alias: a class's members (inherited ones
+   included), a function's parameters, a change of kind. When that distribution cannot be
+   downloaded, the scan warns that changes to those modules are not reported. Only star imports
+   that run are followed (not one in a docstring, a function or an `if TYPE_CHECKING:` block),
+   and only of a distribution the release's own requirements name. Which distributions a
+   release star-imports is kept in the cache with its diff, so a cached diff is served from the
+   pinned release alone, as before.
+   since-cutoff reports only changes that break code written for the old version:
 
    | kind | example |
    |---|---|
@@ -65,17 +97,21 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    | positional-only | `f(a=a)` must now be `f(a)` |
    | changed kind | `pkg.Grammar` was a class and is now an attribute |
    | dependency switched | openai 3.19.2 requires `httpx2` instead of `httpx`, and `OpenAI(http_client=...)` takes an `httpx2.Client` ([below](#a-dependency-the-pinned-release-switched)) |
-   | deprecated | `@deprecated` (PEP 702) added since the cutoff, a library's own decorator whose name contains "deprecat", or a removed name the module still serves with a warning through `__getattr__`, a table of deprecated aliases or a metaclass property (`scan` lists all of them, with the library's message; `run` probes only the PEP 702 ones). A deprecation on some overloads only is a deprecated call form (`call_form` in results.json) |
+   | deprecated | `@deprecated` (PEP 702, also when the library imports it through a compatibility module of its own) added since the cutoff, a library's own decorator whose name contains "deprecat", or a removed name the module still serves with a warning through `__getattr__`, a table of deprecated aliases or a metaclass property (`scan` lists all of them, with the library's message; `run` probes only the PEP 702 ones). A deprecation on some overloads only is a deprecated call form (`call_form` in results.json) |
 
    Default values, attribute values and return annotations are ignored. Objects are reported
    under their shortest public path (`cryptography.hazmat.primitives.ciphers.aead.AESGCM`, not
-   a chain of module imports). Sync/async twins and raw-response wrappers are merged into one
-   change. A move needs the same object at the new path (a class or module that kept its public
-   names, a function with the old parameters, the same value), and "similar names now" offers
-   only names that are new in the same owner. A positional parameter renamed in place is one
-   change, with the new name as a suggestion. A removed `*args` or `**kwargs` is reported as such
-   (its parameter in results.json is `*args` or `**kwargs`), unless the new signature names the
-   parameters it took.
+   a chain of module imports). Sibling modules are read in the order of their names, not the
+   order the file system lists them in, so an object that several of them import from a private
+   module has the same path on every machine (mcp 1.28's `McpHttpClientFactory`, which
+   `mcp.client.sse` and `mcp.client.streamable_http` import, is
+   `mcp.client.sse.McpHttpClientFactory`). Sync/async twins and raw-response wrappers are merged
+   into one change. A move needs the same object at the new path (a class or module that kept
+   its public names, a function with the old parameters, the same value), and "similar names
+   now" offers only names that are new in the same owner. A positional parameter renamed in
+   place is one change, with the new name as a suggestion. A removed `*args` or `**kwargs` is
+   reported as such (its parameter in results.json is `*args` or `**kwargs`), unless the new
+   signature names the parameters it took.
 
    Not reported, because code written for the old version still works or never used them:
    - a name still listed in `__all__` of a module that binds names the source does not spell
@@ -98,13 +134,14 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
 
 The cutoff date picks a comparison point. It is not a claim about what a model memorised.
 since-cutoff takes the date from models.dev (or `--cutoff`); a month means its last day
-(`2025-07` is 31 July 2025). For each dependency it takes the newest final, non-yanked release
-uploaded on or before that date (a pre-release only if the package had no final release by then,
+(`2025-07` is 31 July 2025). It moves that date back by the margin (`--cutoff-margin`, 30 days
+by default), and for each dependency takes the newest final, non-yanked release uploaded on or
+before the day it lands on (a pre-release only if the package had no final release by then,
 never a development release), and diffs that release's public API against your locked version.
 That diff is a list of candidates: API changes that the model's training data probably does not
 include.
 
-The date decides three things:
+The comparison date decides three things:
 
 - which packages are diffed at all: a package whose locked version is no newer than that release
   has nothing to diff, and a package first released after the date is listed as new;
@@ -114,9 +151,10 @@ The date decides three things:
   version, with the error on a changed API, is "stale" rather than "wrong".
 
 A model can know a release after its stated cutoff or not know releases shortly before it, so the
-scan can list changes the model already handles and miss some it does not. Whether the model
-actually writes the old API is shown only by `run`, which asks it: with no tools, told which
-version the project pins.
+scan can list changes the model already handles and miss some it does not. The margin is for the
+second case; `--cutoff-margin 0` compares from the cutoff itself. Whether the model actually
+writes the old API is shown only by `run`, which asks it: with no tools, told which version the
+project pins.
 
 ## Notes without a model: scan and sync
 
@@ -149,7 +187,7 @@ Each use is one of two **forms**:
 
 | form | meaning |
 |---|---|
-| **old form** | the code uses the API as the release at the cutoff allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
+| **old form** | the code uses the API as the comparison release allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
 | **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
 
 The terminal and the MCP tool `project_changes` show at most 3 files per API (`scan -v` shows
@@ -170,7 +208,7 @@ them. A replacement is named only with evidence, and the tag says which:
 | the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement ("Use `stop` instead", "replaced by", "renamed to", "in favour of"), and the name exists in the pinned version | "Use `stop` instead of `stop_sequences`." | `[diff + library]` |
 | a moved object that looks like the same object: a class or module keeps at least half of its public names, a function its parameters, a value the same value | "`pkg.helpers.Session` moved to `pkg.sessions.Session`: import it with `from pkg.sessions import Session`." | `[diff + move checked]` |
 | the older release's Requires-Dist lists a library the pinned one does not, and the public API that named its types names another required library's types, or a copy it ships, instead ([below](#a-dependency-the-pinned-release-switched)) | "openai 3.19.2 requires `httpx2` instead of `httpx`: `OpenAI(http_client=...)` takes `httpx2.Client` (`httpx2.AsyncClient` for `AsyncOpenAI`), `OpenAI(timeout=...)` takes `httpx2.Timeout` and `OpenAI(base_url=...)` takes `httpx2.URL`. Use `httpx2` there, not `httpx`." | `[diff + metadata]` |
-| a new parameter in the same position with the same annotation | "`begin` was probably renamed to `start` (same position and type)." | `[diff; probable rename]` |
+| a new parameter in the same position with the same annotation, unless a version note in the pinned release's docstring (`.. versionadded::`, `.. versionchanged::`) says that one was added or the other removed (click 8.2's `CliRunner`: `catch_exceptions` where `mix_stderr` was) | "`begin` was probably renamed to `start` (same position and type)." | `[diff; probable rename]` |
 | names that merely look similar | Nothing, by default. The terminal, report.md and the MCP tools say "similar parameters in 2.0.0, not confirmed as replacements: `x`", and nothing where the library says there is no replacement. `sync --suggestions` adds "Similar names in 2.0.0, not confirmed as replacements: `x`." | `[diff; not confirmed]`, with `--suggestions` |
 
 Other changes are stated as they are: "`x` is deprecated; avoid it in new code.", "… now
@@ -221,9 +259,12 @@ result does not depend on what else is in the cache; one whose module is named o
 (Pillow's `PIL`) is missed, never matched wrongly. `Annotated[...]` counts only its type and
 `Literal[...]` nothing. A base class counts through the package's own classes (mcp 2.2's
 `OAuthClientProvider` derives from its `RedirectAwareAuth`, which derives from `httpx2.Auth`),
-but a subclass of a class whose own base switched is not counted again. A parameter is counted
-by the type it names now: openai 3's `http_client` takes an `httpx2.Client` in 8 signatures and
-an `httpx2.AsyncClient` in 6. A constructor is recorded under its class's path
+but a subclass of a class whose own base switched is not counted again. A method counts like a
+function, a Protocol's `__call__` included: code implements mcp's `McpHttpClientFactory` to pass
+`sse_client(httpx_client_factory=...)`, and in 2.2 its `__call__` takes `httpx2.Timeout` and
+`httpx2.Auth` and returns `httpx2.AsyncClient`, 3 of the switch's 23 places. A parameter is
+counted by the type it names now: openai 3's `http_client` takes an `httpx2.Client` in 8
+signatures and an `httpx2.AsyncClient` in 6. A constructor is recorded under its class's path
 (`openai.OpenAI`), the way code calls it, a classmethod or staticmethod under its class's
 (`fastmcp.FastMCP.from_openapi`), and each switched parameter with its position in the call
 (after `self` or `cls`), or none for a keyword-only one.
@@ -292,6 +333,7 @@ comes a meta line, an HTML comment holding JSON:
 | `v` | the block format, 2 |
 | `tool` | the since-cutoff version that wrote it |
 | `model`, `cutoff` | the model (several, comma-separated, for `sync --model a,b`) and the training cutoff the notes are for |
+| `margin` | how many days before the cutoff the comparison releases were published by (`--cutoff-margin`, 30 by default); a block without it, from an earlier since-cutoff, compared from the cutoff itself |
 | `versions_from` | where the versions come from (`uv.lock`; `pyproject.toml, latest on PyPI for 3 unpinned`) |
 | `deps` | a hash of the dependencies and their versions (an unpinned one by its declared range), so `status` sees a change offline |
 | `body` | a hash of the block's text after the meta line, with line breaks normalised, so a hand edit shows |
@@ -299,10 +341,12 @@ comes a meta line, an HTML comment holding JSON:
 | `suggestions`, `checked`, `added_eol` | only when needed: `sync --suggestions` was used; the API each `[type-checked]` bullet is about; the line break since-cutoff added to a file that did not end with one, which `unapply` takes away again |
 
 Then the title "## Library changes after the model's training cutoff", a header that names the
-model, the cutoff, the file the versions come from and the since-cutoff version, says what the
-tags mean, that no library code was run, and "Where these lines conflict with what you remember,
-follow these lines", and one group per package: `**anthropic 1.8.0** (0.60.0 at the cutoff)`
-followed by its bullets.
+model, the cutoff and the day the comparison releases were published by ("the training cutoff
+of `claude-sonnet-4-5` (2025-07-31, comparing from releases up to 2025-07-01)"), the file the
+versions come from and the since-cutoff version, says what the tags mean, that no library code
+was run, and "Where these lines conflict with what you remember, follow these lines", and one
+group per package: `**anthropic 1.8.0** (compared from 0.56.0)`, the release the notes compare
+from, followed by its bullets.
 
 ### `sync`
 
@@ -319,7 +363,9 @@ file:
 2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
    teammates whose agents use other models do not rewrite it back and forth; with no block, the
    model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and
-   names both.
+   names both. The margin (`--cutoff-margin`) is not kept from the block: it is the scan's
+   setting, the same for everyone, and a block compared from another day is rewritten, with
+   "now comparing from 30 days before the cutoff (it was the cutoff itself)" as the reason.
 3. **What changes.** Notes for APIs the code starts using are added, and a bumped package is
    diffed again (diffs are cached per package and pair of versions, so the others come from the
    cache). A
@@ -377,7 +423,9 @@ What it prints, from the sample project:
 `since-cutoff status` compares the block with the project's dependencies as they are, with no
 network and without reading the code (`sync --check` does that): per package, the version the
 notes are for and the version the lockfile has; whether other dependencies changed (the `deps`
-hash); where the versions come from; and whether the model your coding agent is set up with has
+hash); where the versions come from; whether the block compared from another day than the scan
+does now (its `margin` against `--cutoff-margin`: a block from before there was a margin
+compared from the cutoff itself); and whether the model your coding agent is set up with has
 an earlier training cutoff than the notes, which may then miss changes (it prints the
 `sync --model` command for it; this is not a failure, since sync keeps the block's model). A
 block that 0.3 or `run --apply` wrote is out of date, as `sync --check` would find it. No block
@@ -497,7 +545,8 @@ for the regression check `changes_still_correct` and `ci95_changes_still_correct
 `results.json` (`settings`) and report.md ("Run settings") also record what the numbers depend
 on besides the answers: the since-cutoff version, the model under test and where it came from,
 the task and note writer, the Claude Code effort, the prompt version, the API diff schema, the
-probe, held-out and regression budgets, the Python version, the tasks file and who wrote its
+griffe version that read the sources (cached diffs are keyed on it, so a griffe upgrade diffs
+again), the probe, held-out and regression budgets, the Python version, the tasks file and who wrote its
 tasks, the baselines compared, and the date.
 
 ### Baselines (`--compare`)
@@ -538,11 +587,11 @@ was checked, and nothing else is claimed:
 
 | tag | what was checked | what was not |
 |---|---|---|
-| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release on or before the model's training cutoff, and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
+| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release published at least 30 days before the model's training cutoff (by default), and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
 | `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
-| `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name. A guess, labelled as one. | That it is the same parameter. |
+| `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name, and no version note in the pinned release's docstring (`.. versionadded::`, `.. versionchanged::`) says that one was added or the other removed. A guess, labelled as one. | That it is the same parameter. |
 | `[type-checked]` | Written by a model during `since-cutoff run` and kept because its example passed the type check below. | Behaviour; that the bullet's explanation is true beyond the names it shows. |
 | `[not confirmed]` | Only with `sync --suggestions`: names in the pinned version that look similar to what was removed (the bullet's tag then reads `[diff; not confirmed]`). | That any of them replaces it. |
 
@@ -582,7 +631,7 @@ parameter; missing required argument; wrong number of arguments). Pure type-stri
 are ignored. No answer is executed.
 
 The block in AGENTS.md holds the bullets with their tags, and for each package the version its
-notes apply to and the release at the cutoff. The rest is in `scan --json` and `results.json`:
+notes apply to and the release they are compared from. The rest is in `scan --json` and `results.json`:
 `used_apis[]` (each changed API the code uses, where, its changes, its replacements with their
 source, and its note with `tags`, `applies_to` and `checks`) and, after `run`, `notes_detail[]`
 (each note with the model's example and what the held-out test measured; `verified` is kept,
