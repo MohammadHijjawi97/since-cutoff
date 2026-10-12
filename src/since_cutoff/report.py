@@ -857,7 +857,7 @@ def scan_lines(
 
     Per changed API the code uses: its package and versions, what changed, whether the code
     uses it in the old form, where (at most :data:`LOCATIONS_SHOWN` places unless ``verbose``;
-    file-level until the scan records lines, issue #8), the note from the API diff with its
+    source location for each matching use where available), the note from the API diff with its
     tag, the runtime caveat and names that merely look similar. Then the dependencies first
     released after the cutoff that the code imports, what the notes are ready for, what the
     labels mean, and (unless ``show_all``) one line for everything else that changed.
@@ -1110,7 +1110,7 @@ def installed_text(scan: ScanResult, u: UsedAPI) -> str | None:
 
 def places(u: UsedAPI) -> list[tuple[str, list[Use]]]:
     """The places the code uses an API, most specific first: ``(where, uses there)``, where
-    ``where`` is ``app/main.py`` (``app/main.py:7`` once the scan records lines, issue #8)."""
+    ``where`` is ``app/main.py`` (``app/main.py:7`` when the scan knows the source location)."""
     by_place: dict[str, list[Use]] = {}
     for use in u.uses:
         by_place.setdefault(use.where or "a file of your code", []).append(use)
@@ -1119,7 +1119,7 @@ def places(u: UsedAPI) -> list[tuple[str, list[Use]]]:
 
 def _snippet(root: Path, use: Use, cache: dict[str, list[str]]) -> str | None:
     """The code on the line of a use, read at render time and never stored (only when the
-    scan knows the line: issue #8)."""
+    scan knows the line)."""
     if use.line is None or not use.file:
         return None
     if use.file not in cache:
@@ -1148,7 +1148,7 @@ def _api_lines(scan: ScanResult, u: UsedAPI, width: int, verbose: bool) -> list[
     snippets: dict[str, list[str]] = {}
     for where, here in shown[:cut]:
         snippet = _snippet(scan.project.root, here[0], snippets)
-        what = f"{snippet} - {use_text(here)}" if snippet else use_text(here)
+        what = snippet or use_text(here)
         for i, line in enumerate(
             _wrap(what, width, f"    {where.ljust(column)}   ", " " * (column + 7))
         ):
@@ -1290,8 +1290,7 @@ def fail_reason(scan: ScanResult, conditions: set[str]) -> str | None:
 def github_annotations(scan: ScanResult, env: Mapping[str, str] | None = None) -> list[str]:
     """``--annotate github``: one GitHub Actions workflow command per place where the
     project's code uses a changed API: ``::warning`` where it is the old form, ``::notice``
-    elsewhere. File-level for now (``file=`` only); once the scan records lines (issue #8),
-    ``line=`` and ``col=`` too. Paths are relative to ``GITHUB_WORKSPACE`` when the project is
+    elsewhere. Uses ``file=``, ``line=``, and ``col=`` when a source location is known. Paths are relative to ``GITHUB_WORKSPACE`` when the project is
     inside it. Property values and the message are escaped as the Actions toolkit does."""
     prefix = _workspace_prefix(scan.project.root, env)
     out = []
@@ -1475,7 +1474,7 @@ def render_markdown(scan: ScanResult, run: RunResult | None = None) -> str:
 
 def _used_report_md(scan: ScanResult) -> list[str]:
     """report.md's "Used by your code": each changed API the code uses, by package, with
-    every file that uses it (the lines are issue #8's), the note with its tag, the runtime
+    source locations where available, the note with its tag, the runtime
     caveat and the names that merely look similar."""
     used = scan.used_apis()
     new = scan.new_imported()

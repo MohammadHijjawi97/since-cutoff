@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `scan` now reports the source location of changed API uses and resolves member and reference
+  uses by their imported API path to avoid same-name false positives.
+
 - The comparison release is the latest release published at least 30 days before the model's
   training cutoff, not at the cutoff itself. A model's training data lags its stated cutoff, so
   it knows the last weeks before the cutoff least: llama-index-core 0.13.0, which removed
@@ -288,8 +291,6 @@
 
 ## Unreleased
 
-- `scan` now reports the source location of changed API uses and resolves member and reference
-  uses by their imported API path to avoid same-name false positives.
 
 ## 0.4.0 - 2026-09-28
 

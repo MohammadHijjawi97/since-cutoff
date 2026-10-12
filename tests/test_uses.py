@@ -106,7 +106,10 @@ def test_uses_reports_plain_name_reference_location():
 
     found = uses(fetch, files)
 
-    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 10)]
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 2, 16),
+        ("", 3, 10),
+    ]
 
 
 def test_uses_reports_chained_method_call_location():
@@ -814,3 +817,39 @@ def test_mcp_says_where_a_hint_comes_from() -> None:
     assert "the old version warned: `resume` is deprecated" in change_line(removed)
     removed.hint_source = HINT_PARAM_DOC
     assert "the old docs said: `resume` is deprecated" in change_line(removed)
+
+
+def test_uses_reports_resource_chain_call_location() -> None:
+    created = change("sdk.resources.messages.create", owner="Messages")
+    files = code("import sdk as s\nclient = s.Client()\nclient.messages.create()\nother.create()\n")
+
+    found = uses(created, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_keyword_on_resource_chain_call() -> None:
+    created = change(
+        "sdk.resources.messages.create",
+        owner="Messages",
+        parameter="temperature",
+    )
+    files = code(
+        "import sdk as s\n"
+        "client = s.Client()\n"
+        "client.messages.create(temperature=1)\n"
+        "other.create(temperature=1)\n"
+    )
+
+    found = uses(created, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_star_import_reference_location() -> None:
+    fetch = change("pkg.fetch")
+    files = code("from pkg import *\nhandler = fetch\n")
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 2, 10)]

@@ -258,7 +258,7 @@ def test_scan_fail_on_old_form_ignores_a_keyword_of_another_call(
     argv = ["scan", str(root), "--cutoff", "2025-07-31", "--fail-on", "old-form"]
     assert cli.main(argv) == 0
     out = capsys.readouterr().out
-    assert "calls send" in out and "passes temperature" not in out
+    assert "Client().send('hi')" in out and "passes temperature" not in out
     (root / "main.py").write_text(main.replace("send('hi')", "send('hi', temperature=0.2)"))
     assert cli.main(argv) == 3
 

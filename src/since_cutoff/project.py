@@ -1306,7 +1306,36 @@ def scan_file(tree: ast.AST, file: str = "") -> FileUse:
                 )
                 names = _chain(func) if isinstance(func, ast.Attribute) else None
                 if names:
+                    sites.add(("chain-call", names, node.lineno, node.col_offset))
+                    sites.update(
+                        ("chain-keyword", f"{names}:{k}", node.lineno, node.col_offset)
+                        for k in passed
+                    )
                     keyword_chains.update((names, k) for k in passed)
+    # Imports are source references even when the imported name is not read elsewhere.
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                sites.add(
+                    (
+                        "reference",
+                        alias.name,
+                        getattr(alias, "lineno", node.lineno),
+                        getattr(alias, "col_offset", node.col_offset),
+                    )
+                )
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                if alias.name != "*":
+                    sites.add(
+                        (
+                            "reference",
+                            f"{node.module}.{alias.name}",
+                            getattr(alias, "lineno", node.lineno),
+                            getattr(alias, "col_offset", node.col_offset),
+                        )
+                    )
+
     return FileUse(
         frozenset(paths),
         frozenset(attributes),

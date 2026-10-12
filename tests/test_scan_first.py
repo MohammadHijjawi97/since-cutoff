@@ -123,13 +123,13 @@ Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (20
 
 toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; pyproject.toml pins 2.0)
   Client.send: temperature was removed; stream is now keyword-only                          old form
-    main.py:2        Client().send('hi', temperature=0.2) - passes temperature to send
-    sub/other.py:2   Client().send('x') - calls send
+    main.py:2        Client().send('hi', temperature=0.2)
+    sub/other.py:2   Client().send('x')
     Note: `Client.send()` no longer accepts `temperature`; do not pass it. since-cutoff found no
           replacement in toylib's deprecation text. Pass `stream` to `Client.send()` by keyword.
           [diff]
   fetch: now requires timeout                                                          uses this API
-    main.py:3   fetch('u') - calls fetch
+    main.py:3   fetch('u')
     Note: `toylib.fetch()` now requires `timeout`. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
@@ -189,9 +189,9 @@ def test_verbose_lists_every_file_and_the_default_three(tmp_path, cache, fake_py
     scan = scan_app(root, cache, fake_pypi, date(2025, 7, 31))
     short = text_of(scan_lines(scan))
     shown = [
-        "    main.py:2     Client().send('x') - calls send",
-        "    sub/m0.py:2   Client().send('y') - calls send",
-        "    sub/m1.py:2   Client().send('y') - calls send",
+        "    main.py:2     Client().send('x')",
+        "    sub/m0.py:2   Client().send('y')",
+        "    sub/m1.py:2   Client().send('y')",
     ]
     assert "\n".join(shown) in short
     assert "sub/m2.py" not in short and "    and 2 more (-v lists them)" in short
@@ -381,86 +381,118 @@ def change(kind: str, path: str, owner: str | None = None, parameter: str | None
 
 
 @pytest.mark.parametrize(
-    ("the_change", "source", "kind", "the_form"),
+    ("the_change", "source", "kind", "the_form", "line", "column"),
     [
-        (change(REMOVED, "sdk.old"), "from sdk import old\nold()\n", USE_CALL, OLD_FORM),
-        (change(REMOVED, "sdk.OLD"), "import sdk\nx = sdk.OLD\n", USE_REFERENCE, OLD_FORM),
+        (change(REMOVED, "sdk.old"), "from sdk import old\nold()\n", USE_CALL, OLD_FORM, 2, 0),
+        (change(REMOVED, "sdk.OLD"), "import sdk\nx = sdk.OLD\n", USE_REFERENCE, OLD_FORM, 2, 4),
         (
             change(MOVED, "sdk.helpers.Thing", moved_to="sdk.things.Thing"),
             "from sdk.helpers import Thing\n",
             USE_REFERENCE,
             OLD_FORM,
+            1,
+            24,
         ),
-        (change(KIND_CHANGED, "sdk.value"), "from sdk import value\n", USE_REFERENCE, OLD_FORM),
+        (
+            change(KIND_CHANGED, "sdk.value"),
+            "from sdk import value\n",
+            USE_REFERENCE,
+            OLD_FORM,
+            1,
+            16,
+        ),
         (
             change(DEPRECATED, "sdk.legacy"),
             "from sdk import legacy\nlegacy()\n",
             USE_CALL,
             OLD_FORM,
+            2,
+            0,
         ),
         (
             change(DEPRECATED, "sdk.with_config", call_form="with_config(*, config)"),
             "from sdk import with_config\nwith_config(config=1)\n",
             USE_CALL,
             USES_API,
+            2,
+            0,
         ),
         (
             change(PARAM_REMOVED, "sdk.fetch", parameter="resume"),
             "from sdk import fetch\nfetch('u', resume=True)\n",
             USE_KEYWORD,
             OLD_FORM,
+            2,
+            0,
         ),
         (
             change(PARAM_REMOVED, "sdk.fetch", parameter="resume"),
             "from sdk import fetch\nfetch('u')\n",
             USE_CALL,
             USES_API,
+            2,
+            0,
         ),
         (
             change(DEPRECATED, "sdk.fetch", parameter="proxies"),
             "from sdk import fetch\nfetch('u', proxies={})\n",
             USE_KEYWORD,
             OLD_FORM,
+            2,
+            0,
         ),
         (
             change(PARAM_REQUIRED, "sdk.fetch", parameter="timeout"),
             "from sdk import fetch\nfetch('u', timeout=1)\n",
             USE_KEYWORD,
             USES_API,
+            2,
+            0,
         ),
         (
             change(PARAM_KEYWORD_ONLY, "sdk.fetch", parameter="stream"),
             "from sdk import fetch\nfetch('u', stream=True)\n",
             USE_KEYWORD,
             USES_API,
+            2,
+            0,
         ),
         (
             change(PARAM_POSITIONAL_ONLY, "sdk.fetch", parameter="url"),
             "from sdk import fetch\nfetch(url='u')\n",
             USE_KEYWORD,
             USES_API,
+            2,
+            0,
         ),
         (
             change(REMOVED, "sdk.Client.routes", owner="Client"),
             "from sdk import Client\napp = Client()\nprint(app.routes)\n",
             USE_MEMBER,
             OLD_FORM,
+            3,
+            6,
         ),
         (
             change(PARAM_REMOVED, "sdk.Client.__init__", owner="Client", parameter="timeout"),
             "from sdk import Client\nClient(timeout=3)\n",
             USE_KEYWORD,
             OLD_FORM,
+            2,
+            0,
         ),
     ],
 )
-def test_each_kind_of_change_has_its_use_and_form(the_change, source, kind, the_form) -> None:
+def test_each_kind_of_change_has_its_use_and_form(
+    the_change, source, kind, the_form, line, column
+) -> None:
     files = code(source)
     [use] = uses(the_change, files)
 
     assert use.file == "app/main.py"
     assert use.kind == kind
     assert use.form == the_form
+    assert (use.line, use.column) == (line, column)
 
 
 def test_uses_are_most_specific_first_and_by_file() -> None:

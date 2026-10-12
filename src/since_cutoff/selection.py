@@ -453,7 +453,16 @@ def _site_matches(
     site_name: str,
     names: tuple[str, ...],
     by_path: frozenset[str],
+    matching_chains: frozenset[str],
 ) -> bool:
+    if site_kind == "call" and kind == "chain-call":
+        return name in matching_chains
+    if site_kind == "keyword" and kind == "chain-keyword":
+        if ":" not in name:
+            return False
+        chain, parameter = name.rsplit(":", 1)
+        return len(names) == 2 and parameter == names[1] and chain in matching_chains
+
     if kind != site_kind:
         return False
     if site_kind == "keyword":
@@ -497,11 +506,12 @@ def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
                 USE_REFERENCE: "reference",
             }.get(kind)
             site_name = f"{names[0]}:{names[1]}" if len(names) == 2 else names[0]
+            matching_chains = frozenset(_pair_chains(c, f))
 
             matching_sites = sorted(
                 (line, column)
                 for k, name, line, column in f.sites
-                if _site_matches(k, name, site_kind, site_name, names, by_path)
+                if _site_matches(k, name, site_kind, site_name, names, by_path, matching_chains)
             )
             if matching_sites:
                 for line, column in matching_sites:
