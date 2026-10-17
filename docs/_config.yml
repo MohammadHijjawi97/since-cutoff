@@ -7,6 +7,7 @@ baseurl: /since-cutoff
 author: Mohammad Hijjawi
 exclude:
   - how-it-works.md
+  - reference.md
 
 # Link previews (jekyll-seo-tag, which the cayman theme includes). With an image, the card is
 # summary_large_image by default. No `twitter:` block: without a username it would print

@@ -484,6 +484,8 @@ repos:
 
 ### 其他 CI
 
+配置 CI 时，可参考[环境变量、文件和退出码参考](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/reference.md)（英文）。
+
 ```bash
 # 适用于任何 CI 的 Markdown 摘要；你的代码以旧写法用到有变更的 API 时，退出码为 3
 since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on old-form
@@ -561,6 +563,8 @@ since-cutoff 从不单独使用“verified”（已验证）这个词。每条�
 AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明所适用的版本和对照版本。其余信息在 `scan --json` 和 `results.json` 中：`used_apis[]`（你的代码用到的每个有变更 API、用到的位置、它的变更、它的替代项及来源，以及它的说明，含 `tags`、`applies_to` 和 `checks`），以及 `run` 之后的 `notes_detail[]`（每条说明，包括模型写的示例和留出任务测试测得的结果；`verified` 仍然保留，含义与 `checks.example_type_checks` 相同）。
 
 ## 它会运行、发送和保存什么
+
+[参考文档](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/reference.md)（英文）列出了它读取的环境变量，以及它读取和写入的文件。
 
 - **不运行任何包代码，也不运行模型写的代码。** 包只做静态读取（griffe 关闭 inspection；只解压 `.py`/`.pyi` 文件，并检查路径和大小）。模型的回答只在本地用 basedpyright 做类型检查。
 - **获取**：从 PyPI 获取公开的包元数据和 wheel，从 models.dev 获取模型的训练截止日期（内置快照，可离线使用）。Git、本地路径、workspace 和私有源中的依赖，绝不会按名称去公共 PyPI 上查找。`status` 不获取任何内容。
