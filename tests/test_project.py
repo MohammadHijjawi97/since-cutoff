@@ -167,6 +167,26 @@ def test_requirement_include_cycles_terminate(tmp_path):
     assert [r.name for r in parse_requirements(tmp_path / "a.txt")] == ["attrs"]
 
 
+def test_requirement_includes_in_each_form_pip_takes(tmp_path):
+    # pip's option parser takes the name after -r with or without a space, and after
+    # --requirement with a space or `=`; after -r, `=` is part of the name. --require-hashes
+    # is another option, and -r or --requirement with no name includes nothing.
+    names = ["attrs", "rich", "httpx", "anthropic", "click", "idna"]
+    files = ["base.txt", "one.txt", "two.txt", "three.txt", "four.txt", "=five.txt"]
+    for name, file in zip(names, files, strict=True):
+        write(tmp_path, file, f"{name}==1.0\n")
+    write(tmp_path, "five.txt", "wrong==1.0\n")
+    write(
+        tmp_path,
+        "requirements.txt",
+        "-r base.txt\n-rone.txt\n--requirement two.txt\n--requirement=three.txt  # docs\n"
+        "-r\tfour.txt\n-r=five.txt\n--require-hashes\n-r\n--requirement\n--requirement=\n"
+        "flask==3.1.1 --hash=sha256:abc\n",
+    )
+    read = sorted(r.name for r in parse_requirements(tmp_path / "requirements.txt"))
+    assert read == sorted([*names, "flask"])
+
+
 def test_installed_versions_come_from_the_virtualenv(tmp_path):
     write(tmp_path, "requirements.txt", "rich\n")
     site = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages"
@@ -318,9 +338,9 @@ def test_a_quoted_comment_in_the_pip_block_is_a_comment(tmp_path):
 
 
 def test_a_file_the_pip_block_includes_is_read_relative_to_the_environment_file(tmp_path):
-    # The pip block installs only through an include, here of a file that is not
-    # requirements*.txt and so not read on its own; the include's own includes are relative
-    # to it, as in any requirements file.
+    # The pip block installs only through includes, in each form pip takes, here of files
+    # that are not requirements*.txt and so not read on their own; the include's own includes
+    # are relative to it, as in any requirements file.
     write(
         tmp_path,
         "environment.yml",
@@ -330,21 +350,29 @@ def test_a_file_the_pip_block_includes_is_read_relative_to_the_environment_file(
           - pip:
             - -r envs/pip.txt
             - --requirement envs/test.txt
+            - --requirement=envs/docs.txt
+            - -renvs/lint.txt
         """,
     )
     write(tmp_path, "envs/pip.txt", "-r base.txt\nanthropic==1.8.0\n")
     write(tmp_path, "envs/base.txt", "rich==13.7.1\n")
     write(tmp_path, "envs/test.txt", "pytest>=8\n")
+    write(tmp_path, "envs/docs.txt", "mkdocs==1.6.1\n")
+    write(tmp_path, "envs/lint.txt", "ruff==0.14.0\n")
     project = load_project(tmp_path)
     assert versions(project) == {
         "anthropic": ("1.8.0", True, "pinned"),
+        "mkdocs": ("1.6.1", True, "pinned"),
         "pytest": (None, True, "unpinned"),
         "rich": ("13.7.1", True, "pinned"),
+        "ruff": ("0.14.0", True, "pinned"),
     }
     assert pins(project) == {
         "anthropic": "environment.yml",
+        "mkdocs": "environment.yml",
         "pytest": None,
         "rich": "environment.yml",
+        "ruff": "environment.yml",
     }
     assert project.version_source == "environment.yml, latest on PyPI for 1 unpinned"
     assert project.warnings == []
@@ -516,6 +544,34 @@ def test_the_entries_of_a_conda_environment_are_not_expanded(tmp_path, caplog):
         "environment.yml: 1 conda package is not read, as it does not come from PyPI: "
         "python=3.12\n" in caplog.text
     )
+
+
+def test_a_pip_block_its_aliases_repeat_is_read_once(tmp_path):
+    # 2,000 aliases of an entry with a 1,000-line pip block, and 1,000 entries that alias its
+    # list, in 38 KiB: read once for each, they were 3,000,000 requirements, built in 35 s.
+    pip = ", ".join(f"p{i}==1.0" for i in range(1000))
+    text = f"base: &e {{pip: &l [{pip}]}}\ndependencies:\n"
+    text += "  - *e\n" * 2000 + "  - {pip: *l}\n" * 1000 + "  - pip: [rich==13.7.1]\n"
+    (tmp_path / "environment.yml").write_text(text, encoding="utf-8")
+    reqs, notices = project_module._conda_pip(tmp_path / "environment.yml")
+    assert len(reqs) == 1001
+    assert {r.name for r in reqs} == {*(f"p{i}" for i in range(1000)), "rich"}
+    assert notices == []
+
+
+def test_a_pip_block_is_read_up_to_its_cap_with_a_warning(tmp_path, monkeypatch):
+    monkeypatch.setattr(project_module, "CONDA_PIP_LINES", 3)
+    write(
+        tmp_path,
+        "environment.yml",
+        "dependencies:\n  - pip: [attrs==25.1.0, rich==13.7.1]\n"
+        "  - pip: [httpx==0.28.1, anthropic==1.8.0]\n",
+    )
+    project = load_project(tmp_path)
+    assert set(versions(project)) == {"attrs", "httpx", "rich"}
+    assert project.warnings == [
+        "the pip block of environment.yml has more than 3 lines, and only the first 3 are read"
+    ]
 
 
 @pytest.mark.parametrize(

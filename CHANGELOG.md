@@ -342,22 +342,26 @@
   A file it includes (`-r requirements-x.txt`, `--requirement ...`) is read too, relative to
   the environment file as conda has pip read it, with its own includes; one that does not exist
   gets a warning ("the pip block of environment.yml includes requirements-x.txt, which does not
-  exist"), and an include of a file already read is not read again (in any requirements file,
-  an include of a name the system cannot hold, `-r a<NUL>b`, is now skipped like a missing one:
-  Python 3.10 stopped with a traceback). The conda packages around it (`python=3.12`,
-  `numpy=1.26`) are not read, as they do not come from PyPI (`--debug` lists them), nor are
-  other options (`-e .`), local paths and bare git URLs; a direct reference
-  (`pkg @ git+https://...`) is not looked up on PyPI. A version pinned there, or in a file it
-  includes, is labelled with the environment file ("environment.yml pins 1.8.0"), as one that
-  `requirements.txt` includes is with `requirements.txt`, also next to a `.venv`: the versions
-  then come from ".venv, environment.yml for 1 not in it" when the environment lacks one. A
-  lockfile still wins over its pins, with the usual warning when they disagree. A file that is
-  not YAML stops the scan in one line ("could not parse environment.yml: ... (line 3, column
-  4)"), also next to a lockfile, as a `pyproject.toml` that is not TOML does; "no dependencies
-  found" names the pip block among what is read, and says so when the environment file has no
-  package in it, and which file it includes does not exist. The pre-commit hooks, the Action's cache key and the README's workflow
-  `paths:` take `environment.yml` and `environment.yaml` into account. PyYAML 6.0.1 or later
-  is now a dependency (6.0 does not install on Python 3.12 and later).
+  exist"), and an include of a file already read is not read again. In any requirements file,
+  an include is now followed in each form pip takes, `-rbase.txt` and `--requirement=base.txt`
+  too (`--require-hashes` is no include), and one of a name the system cannot hold,
+  `-r a<NUL>b`, is skipped like a missing one (Python 3.10 stopped with a traceback). A pip
+  block that YAML aliases repeat (`- *e`) is read once, and no more than its first 10,000 lines
+  are read, with a warning. The conda packages around it (`python=3.12`, `numpy=1.26`) are not
+  read, as they do not come from PyPI (`--debug` lists them), nor are other options (`-e .`),
+  local paths and bare git URLs; a direct reference (`pkg @ git+https://...`) is not looked up
+  on PyPI. A version pinned there, or in a file it includes, is labelled with the environment
+  file ("environment.yml pins 1.8.0"), as one that `requirements.txt` includes is with
+  `requirements.txt`, also next to a `.venv`: the versions then come from ".venv,
+  environment.yml for 1 not in it" when the environment lacks one. A `requirements*.txt` that
+  the pip block includes and that is also read on its own keeps its own label. A lockfile still
+  wins over its pins, with the usual warning when they disagree. A file that is not YAML stops
+  the scan in one line ("could not parse environment.yml: ... (line 3, column 4)"), also next
+  to a lockfile, as a `pyproject.toml` that is not TOML does; "no dependencies found" names the
+  pip block among what is read, says when the environment file has no package in it, and names
+  an included file that does not exist. The pre-commit hooks, the Action's cache key and the
+  README's workflow `paths:` take `environment.yml` and `environment.yaml` into account. PyYAML
+  6.0.1 or later is now a dependency (6.0 does not install on Python 3.12 and later).
 
 ## 0.5.0 - 2026-09-28
 

@@ -223,7 +223,15 @@ PIPFILE_LOCK = table(
     _meta=table(hash=table(sha256=st.just("0" * 8))),
 )
 PIP_LINE = REQUIREMENT | st.sampled_from(
-    ["-r requirements.txt", "-e .", "./pkg", "git+https://github.com/o/r.git", "x  # note"]
+    [
+        "-r requirements.txt",
+        "-rrequirements/dev.txt",
+        "--requirement=environment.yml",
+        "-e .",
+        "./pkg",
+        "git+https://github.com/o/r.git",
+        "x  # note",
+    ]
 )
 CONDA_ENV = table(
     name=NAME,

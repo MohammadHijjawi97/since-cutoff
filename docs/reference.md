@@ -53,6 +53,7 @@ folder or above it.
 | Files and folders | Read by | What is read or written |
 |---|---|---|
 | `pyproject.toml`, `Pipfile`, `requirements*.txt`, `requirements/*.txt`, the files these include with `-r`, and the `.in` file a pip-compile output was made from | Loading the project: `run`, `scan`, `sync`, `status`, the MCP project tools | Read only: the declared dependencies, their pins and `requires-python`. `setup.py` and `setup.cfg` are never read or run. |
+| `environment.yml`, else `environment.yaml` (conda), and the files its `pip:` block includes with `-r`, relative to it | Loading the project | Read only: the `pip:` block under `dependencies:`, read as a requirements file (up to 10,000 lines): the packages pip installs from PyPI, their pins and ranges. The conda packages around it (`python=3.12`) are not read, as they do not come from PyPI, nor is the rest of the file. |
 | `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`, else the first `pylock.*.toml` | Loading the project | Read only: the locked versions, from the first of these that exists. A `poetry.lock`, `pdm.lock` or `Pipfile.lock` the project is not set up for is ignored, with a warning, when its versions disagree with the pins. |
 | `.python-version` | Loading the project | Read only: the project's Python version (else `requires-python`). |
 | `.venv`, `venv`, `env` or `.env` with a `pyvenv.cfg`: its `*.dist-info/METADATA` | Loading the project | Read only: the installed versions, for what no lockfile lists. Nothing in the environment is run. |
