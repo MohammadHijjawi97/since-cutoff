@@ -849,18 +849,29 @@ def parse_requirements(path: Path, _seen: set[Path] | None = None) -> list[Requi
     return out
 
 
-# An include in a requirements file, in each form pip's option parser takes: ``-r base.txt``,
-# ``-rbase.txt``, ``--requirement base.txt`` and ``--requirement=base.txt``. As for pip, what
-# follows ``-r`` is the name (``-r=base.txt`` names ``=base.txt``), and ``--require-hashes``
-# is another option.
+# An include in a requirements file: ``-r`` with or without a space (``-r base.txt``,
+# ``-rbase.txt``) and ``--requirement`` with a space or ``=``. As for pip, what follows ``-r``
+# is the name (``-r=base.txt`` names ``=base.txt``), the name is the first word after the
+# option, quoted if it has spaces (``-r base.txt --pre`` names base.txt), and
+# ``--require-hashes`` is another option. pip's abbreviations (``--requirem``) are not read.
 _INCLUDE = re.compile(r"(?:-r\s*|--requirement(?:=|\s+))(\S.*)")
 
 
 def _included_file(line: str) -> str | None:
-    """The file a line of a requirements file, its comment removed, includes, as written
-    (``-r base.txt``, ``--requirement=base.txt``), or None for any other line."""
+    """The file a line of a requirements file, its comment removed, includes (``-r
+    base.txt``, ``--requirement=base.txt``), or None for any other line."""
     match = _INCLUDE.fullmatch(line)
-    return match.group(1) if match else None
+    if not match:
+        return None
+    rest = match.group(1)
+    if not rest.startswith(("'", '"')):
+        return rest.split(None, 1)[0]  # a Windows path keeps its backslashes
+    import shlex
+
+    try:
+        return shlex.split(rest)[0] or None
+    except ValueError:  # an unclosed quote: pip refuses the line
+        return None
 
 
 def _requirement_line(line: str) -> Requirement | None:
@@ -905,9 +916,9 @@ def _conda_pip(path: Path) -> tuple[list[Requirement], list[str]]:
         raise ProjectError(f"could not parse {path.name}: {_yaml_problem(exc)}") from exc
     conda: list[str] = []
     pip_lines: list[str] = []
-    # The id() of each entry and pip list read. An alias is the object its anchor made, not a
-    # copy, so 2,000 aliases of a 1,000-line block would be read as 2,000,000 lines; the
-    # objects stay alive in ``data``, so no id is reused for another one.
+    # The id() of each pip list read. An alias is the object its anchor made, not a copy, so
+    # 2,000 aliases of a 1,000-line block would be read as 2,000,000 lines; an aliased entry
+    # holds the same list, and the lists stay alive in ``data``, so no id is reused.
     read: set[int] = set()
     for entry in _array(_table(data).get("dependencies")):
         if not isinstance(entry, dict):
@@ -917,9 +928,9 @@ def _conda_pip(path: Path) -> tuple[list[Requirement], list[str]]:
                 conda.append(entry)
             continue
         pip = entry.get("pip")
-        if not isinstance(pip, list) or id(entry) in read or id(pip) in read:
+        if not isinstance(pip, list) or id(pip) in read:
             continue
-        read.update((id(entry), id(pip)))
+        read.add(id(pip))
         pip_lines += (raw for raw in pip if isinstance(raw, str))
         if len(pip_lines) > CONDA_PIP_LINES:
             break

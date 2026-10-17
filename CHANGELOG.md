@@ -343,9 +343,10 @@
   the environment file as conda has pip read it, with its own includes; one that does not exist
   gets a warning ("the pip block of environment.yml includes requirements-x.txt, which does not
   exist"), and an include of a file already read is not read again. In any requirements file,
-  an include is now followed in each form pip takes, `-rbase.txt` and `--requirement=base.txt`
-  too (`--require-hashes` is no include), and one of a name the system cannot hold,
-  `-r a<NUL>b`, is skipped like a missing one (Python 3.10 stopped with a traceback). A pip
+  an include is now followed with or without a space after `-r` and with a space or `=` after
+  `--requirement`, its name being the first word after the option, as pip reads it
+  (`-r base.txt --pre` includes base.txt; `--require-hashes` is no include), and one of a name
+  the system cannot hold, `-r a<NUL>b`, is skipped like a missing one (Python 3.10 stopped with a traceback). A pip
   block that YAML aliases repeat (`- *e`) is read once, and no more than its first 10,000 lines
   are read, with a warning. The conda packages around it (`python=3.12`, `numpy=1.26`) are not
   read, as they do not come from PyPI (`--debug` lists them), nor are other options (`-e .`),

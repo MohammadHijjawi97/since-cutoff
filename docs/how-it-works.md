@@ -27,10 +27,11 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    - A conda environment file's `pip:` block is read as a requirements file: pins, ranges,
      extras and direct references (`pkg @ git+https://...`, not looked up on PyPI), and the
      files it includes (`-r requirements-x.txt`, relative to the environment file, as conda
-     has pip read it), with a warning for one that does not exist. An include is followed in
-     each form pip takes (`-rbase.txt`, `--requirement=base.txt`), here and in any
-     requirements file. A block that YAML aliases repeat is read once, and no more than its
-     first 10,000 lines are read, with a warning. Its conda packages (`python=3.12`,
+     has pip read it), with a warning for one that does not exist. An include is followed with
+     or without a space after `-r` and with a space or `=` after `--requirement`, its name
+     being the first word after the option (`-r base.txt --pre` includes base.txt), here and
+     in any requirements file. A block that YAML aliases repeat is read once, and no more than
+     its first 10,000 lines are read, with a warning. Its conda packages (`python=3.12`,
      `numpy=1.26`) are not read, as they do not come from PyPI, and neither are other options
      (`-e .`) or local paths. A version pinned there or in a file it includes is labelled
      `environment.yml` (the pins of a file that `requirements.txt` includes are labelled

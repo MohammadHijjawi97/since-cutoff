@@ -187,6 +187,29 @@ def test_requirement_includes_in_each_form_pip_takes(tmp_path):
     assert read == sorted([*names, "flask"])
 
 
+@pytest.mark.parametrize(
+    ("line", "included"),
+    [
+        ("-r base.txt", "base.txt"),
+        ("-rbase.txt", "base.txt"),
+        ("--requirement=base.txt", "base.txt"),
+        ("-r=base.txt", "=base.txt"),
+        ("-r base.txt --pre", "base.txt"),
+        ('-r "my reqs.txt" --pre', "my reqs.txt"),
+        (r"-r reqs\base.txt", r"reqs\base.txt"),
+        ("--require-hashes", None),
+        ("--requirementx.txt", None),
+        ("--requirement=", None),
+        ("-r", None),
+        ('-r ""', None),
+        ('-r "unclosed', None),
+        ("types-requests==2.32.0", None),
+    ],
+)
+def test_the_file_a_line_includes_is_the_first_word_after_the_option(line, included):
+    assert project_module._included_file(line) == included
+
+
 def test_installed_versions_come_from_the_virtualenv(tmp_path):
     write(tmp_path, "requirements.txt", "rich\n")
     site = tmp_path / ".venv" / "lib" / "python3.12" / "site-packages"
@@ -572,6 +595,18 @@ def test_a_pip_block_is_read_up_to_its_cap_with_a_warning(tmp_path, monkeypatch)
     assert project.warnings == [
         "the pip block of environment.yml has more than 3 lines, and only the first 3 are read"
     ]
+
+
+def test_a_pip_block_of_exactly_its_cap_is_read_whole(tmp_path, monkeypatch):
+    monkeypatch.setattr(project_module, "CONDA_PIP_LINES", 3)
+    write(
+        tmp_path,
+        "environment.yml",
+        "dependencies:\n  - pip: [attrs==25.1.0, rich==13.7.1]\n  - pip: [httpx==0.28.1]\n",
+    )
+    project = load_project(tmp_path)
+    assert set(versions(project)) == {"attrs", "httpx", "rich"}
+    assert project.warnings == []
 
 
 @pytest.mark.parametrize(
