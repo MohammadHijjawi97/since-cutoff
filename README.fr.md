@@ -51,10 +51,10 @@ commandes ne se servent jamais : `pip install "since-cutoff[run]"` (ou
 l'ajoute à une exécution sans rien installer ; sans lui, `run` s'arrête aussitôt et le dit.
 
 Lancez-le depuis la racine de votre projet. Il lit `uv.lock`, `poetry.lock`, `pdm.lock`,
-`pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` ou un `.venv`
-(pas `setup.py` ni `setup.cfg`). Sans `--model`, il utilise le modèle configuré pour votre agent
-de code, d'après les réglages de Claude Code, Codex, Gemini CLI, OpenCode ou Aider ; pour tout
-autre modèle, passez `--model` (voir
+`pylock.toml`, `Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile`, le bloc `pip:`
+d'un `environment.yml` conda ou un `.venv` (pas `setup.py` ni `setup.cfg`). Sans `--model`, il
+utilise le modèle configuré pour votre agent de code, d'après les réglages de Claude Code, Codex,
+Gemini CLI, OpenCode ou Aider ; pour tout autre modèle, passez `--model` (voir
 [Choisir le modèle](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#choisir-le-modèle)).
 `scan`, `sync` et `status` n'appellent aucun modèle et ne demandent aucune clé d'API ; `run`
 envoie des prompts au fournisseur du modèle et consomme vos crédits d'API ou votre quota Claude
@@ -783,7 +783,7 @@ aucune clé d'API.
 name: since-cutoff
 on:
   pull_request:
-    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
+    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/environment.y*ml", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -835,13 +835,14 @@ repos:
       - id: since-cutoff-sync  # tient à jour les notes d'AGENTS.md ; args: [--check] vérifie seulement
 ```
 
-`since-cutoff-scan` s'exécute quand un fichier de verrouillage, un fichier `requirements*.txt` ou
-`pyproject.toml` change, et affiche le résultat du scan ; passez-lui `--model` dans `args`.
-`since-cutoff-sync` s'exécute quand l'un de ces fichiers, AGENTS.md ou CLAUDE.md change, et met
-les notes à jour ; s'il modifie le fichier, le hook échoue, comme tout hook pre-commit qui
-modifie des fichiers : ajoutez le fichier et refaites le commit. Avec `args: [--check]`, il ne
-modifie rien et échoue tant que les notes ne sont pas à jour. Il conserve le modèle pour lequel
-les notes ont été écrites ; pour un premier bloc, indiquez-lui en un :
+`since-cutoff-scan` s'exécute quand un fichier de verrouillage, un fichier `requirements*.txt`,
+un `environment.yml` conda ou `pyproject.toml` change, et affiche le résultat du scan ;
+passez-lui `--model` dans `args`. `since-cutoff-sync` s'exécute quand l'un de ces fichiers,
+AGENTS.md ou CLAUDE.md change, et met les notes à jour ; s'il modifie le fichier, le hook
+échoue, comme tout hook pre-commit qui modifie des fichiers : ajoutez le fichier et refaites
+le commit. Avec `args: [--check]`, il ne modifie rien et échoue tant que les notes ne sont pas à
+jour. Il conserve le modèle pour lequel les notes ont été écrites ; pour un premier bloc,
+indiquez-lui en un :
 `args: [--model=anthropic:claude-sonnet-4-5]`. Les deux ont besoin d'accéder à PyPI :
 désactivez-les donc sur pre-commit.ci (`ci: {skip: [since-cutoff-scan, since-cutoff-sync]}`).
 `since-cutoff-status` n'a pas besoin du réseau : il échoue quand les notes ne correspondent pas

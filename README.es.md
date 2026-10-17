@@ -51,10 +51,10 @@ lo instala, y `uvx --with basedpyright since-cutoff run` lo añade a una ejecuci
 nada; sin él, `run` se detiene enseguida y lo dice.
 
 Ejecútalo desde la raíz del proyecto. Lee `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`,
-`Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile` o un `.venv` (no `setup.py` ni
-`setup.cfg`). Sin `--model`, usa el modelo con el que está configurado tu agente de programación,
-según los ajustes de Claude Code, Codex, Gemini CLI, OpenCode o Aider; para cualquier otro
-modelo, pasa `--model` (consulta [Elegir el modelo](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md#elegir-el-modelo)).
+`Pipfile.lock`, `requirements*.txt`, `pyproject.toml`, `Pipfile`, el bloque `pip:` de un
+`environment.yml` de conda o un `.venv` (no `setup.py` ni `setup.cfg`). Sin `--model`, usa el
+modelo con el que está configurado tu agente de programación, según los ajustes de Claude Code,
+Codex, Gemini CLI, OpenCode o Aider; para cualquier otro modelo, pasa `--model` (consulta [Elegir el modelo](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md#elegir-el-modelo)).
 `scan`, `sync` y `status` no llaman a ningún modelo ni necesitan clave de API; `run` envía
 prompts al proveedor del modelo y consume tus créditos de API o tu cuota de uso de Claude Code.
 
@@ -772,7 +772,7 @@ de API.
 name: since-cutoff
 on:
   pull_request:
-    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
+    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/environment.y*ml", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -824,8 +824,9 @@ repos:
       - id: since-cutoff-sync  # mantiene al día las notas de AGENTS.md; args: [--check] solo comprueba
 ```
 
-`since-cutoff-scan` se ejecuta cuando cambia un lockfile, un archivo de requirements o
-`pyproject.toml`, y muestra el resultado del análisis; pásale `--model` en `args`.
+`since-cutoff-scan` se ejecuta cuando cambia un lockfile, un archivo de requirements, un
+`environment.yml` de conda o `pyproject.toml`, y muestra el resultado del análisis; pásale
+`--model` en `args`.
 `since-cutoff-sync` se ejecuta cuando cambia uno de esos archivos, AGENTS.md o CLAUDE.md, y
 actualiza las notas; si modifica el archivo, el hook falla, como cualquier hook de pre-commit que
 modifica archivos: añade el archivo y vuelve a hacer el commit. Con `args: [--check]` no modifica

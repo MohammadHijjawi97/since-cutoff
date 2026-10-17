@@ -1,9 +1,10 @@
 """Fuzzing the readers of a project's dependency files.
 
-Whatever a lockfile, requirements file, pyproject.toml, Pipfile or virtual environment holds,
-reading the project either works or fails with a ProjectError, which the CLI prints as one
-line ("error: could not parse uv.lock: ..."); never with a traceback. The files are
-generated: random bytes, and documents shaped like each format with anything in any place.
+Whatever a lockfile, requirements file, pyproject.toml, Pipfile, conda environment file or
+virtual environment holds, reading the project either works or fails with a ProjectError, which
+the CLI prints as one line ("error: could not parse uv.lock: ..."); never with a traceback. The
+files are generated: random bytes, and documents shaped like each format with anything in any
+place.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import yaml
 from hypothesis import example, given
 from hypothesis import strategies as st
 from packaging.utils import canonicalize_name
@@ -30,6 +32,7 @@ FILES = (
     "Pipfile",
     "requirements.txt",
     "requirements/dev.txt",
+    "environment.yml",
     ".python-version",
 )
 PYTHONS = st.sampled_from([None, "3.9", "3.13"])
@@ -66,6 +69,10 @@ TEXT = st.builds(
 )  # the encoders of UTF-16 and UTF-32 write a byte order mark, as Notepad does
 
 
+# YAML nested deeper than the parser's recursion goes; a date that is none, which the YAML
+# loader raises a ValueError for.
+@example("environment.yml", b"[" * 2000, None)
+@example("environment.yml", b"dependencies: 2026-13-01\n", None)
 @given(
     st.sampled_from(FILES),
     st.binary(max_size=300) | TEXT | st.binary(max_size=99).map(codecs.BOM_UTF16_LE.__add__),
@@ -215,6 +222,18 @@ PIPFILE_LOCK = table(
     develop=st.dictionaries(NAME, table(version=st.just("==2.0"), git=URL, editable=st.booleans())),
     _meta=table(hash=table(sha256=st.just("0" * 8))),
 )
+PIP_LINE = REQUIREMENT | st.sampled_from(
+    ["-r requirements.txt", "-e .", "./pkg", "git+https://github.com/o/r.git", "x  # note"]
+)
+CONDA_ENV = table(
+    name=NAME,
+    channels=st.lists(st.sampled_from(["conda-forge", "defaults"]), max_size=2),
+    dependencies=st.lists(
+        st.sampled_from(["python=3.12", "numpy=1.26", "pip", "conda-forge::rich"])
+        | table(pip=st.lists(PIP_LINE, max_size=4)),
+        max_size=4,
+    ),
+)
 DOCUMENTS: dict[str, tuple[st.SearchStrategy[Any], Callable[[Any], bytes]]] = {
     "uv.lock": (table(version=st.just(1), package=st.lists(LOCKED, max_size=4)), toml_document),
     "poetry.lock": (table(package=st.lists(LOCKED, max_size=4)), toml_document),
@@ -223,6 +242,7 @@ DOCUMENTS: dict[str, tuple[st.SearchStrategy[Any], Callable[[Any], bytes]]] = {
     "pyproject.toml": (PYPROJECT, toml_document),
     "Pipfile": (PIPFILE, toml_document),
     "Pipfile.lock": (either(PIPFILE_LOCK), lambda doc: json.dumps(doc).encode()),
+    "environment.yml": (either(CONDA_ENV), lambda doc: yaml.safe_dump(doc).encode()),
 }
 
 

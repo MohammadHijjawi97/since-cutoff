@@ -454,10 +454,11 @@ class Tools:
         api_changes is faster.
 
         Reads the project's lockfile (uv.lock, poetry.lock, pdm.lock, pylock.toml,
-        Pipfile.lock), requirements*.txt, pyproject.toml or .venv, and for each direct
-        dependency compares the newest release published `cutoff_margin` days before the cutoff
-        (30 by default) or earlier with the pinned one. Changes to names the project's code
-        uses, in packages it imports, come first.
+        Pipfile.lock), requirements*.txt, pyproject.toml, the pip block of a conda
+        environment.yml or .venv, and for each direct dependency compares the newest release
+        published `cutoff_margin` days before the cutoff (30 by default) or earlier with the
+        pinned one. Changes to names the project's code uses, in packages it imports, come
+        first.
 
         Read-only: nothing in the project is written. Reads PyPI metadata, downloads the
         wheels of the dependencies that changed and reads them statically; no package code

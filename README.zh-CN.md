@@ -32,7 +32,7 @@ pipx install since-cutoff    # 或：pip install since-cutoff
 
 `run` 用 [basedpyright](https://github.com/DetachHead/basedpyright) 对模型的回答做类型检查，这是一个 180 MB 的 extra，其他命令都用不到：`pip install "since-cutoff[run]"`（或 `pipx install "since-cutoff[run]"`）会安装它，`uvx --with basedpyright since-cutoff run` 则不用安装就能在这次运行中加上它；没有它时，`run` 会立即停止并说明原因。
 
-请在项目根目录运行。它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile` 或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、Gemini CLI、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
+请在项目根目录运行。它会读取 `uv.lock`、`poetry.lock`、`pdm.lock`、`pylock.toml`、`Pipfile.lock`、`requirements*.txt`、`pyproject.toml`、`Pipfile`、conda `environment.yml` 的 `pip:` 部分或 `.venv`（不读取 `setup.py` 和 `setup.cfg`）。不加 `--model` 时，它使用你的编程 Agent 所配置的模型，从 Claude Code、Codex、Gemini CLI、OpenCode 或 Aider 的设置中读取；要使用其他模型，请传入 `--model`（见[选择模型](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#选择模型)）。`scan`、`sync` 和 `status` 不调用模型，也不需要 API key；`run` 会把提示词发送给模型服务商，消耗你的 API 额度或 Claude Code 用量。
 
 在编程 Agent 中，可以由技能替你运行这些命令：见[在 Claude Code 中使用](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在-claude-code-中使用)和[在其他编程 Agent 中使用](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在其他编程-agent-中使用)。[MCP 服务器](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#在任意-agent-中使用mcp)把同样的对比结果提供给任意 Agent。
 
@@ -435,7 +435,7 @@ Not listed: 58 breaking changes, 0 new deprecations (removed or moved 30, parame
 name: since-cutoff
 on:
   pull_request:
-    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
+    paths: ["**/*.lock", "**/pylock*.toml", "**/requirements*.txt", "**/environment.y*ml", "**/pyproject.toml", "**/AGENTS.md", "**/CLAUDE.md"]
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -480,7 +480,7 @@ repos:
       - id: since-cutoff-sync  # 让 AGENTS.md 中的说明保持最新；args: [--check] 只检查
 ```
 
-`since-cutoff-scan` 在 lockfile、requirements 文件或 `pyproject.toml` 变更时运行，并打印扫描结果；需要在 `args` 里给出 `--model`。`since-cutoff-sync` 在这些文件或 AGENTS.md、CLAUDE.md 变更时运行，并更新说明；如果它修改了文件，这个钩子就会失败，和其他会修改文件的 pre-commit 钩子一样：把文件加入暂存区后重新提交即可。使用 `args: [--check]` 时，它不修改任何内容，只要说明已过时就失败。它沿用说明写入时的模型；写第一个区块时，请给它指定一个：`args: [--model=anthropic:claude-sonnet-4-5]`。这两个钩子都要访问 PyPI，所以在 pre-commit.ci 上请跳过它们（`ci: {skip: [since-cutoff-scan, since-cutoff-sync]}`）。`since-cutoff-status` 不需要联网：说明与 lockfile 不一致时它会失败。
+`since-cutoff-scan` 在 lockfile、requirements 文件、conda `environment.yml` 或 `pyproject.toml` 变更时运行，并打印扫描结果；需要在 `args` 里给出 `--model`。`since-cutoff-sync` 在这些文件或 AGENTS.md、CLAUDE.md 变更时运行，并更新说明；如果它修改了文件，这个钩子就会失败，和其他会修改文件的 pre-commit 钩子一样：把文件加入暂存区后重新提交即可。使用 `args: [--check]` 时，它不修改任何内容，只要说明已过时就失败。它沿用说明写入时的模型；写第一个区块时，请给它指定一个：`args: [--model=anthropic:claude-sonnet-4-5]`。这两个钩子都要访问 PyPI，所以在 pre-commit.ci 上请跳过它们（`ci: {skip: [since-cutoff-scan, since-cutoff-sync]}`）。`since-cutoff-status` 不需要联网：说明与 lockfile 不一致时它会失败。
 
 ### 其他 CI
 

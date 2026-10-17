@@ -20,9 +20,16 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
 1. **Dependencies and exact versions** come from the first source found: `uv.lock`,
    `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`; then the project's `.venv`
    (read from `*.dist-info/METADATA`, nothing is executed); then pins in `pyproject.toml`,
-   `requirements*.txt` and `Pipfile`. `setup.py` and `setup.cfg` are not read (that would mean
-   running the project's code); a project with nothing else gets an error that says so.
+   `requirements*.txt`, `Pipfile` and the `pip:` block of a conda `environment.yml` (or
+   `environment.yaml`). `setup.py` and `setup.cfg` are not read (that would mean running the
+   project's code); a project with nothing else gets an error that says so.
    The version source in the reports names every place the versions come from.
+   - A conda environment file's `pip:` block is read as a requirements file: pins, ranges,
+     extras and direct references (`pkg @ git+https://...`, not looked up on PyPI). Its conda
+     packages (`python=3.12`, `numpy=1.26`) are not read, as they do not come from PyPI, and
+     neither are options (`-r extra.txt` is not followed; a `requirements*.txt` is read on its
+     own) or local paths. A version pinned there is labelled `environment.yml`, also when a
+     `.venv` provides the others.
    - A lockfile the project is not set up for (a `poetry.lock` or `pdm.lock` next to a
      `pyproject.toml` without that tool's table or build backend, a `Pipfile.lock` without a
      `Pipfile`) is ignored, with a warning, when its versions disagree with the pinned

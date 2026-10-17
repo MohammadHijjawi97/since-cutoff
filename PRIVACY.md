@@ -5,9 +5,9 @@ account, no server of its own and no telemetry, and it collects no personal data
 
 ## What it reads on your machine
 
-- Your project's dependency files (lockfiles, `requirements*.txt`, `pyproject.toml`, `.venv`
-  metadata) and its Python files, to see which dependencies you pin and which of their names
-  your code uses. This stays on your machine.
+- Your project's dependency files (lockfiles, `requirements*.txt`, `pyproject.toml`, a conda
+  `environment.yml`, `.venv` metadata) and its Python files, to see which dependencies you pin
+  and which of their names your code uses. This stays on your machine.
 - The notes block in `AGENTS.md` or `CLAUDE.md`, for `sync`, `status` and `unapply`.
 - Without `--model`, the model fields of your coding agent's settings (Claude Code, Codex,
   Gemini CLI, OpenCode, Aider) and the `SINCE_CUTOFF_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`
