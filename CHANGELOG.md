@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- Deprecations that a library announces with `warnings.warn` in a function's body are reported
+  (diff schema 22, #53): the 0.6 audit found "pandas 2.3.1 -> 3.0.6: 0 deprecated", and the scan
+  now lists 47 in pandas' public API, 44 of them read from `warnings.warn`, among them the
+  `copy` keyword of `DataFrame.astype`, `reindex`, `rename` and the other methods pandas 3.0's
+  release notes list, `DataFrame.set_index(verify_integrity=...)`, `Series.map(arg=...)`,
+  `DataFrameGroupBy.corrwith`, the `sort` default of `concat` and the keys of `groups`; for
+  httpx 0.28.1, `create_ssl_context(cert=...)` and a string `verify`, as its changelog says;
+  polars 1.36.1 -> 1.44.2 goes from 1 to 35 (`read_csv(rechunk=...)`, `retries`, `Enum.union`),
+  matplotlib 3.9.4 -> 3.10.9 from 0 to 8, statsmodels 0.14.6 -> 0.15.0 from 25 to 34 (and no
+  longer reports a category that changed as a new deprecation), Django 5.1 -> 5.2 gains
+  `find(all=...)`, networkx 3.5 `graph_could_be_isomorphic`, sympy 1.14 its 6. The source is
+  read, not run: a `warnings.warn` (or `warn` imported from it, in the module or in the
+  function) with a DeprecationWarning, PendingDeprecationWarning or FutureWarning, a class that
+  derives from one (pandas 3's `Pandas4Warning`) or whose name says "Deprecat", called directly,
+  as a warning built before the call, or through a helper of the package whose name says
+  "deprecat" or "warn" (`_deprecate(msg)`, pandas' `self._check_copy_deprecation(copy)`,
+  polars' `issue_deprecation_warning`, matplotlib's `_api.warn_deprecated`, Django's
+  `_check_deprecated_find_param(**kwargs)`), and not issued by the release at the cutoff in
+  any category. Every test it is under counts. At every call it deprecates the function (the
+  class, for its `__init__` or `__new__`); when a parameter is passed (`if p is not
+  <default>:`, `if "p" in kwargs:`, `p = kwargs.pop("p", None)` then `if p is not None:`, a
+  constructor's `self.p != "deprecated"`), the parameter, or the parameter in some calls for
+  some of its values (`if errors != "raise":`); when a parameter is left out (`if n_init ==
+  "warn":`), its default; a property's getter or setter, or a module's `__getattr__`, when the
+  name is read or set; under another condition, the function in some calls. Where several
+  parameters qualify, the one the message names is it. A message that says a result or a
+  default changes ("in a future version this will return a Series") says the behaviour will
+  change, not "avoid it". The message is read from a literal, an f-string, a `%` or `.format`
+  template (filled with the constants given), a constant or `msg +=`, and a replacement it
+  states is named as before; a note for a deprecation in some calls quotes the sentence that
+  says which first, and the condition when it reads only the function's parameters. These
+  count with the deprecations, never as breaking changes, `run` does not probe them (no type
+  checker reports them), and their notes say the call warns at run time, tagged `[diff;
+  warning]` (`results.json` has `deprecated_by: "warnings.warn"` and `warning`: when, the
+  category, the file and line, the condition, and the other warnings of the same API). They
+  feed `--fail-on changes`, `used` and `old-form`, `--annotate` and the action's
+  `deprecations` output like any deprecation, so CI that passed before can fail after the
+  upgrade (a call that passes pandas 3's `copy=` or `verify_integrity=` is in the old form); a
+  warning in some calls, of a default or of a behaviour, is "uses this API". Also, pandas 3's
+  `@deprecate_kwarg(Pandas4Warning, "method", ...)` passes the category before the parameter's
+  name, and is read again (`reindex_like(method=...)`, `assert_frame_equal(
+  check_datetimelike_compat=...)`); a sentence-initial "Use `x()` to ..." is advice, not a
+  stated replacement ("Use .copy() to make an eager copy if necessary."); transformers'
+  `modular_*.py` templates, next to the `modeling_*.py` generated from them, are no API (22
+  changes fewer for 5.11.0 -> 5.20.1); a method whose docstring has a line less indented than
+  itself (matplotlib's `Axes.bxp`) is parsed; and a removed name a module still serves through
+  `__getattr__` with a warning has its `warning` too, tagged `[diff; warning]`.
 - Add a reference for environment variables, files and exit codes, with a docs drift check
   (docs/reference.md, #69). The check fails when the code reads a variable the page has no row
   for (`os.getenv` and a constant for the name included), or the page has a row for one the code

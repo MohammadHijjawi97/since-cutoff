@@ -152,7 +152,8 @@ It does not:
   need no API key;
 - run package code or model-written code: packages are read statically, and answers are only
   type-checked;
-- see behaviour changes behind an unchanged signature, or deprecations that only warn at run time;
+- see behaviour changes behind an unchanged signature, or run anything: a deprecation that only
+  warns at run time is read from the library's `warnings.warn` calls (tagged `[diff; warning]`);
 - name a replacement unless the library's own deprecation text states it;
 - say what the model memorised: the cutoff picks the comparison release, and only `run` asks the
   model;
@@ -765,7 +766,12 @@ Without `paths`, the job also runs when a code change starts using a changed API
 
 `args: --fail-on old-form --annotate github` fails the job only when your code uses a changed
 API in the old form, and annotates each file that uses one: a warning for the old form, a notice
-otherwise.
+otherwise. Since 0.7 the deprecations read from `warnings.warn` (`[diff; warning]`) count
+here too, in `--fail-on changes`, `used` and `old-form`, the annotations and the
+`deprecations` output: a call that passes a parameter the pinned release warns of (pandas
+3's `copy=`, `verify_integrity=`) is in the old form, so a job that passed before the upgrade
+can fail after it. A warning in some calls only, of a default or of a behaviour, is "uses
+this API".
 
 Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `deprecations`,
 `markdown` (the summary's path, for example to post it as a pull request comment), `report`
@@ -875,12 +881,14 @@ was checked, and nothing else is claimed:
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
 | `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. `[metadata]` alone marks the one bullet for a package first released after the cutoff (or within the margin before it) that your code imports: there is no release to compare from, so the note gives the date of its first release, its PyPI summary and its changelog URL. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
+| `[diff; warning]` | As `[diff]`, for a deprecation the pinned release announces with `warnings.warn` in the body of a public function, method or property (or in a module's `__getattr__`) and the release at the cutoff did not: a DeprecationWarning, PendingDeprecationWarning or FutureWarning, or a class that derives from one or whose name says "Deprecat" (pandas 3's `Pandas4Warning`), issued directly or through a helper of the package. At every call the function is deprecated; when a parameter is passed (`if copy is not lib.no_default:`, `if "limit" in kwargs:`) the parameter is, or only for some of its values (`errors != "raise"`, quoted); when it is left out (`if n_init == "warn":`) its default is; under another condition the function is, in some calls; a property warns when it is read or set. A message that says a result or a default changes ("in a future version this will return a Series") says that the behaviour changes, not that the API goes. The source is read, not run. With `+ library` (`[diff + library; warning]`), the warning's text states the replacement. | Whether your call warns: a type checker reports none of these, so `run` does not probe them, and "in some calls" depends on the library's own condition. |
 | `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name, and no version note in the pinned release's docstring (`.. versionadded::`, `.. versionchanged::`) says that one was added or the other removed. A guess, labelled as one. | That it is the same parameter. |
 | `[type-checked]` | Written by a model during `since-cutoff run` and kept because its example passed the type check below. | Behaviour; that the bullet's explanation is true beyond the names it shows. |
 | `[not confirmed]` | Only with `sync --suggestions`: names in the pinned version that look similar to what was removed (the bullet's tag then reads `[diff; not confirmed]`). | That any of them replaces it. |
 
-Tags combine: evidence is joined with `+` (`[diff + library]`), and a guess comes after `;`
-(`[diff; probable rename]`, `[diff; not confirmed]`).
+Tags combine: evidence is joined with `+` (`[diff + library]`), and what the evidence is not
+comes after `;`: a run-time warning (`[diff; warning]`) or a guess (`[diff; probable rename]`,
+`[diff; not confirmed]`).
 
 Names that merely look similar are never written into the notes by default. The terminal,
 report.md and the MCP tools show them as "not confirmed as replacements", and not at all where
@@ -962,8 +970,16 @@ The [reference](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs
 - A type checker sees wrong names, wrong parameters and PEP 702 deprecations. It cannot see
   behaviour changes behind an unchanged signature, or deprecations that only warn at run time.
   `scan` also lists deprecations declared with a library's own decorator (name containing
-  "deprecat") and removed names that a module still serves with a warning through
-  `__getattr__`, but `run` does not probe them.
+  "deprecat"), removed names that a module still serves with a warning through
+  `__getattr__`, and deprecations a public function, method or property announces with
+  `warnings.warn` (a DeprecationWarning, PendingDeprecationWarning or FutureWarning, or a
+  class of the package's, read from the source: pandas 2.3.1 -> 3.0.6 went from 0
+  deprecations to 47), but `run` does not probe them. A warning in compiled code, or one
+  whose category is built at run time, is not seen; one whose message cannot be read
+  statically is reported without a quote. Nor are warnings issued by a private function the
+  public one calls (other than a helper whose name says "deprecat" or "warn"), in a
+  nested function, a descriptor's `__get__` or at class-definition time, or with no
+  category (a UserWarning, even when its text says "deprecation").
 - The diff covers the public API: `_private` names, and test suites, benchmarks and examples
   shipped inside a package, are skipped.
 - "Your code uses" is a static match, file by file: imports (re-exported names included),

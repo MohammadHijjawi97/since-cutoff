@@ -1,5 +1,5 @@
 {
- "schema": 21,
+ "schema": 22,
  "package": "httpx",
  "from_version": "0.27.2",
  "to_version": "0.28.1",
@@ -51,7 +51,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -98,7 +99,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -139,7 +141,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -180,7 +183,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -221,7 +225,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -262,7 +267,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -303,7 +309,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -344,7 +351,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -385,7 +393,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -426,7 +435,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -467,7 +477,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -508,7 +519,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -549,7 +561,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -590,7 +603,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -631,7 +645,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -672,7 +687,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -713,7 +729,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -754,7 +771,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -795,7 +813,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -836,7 +855,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "httpx",
@@ -877,7 +897,104 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
+  },
+  {
+   "package": "httpx",
+   "from_version": "0.27.2",
+   "to_version": "0.28.1",
+   "kind": "deprecated",
+   "path": "httpx.create_ssl_context",
+   "name": "create_ssl_context",
+   "owner": null,
+   "parameter": "cert",
+   "old_signature": "create_ssl_context(cert: CertTypes | None = None, verify: VerifyTypes = True, trust_env: bool = True, http2: bool = False) -> ssl.SSLContext",
+   "new_signature": "create_ssl_context(verify: ssl.SSLContext | str | bool = True, cert: CertTypes | None = None, trust_env: bool = True) -> ssl.SSLContext",
+   "old_doc": null,
+   "new_doc": null,
+   "moved_to": null,
+   "deprecation": "`cert=...` is deprecated. Use `verify=<ssl_context>` instead,with `.load_cert_chain()` to configure the certificate chain.",
+   "hint": null,
+   "suggestions": [],
+   "occurrences": 1,
+   "also": [],
+   "old_kind": null,
+   "new_kind": null,
+   "namesake": null,
+   "deprecated_by": "warnings.warn",
+   "call_form": null,
+   "call_form_only": null,
+   "import_paths": [
+    "httpx.create_ssl_context"
+   ],
+   "hint_source": null,
+   "move_evidence": null,
+   "alias_of": null,
+   "still_handled_at": null,
+   "still_handled_text": null,
+   "library_names": [
+    "verify"
+   ],
+   "hint_file": null,
+   "deprecation_file": "httpx/_config.py",
+   "renamed": false,
+   "request_extras": null,
+   "dependency": null,
+   "tier": "public",
+   "warning": {
+    "when": "parameter",
+    "category": "DeprecationWarning",
+    "at": "httpx/_config.py:63"
+   }
+  },
+  {
+   "package": "httpx",
+   "from_version": "0.27.2",
+   "to_version": "0.28.1",
+   "kind": "deprecated",
+   "path": "httpx.create_ssl_context",
+   "name": "create_ssl_context",
+   "owner": null,
+   "parameter": "verify",
+   "old_signature": "create_ssl_context(cert: CertTypes | None = None, verify: VerifyTypes = True, trust_env: bool = True, http2: bool = False) -> ssl.SSLContext",
+   "new_signature": "create_ssl_context(verify: ssl.SSLContext | str | bool = True, cert: CertTypes | None = None, trust_env: bool = True) -> ssl.SSLContext",
+   "old_doc": null,
+   "new_doc": null,
+   "moved_to": null,
+   "deprecation": "`verify=<str>` is deprecated. Use `verify=ssl.create_default_context(cafile=...)` or `verify=ssl.create_default_context(capath=...)` instead.",
+   "hint": null,
+   "suggestions": [],
+   "occurrences": 1,
+   "also": [],
+   "old_kind": null,
+   "new_kind": null,
+   "namesake": null,
+   "deprecated_by": "warnings.warn",
+   "call_form": null,
+   "call_form_only": null,
+   "import_paths": [
+    "httpx.create_ssl_context"
+   ],
+   "hint_source": null,
+   "move_evidence": null,
+   "alias_of": null,
+   "still_handled_at": null,
+   "still_handled_text": null,
+   "library_names": [],
+   "hint_file": null,
+   "deprecation_file": "httpx/_config.py",
+   "renamed": false,
+   "request_extras": null,
+   "dependency": null,
+   "tier": "public",
+   "warning": {
+    "when": "parameter",
+    "category": "DeprecationWarning",
+    "at": "httpx/_config.py:51",
+    "condition": "isinstance(verify, str)",
+    "readable": true
+   }
   }
  ]
 }

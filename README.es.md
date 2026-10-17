@@ -158,8 +158,9 @@ Lo que no hace:
   hooks no necesitan clave de API;
 - ejecutar código de los paquetes ni código escrito por el modelo: los paquetes se leen de forma
   estática, y las respuestas solo pasan por el verificador de tipos;
-- ver cambios de comportamiento detrás de una firma que no cambió, ni obsolescencias que solo
-  avisan en tiempo de ejecución;
+- ver cambios de comportamiento detrás de una firma que no cambió, ni ejecutar nada: una
+  obsolescencia que solo avisa en tiempo de ejecución se lee de las llamadas a `warnings.warn`
+  de la biblioteca (etiqueta `[diff; warning]`);
 - nombrar un sustituto, salvo que el texto de obsolescencia de la propia biblioteca lo indique;
 - decir qué memorizó el modelo: la fecha de corte elige la versión de comparación, y solo `run`
   pregunta al modelo;
@@ -803,7 +804,13 @@ modificada.
 
 `args: --fail-on old-form --annotate github` solo hace fallar el trabajo cuando tu código usa una
 API modificada en la forma antigua, y anota cada archivo que usa una: un aviso (*warning*) para la
-forma antigua y una nota (*notice*) en los demás casos.
+forma antigua y una nota (*notice*) en los demás casos. Desde la 0.7, las obsolescencias leídas
+de `warnings.warn` (`[diff; warning]`) también cuentan aquí, en `--fail-on changes`, `used` y
+`old-form`, en las anotaciones y en la salida `deprecations`: una llamada que pasa un parámetro
+del que avisa la versión fijada (`copy=`, `verify_integrity=` de pandas 3) está en la forma
+antigua, así que un trabajo que pasaba antes de actualizar puede fallar después. Un aviso solo
+en algunas llamadas, sobre un valor por defecto o sobre un comportamiento, cuenta como «uses
+this API».
 
 Salidas: `changed-packages` (separados por comas), `changes` (cambios incompatibles),
 `deprecations`, `markdown` (la ruta del resumen, por ejemplo para publicarlo como comentario en la
@@ -921,12 +928,14 @@ dice qué se comprobó, y no se afirma nada más:
 | `[diff + library]` | Como `[diff]`, y el propio texto de obsolescencia de la biblioteca (un docstring, la entrada de un parámetro en el docstring, un mensaje de `@deprecated` o un texto de `warnings.warn`, en la versión anterior o, para una obsolescencia, en la fijada) indica el sustituto («Use `stop` instead»), y ese nombre existe en tu versión fijada. Un texto que solo menciona un nombre como consejo se cita bajo `[diff]`; no se toma como sustituto. | Que el sustituto se comporte igual. |
 | `[diff + move checked]` | Como `[diff]`, y el objeto en la nueva ruta es el mismo objeto hasta donde se puede contar: una clase o un módulo conserva al menos la mitad de los nombres públicos del anterior, una función conserva sus parámetros, un valor es el mismo. | El comportamiento. |
 | `[diff + metadata]` | El Requires-Dist de la versión anterior (el METADATA de su wheel) incluye una biblioteca que la versión fijada ya no incluye, y los lugares de la API pública que nombraban tipos de esa biblioteca (parámetros, tipos de retorno, atributos, clases base, reexportaciones) nombran tipos de otra biblioteca que la versión fijada requiere, o de una copia de la anterior que incluye, sin que quede ninguno de la anterior: openai 3.x, anthropic 1.8, huggingface-hub 2.0 y mcp 2.2 aceptan objetos de `httpx2` donde aceptaban objetos de `httpx`. `[metadata]` solo marca la única viñeta de un paquete publicado por primera vez después de la fecha de corte (o dentro del margen anterior a ella) que tu código importa: no hay ninguna versión con la que comparar, así que la nota da la fecha de su primera versión, su resumen en PyPI y la URL de su registro de cambios. | El comportamiento: si la versión fijada todavía acepta objetos de la biblioteca anterior (openai 3 convierte algunos, anthropic 1.8 lanza `TypeError`, según su código fuente). La terminal, report.md, las herramientas MCP y el JSON añaden una línea «Installed:» (si tu proyecto, incluido su entorno virtual, todavía tiene la biblioteca anterior) y una línea «Runtime:» que señala dónde el código fuente fijado todavía la nombra. |
+| `[diff; warning]` | Como `[diff]`, para una obsolescencia que la versión fijada anuncia con `warnings.warn` en el cuerpo de una función, un método o una propiedad públicos (o en el `__getattr__` de un módulo) y que la versión de la fecha de corte no anunciaba: un DeprecationWarning, PendingDeprecationWarning o FutureWarning, o una clase que deriva de uno o cuyo nombre dice «Deprecat» (`Pandas4Warning` de pandas 3), emitido directamente o a través de una función auxiliar del paquete. Si avisa en cada llamada, la función está obsoleta; si avisa cuando se pasa un parámetro (`if copy is not lib.no_default:`, `if "limit" in kwargs:`), lo está el parámetro, o solo para algunos de sus valores (`errors != "raise"`, citado); si avisa cuando se omite (`if n_init == "warn":`), lo está su valor por defecto; bajo otra condición, la función lo está en algunas llamadas; una propiedad avisa al leerla o asignarla. Un mensaje que dice que cambia un resultado o un valor por defecto («in a future version this will return a Series») dice que cambia el comportamiento, no que la API desaparece. El código fuente se lee, no se ejecuta. Con `+ library` (`[diff + library; warning]`), el texto del aviso indica el sustituto. | Si tu llamada avisa: ningún verificador de tipos informa de estas obsolescencias, así que `run` no las sondea, y «en algunas llamadas» depende de la condición de la propia biblioteca. |
 | `[diff; probable rename]` | Un parámetro en la misma posición y con la misma anotación tiene un nombre nuevo, y ninguna nota de versión del docstring de la versión fijada (`.. versionadded::`, `.. versionchanged::`) dice que uno se añadió o que el otro se eliminó. Una suposición, señalada como tal. | Que sea el mismo parámetro. |
 | `[type-checked]` | La escribió un modelo durante `since-cutoff run` y se conservó porque su ejemplo pasó la comprobación de tipos descrita abajo. | El comportamiento; que la explicación de la viñeta sea cierta más allá de los nombres que muestra. |
 | `[not confirmed]` | Solo con `sync --suggestions`: nombres de la versión fijada que se parecen a lo que se eliminó (la etiqueta de la viñeta es entonces `[diff; not confirmed]`). | Que alguno de ellos lo sustituya. |
 
-Las etiquetas se combinan: las pruebas se unen con `+` (`[diff + library]`), y una suposición va
-después de `;` (`[diff; probable rename]`, `[diff; not confirmed]`).
+Las etiquetas se combinan: las pruebas se unen con `+` (`[diff + library]`), y lo que las pruebas
+no son va después de `;`: un aviso en tiempo de ejecución (`[diff; warning]`) o una suposición
+(`[diff; probable rename]`, `[diff; not confirmed]`).
 
 Los nombres que solo se parecen nunca se escriben en las notas por defecto. La terminal,
 report.md y las herramientas MCP los muestran como «not confirmed as replacements» (no confirmados
@@ -1013,8 +1022,16 @@ La [referencia](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs
   de la PEP 702. No ve los cambios de comportamiento si la firma sigue igual, ni las
   obsolescencias que solo emiten un aviso en tiempo de ejecución. `scan` también muestra las
   obsolescencias declaradas con un decorador propio de la biblioteca (cuyo nombre contiene
-  «deprecat») y los nombres eliminados que un módulo sigue sirviendo, con un aviso, a través de
-  `__getattr__`, pero `run` no los sondea.
+  «deprecat»), los nombres eliminados que un módulo sigue sirviendo, con un aviso, a través de
+  `__getattr__`, y las obsolescencias que una función, un método o una propiedad públicos
+  anuncian con `warnings.warn` (un DeprecationWarning, PendingDeprecationWarning o
+  FutureWarning, o una clase del paquete, leídas del código fuente: pandas 2.3.1 -> 3.0.6 pasó
+  de 0 obsolescencias a 47), pero `run` no los sondea. No se ve un aviso en código compilado,
+  ni uno cuya categoría se construye en tiempo de ejecución; uno cuyo mensaje no se puede leer
+  estáticamente se informa sin cita. Tampoco se ven los avisos que emite una función privada a
+  la que llama la pública (salvo una función auxiliar cuyo nombre dice «deprecat» o «warn»),
+  los de una función anidada, del `__get__` de un descriptor o de la definición de una clase,
+  ni los que no tienen categoría (un UserWarning, aunque su texto hable de obsolescencia).
 - El diff cubre la API pública: se omiten los nombres `_private`, así como los conjuntos de pruebas,
   los benchmarks y los ejemplos que se distribuyen dentro de un paquete.
 - «Your code uses» (tu código usa) es una coincidencia estática, archivo por archivo:

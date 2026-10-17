@@ -32,6 +32,7 @@ from since_cutoff.notes import (
     TAG_NOT_CONFIRMED,
     TAG_PROBABLE_RENAME,
     TAG_TYPE_CHECKED,
+    TAG_WARNING,
     diff_note,
     tag_text,
 )
@@ -351,14 +352,16 @@ def test_what_verified_means_names_every_tag(name: str) -> None:
             (TAG_DIFF, TAG_LIBRARY),
             (TAG_DIFF, TAG_MOVE_CHECKED),
             (TAG_DIFF, TAG_METADATA),
+            (TAG_DIFF, TAG_WARNING),
             (TAG_DIFF, TAG_PROBABLE_RENAME),
             (TAG_TYPE_CHECKED,),
             (TAG_DIFF, TAG_NOT_CONFIRMED),
         )
     ]
-    assert tags[3] == "[diff + metadata]" and tags[-1] == "[diff; not confirmed]"
+    assert tags[3] == "[diff + metadata]" and tags[4] == "[diff; warning]"
+    assert tags[-1] == "[diff; not confirmed]"
     rows = re.findall(r"^\| `(\[[^`]+\])` \|", text, re.M)
-    assert rows == ["[diff]", *tags[1:6], "[not confirmed]"], name
+    assert rows == ["[diff]", *tags[1:7], "[not confirmed]"], name
     for tag in tags:
         assert f"`{tag}`" in text, (name, tag)
 

@@ -1,5 +1,5 @@
 {
- "schema": 21,
+ "schema": 22,
  "package": "mcp",
  "from_version": "1.28.1",
  "to_version": "2.2.0",
@@ -331,7 +331,8 @@
     "still_named_at": [],
     "still_named_count": 0
    },
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -378,7 +379,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -419,7 +421,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -460,7 +463,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -504,7 +508,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -545,7 +550,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -586,7 +592,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -632,7 +639,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -674,7 +682,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -716,7 +725,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -757,7 +767,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -798,7 +809,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -839,7 +851,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -880,7 +893,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -921,7 +935,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -962,7 +977,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1003,7 +1019,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1044,7 +1061,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1085,7 +1103,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1126,7 +1145,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1167,7 +1187,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1210,7 +1231,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1251,7 +1273,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1293,7 +1316,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1335,7 +1359,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1377,7 +1402,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1419,7 +1445,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1461,7 +1488,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1502,7 +1530,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1545,7 +1574,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1593,7 +1623,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1634,7 +1665,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1675,7 +1707,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1716,7 +1749,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1757,7 +1791,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1803,7 +1838,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1849,7 +1885,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1892,7 +1929,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1935,7 +1973,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -1981,7 +2020,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2027,7 +2067,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2073,7 +2114,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2119,7 +2161,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2165,7 +2208,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2211,7 +2255,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2257,7 +2302,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2298,7 +2344,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2339,7 +2386,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2380,7 +2428,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2423,7 +2472,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2466,7 +2516,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2509,7 +2560,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2552,7 +2604,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2595,7 +2648,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2638,7 +2692,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2681,7 +2736,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2724,7 +2780,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2767,7 +2824,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2810,7 +2868,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2853,7 +2912,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2896,7 +2956,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2939,7 +3000,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -2982,7 +3044,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3025,7 +3088,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3068,7 +3132,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3109,7 +3174,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3150,7 +3216,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3191,7 +3258,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3232,7 +3300,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3273,7 +3342,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3315,7 +3385,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3357,7 +3428,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3399,7 +3471,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3441,7 +3514,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3483,7 +3557,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3524,7 +3599,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3565,7 +3641,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3606,7 +3683,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3647,7 +3725,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3694,7 +3773,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3735,7 +3815,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3776,7 +3857,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3817,7 +3899,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3858,7 +3941,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3899,7 +3983,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3940,7 +4025,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -3983,7 +4069,8 @@
    "renamed": true,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4026,7 +4113,8 @@
    "renamed": true,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4068,7 +4156,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4109,7 +4198,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4152,7 +4242,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4197,7 +4288,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4242,7 +4334,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4287,7 +4380,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4332,7 +4426,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4382,7 +4477,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4424,7 +4520,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4465,7 +4562,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4506,7 +4604,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4547,7 +4646,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4588,7 +4688,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4629,7 +4730,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4670,7 +4772,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4712,7 +4815,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4755,7 +4859,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4797,7 +4902,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4839,7 +4945,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4881,7 +4988,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4923,7 +5031,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -4967,7 +5076,8 @@
    "renamed": true,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5011,7 +5121,8 @@
    "renamed": true,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5052,7 +5163,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5095,7 +5207,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5138,7 +5251,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5181,7 +5295,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5226,7 +5341,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5271,7 +5387,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5320,7 +5437,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5362,7 +5480,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5404,7 +5523,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "mcp",
@@ -5446,7 +5566,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   }
  ]
 }

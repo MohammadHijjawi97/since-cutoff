@@ -77,7 +77,8 @@ et **Claude Opus 4.6** (mai 2025). Les tâches et les notes ont été rédigées
    épinglée, de façon statique (griffe, aucun code importé). On trouve ainsi les objets supprimés
    ou déplacés, les paramètres supprimés ou devenus obligatoires, les passages en paramètres
    nommés uniquement ou positionnels uniquement (keyword-only, positional-only) et les nouveaux
-   marqueurs de dépréciation. Pour ce projet et la date limite de
+   marqueurs de dépréciation (et, depuis la 0.7, les appels à `warnings.warn` avec une catégorie de
+   dépréciation). Pour ce projet et la date limite de
    Claude Haiku 4.5, 7 des 9 dépendances ont changé ; le diff actuel (0.5.0) signale 475
    changements incompatibles et 48 nouvelles dépréciations, dont une partie concerne des éléments
    internes.

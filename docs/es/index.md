@@ -78,7 +78,8 @@ y **Claude Opus 4.6** (mayo de 2025). Las tareas y las notas las escribió Claud
    corte del modelo o antes, y se compara su API pública con la versión fijada, de forma estática
    (con griffe, sin importar ningún módulo del paquete). Así se detectan objetos eliminados o
    movidos, parámetros eliminados o que pasan a ser obligatorios, parámetros que pasan a ser solo
-   de palabra clave o solo posicionales, y nuevas marcas de obsolescencia. Para este proyecto y la fecha de corte de Claude
+   de palabra clave o solo posicionales, y nuevas obsolescencias (marcas y, desde la 0.7, llamadas
+   a `warnings.warn` con una categoría de obsolescencia). Para este proyecto y la fecha de corte de Claude
    Haiku 4.5, cambiaron 7 de las 9 dependencias; el diff actual (0.5.0) señala 475 cambios
    incompatibles y 48 obsolescencias nuevas, algunos de ellos en elementos internos.
 2. **Tareas que requieren el cambio.** Para los cambios de mayor prioridad, un modelo redactor de

@@ -66,7 +66,8 @@ Two models were tested: **Claude Haiku 4.5** (training cutoff February 2025) and
 1. **What changed.** For each dependency, take the newest release published on or before the
    model's cutoff, and diff its public API against the pinned version, statically (griffe, no code
    imported). That finds removed and moved objects, removed or newly required parameters,
-   keyword/positional-only changes and new deprecation markers. For this project and Claude
+   keyword/positional-only changes and new deprecations (markers, and `warnings.warn` calls with
+   a deprecation category, since 0.7). For this project and Claude
    Haiku 4.5's cutoff, 7 of the 9 dependencies changed; the current diff (0.5.0) flags 475
    breaking changes and 48 new deprecations, some of them internals.
 2. **Tasks that need the change.** For the highest-ranked changes, a task writer produces short,

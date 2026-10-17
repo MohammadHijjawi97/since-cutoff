@@ -1,5 +1,5 @@
 {
- "schema": 21,
+ "schema": 22,
  "package": "openai",
  "from_version": "2.44.0",
  "to_version": "3.19.2",
@@ -645,7 +645,8 @@
     ],
     "still_named_count": 1
    },
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   }
  ]
 }

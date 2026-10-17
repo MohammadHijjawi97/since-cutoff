@@ -17,12 +17,18 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from since_cutoff import mcp_server
 from since_cutoff.apidiff import (
     DEPRECATED,
     HINT_WARNING,
     PARAM_KEYWORD_ONLY,
     PARAM_REMOVED,
     REMOVED,
+    WARNS_ACCESS,
+    WARNS_ALWAYS,
+    WARNS_CONDITION,
+    WARNS_DEFAULT,
+    WARNS_PARAMETER,
     APIChange,
 )
 from since_cutoff.cache import DiskCache
@@ -30,12 +36,15 @@ from since_cutoff.notes import (
     EVIDENCE_LIBRARY,
     TAG_DIFF,
     TAG_LIBRARY,
+    TAG_WARNING,
     diff_note,
     render_block,
     runtime_text,
+    split_tags,
 )
 from since_cutoff.pypi import SourceTree
-from since_cutoff.report import render_markdown, render_scan_markdown, to_json
+from since_cutoff.report import changes_text, render_markdown, render_scan_markdown, to_json
+from since_cutoff.selection import OLD_FORM, USES_API, form
 from tests.conftest import FakePyPI, write_tree
 from tests.test_ci import scan_app
 from tests.test_notes_provenance import change, toy_diff
@@ -605,3 +614,299 @@ def test_results_json_lists_a_few_import_paths_per_change(tmp_path, cache, fake_
     assert entry["import_paths"] == [f"toylib.m{i}.fetch" for i in range(5)]
     assert entry["import_paths_total"] == 40
     assert len(fetch.import_paths) == 40  # the change itself keeps them all
+
+
+# ------------------------------------- deprecations announced by warnings.warn (#53)
+def warned(when: str, **kw: Any) -> APIChange:
+    """A deprecation of pandas 3.0.6 read from a ``warnings.warn`` (DIFF_SCHEMA 22)."""
+    kw.setdefault("owner", "DataFrame")
+    kw.setdefault("param", None)
+    extra = kw.pop("extra", {})  # more of APIChange.warning: condition, behavior, access...
+    return change(
+        DEPRECATED,
+        pkg="pandas",
+        old="2.3.1",
+        new="3.0.6",
+        deprecated_by=HINT_WARNING,
+        warning={
+            "when": when,
+            "category": "Pandas4Warning",
+            "at": "pandas/core/frame.py:1",
+            **extra,
+        },
+        **kw,
+    )
+
+
+def test_a_note_for_a_warned_parameter_says_it_warns_at_run_time() -> None:
+    """The note says the call warns at run time, never that type checkers reject it, quotes
+    the library's text and is tagged [diff; warning]."""
+    note = diff_note(
+        [
+            warned(
+                WARNS_PARAMETER,
+                name="set_index",
+                param="verify_integrity",
+                deprecation="The 'verify_integrity' keyword in DataFrame.set_index is "
+                "deprecated and will be removed in a future version. Directly check the "
+                "result.index.is_unique instead.",
+            )
+        ]
+    )
+    assert note.line == (
+        "`verify_integrity` is deprecated for `DataFrame.set_index()`: pandas 3.0.6 warns at run "
+        "time (Pandas4Warning) when it is passed; avoid it in new code. On `verify_integrity`, "
+        'pandas 3.0.6 says: "Directly check the result.index.is_unique instead." [diff; warning]'
+    )
+    assert note.tag_list == (TAG_DIFF, TAG_WARNING)
+    assert "type checker" not in note.line
+    assert split_tags(note.line)[1] == (TAG_DIFF, TAG_WARNING)
+
+
+def test_a_note_for_a_warned_function_says_when_it_warns() -> None:
+    """At every call; when a class is created; in some calls, with the text's first sentence
+    when nothing else in it is worth quoting. A replacement the text states is named, and the
+    tag says both: [diff + library; warning]."""
+    always = warned(
+        WARNS_ALWAYS,
+        name="corrwith",
+        owner="DataFrameGroupBy",
+        deprecation="DataFrameGroupBy.corrwith is deprecated",
+    )
+    assert diff_note([always]).line == (
+        "`DataFrameGroupBy.corrwith` is deprecated: pandas 3.0.6 warns at run time "
+        "(Pandas4Warning) at every call; avoid it in new code. [diff; warning]"
+    )
+    cls = warned(
+        WARNS_ALWAYS,
+        name="Store",
+        owner=None,
+        path="pandas.Store",
+        new_signature="class Store(self, path)",
+        deprecation="Store is deprecated, use `Table` instead",
+        library_names=["pandas.Table"],
+    )
+    note = diff_note([cls])
+    assert note.line == (
+        "`pandas.Store` is deprecated: pandas 3.0.6 warns at run time (Pandas4Warning) when one "
+        "is created; avoid it in new code. Use `pandas.Table` instead. [diff + library; warning]"
+    )
+    some = warned(
+        WARNS_CONDITION,
+        name="astype",
+        owner="Categorical",
+        deprecation="Constructing a Categorical with values not in its categories is "
+        "deprecated and will raise in a future version.",
+    )
+    assert diff_note([some]).line == (
+        "`Categorical.astype` is deprecated in some calls: pandas 3.0.6 warns at run time "
+        '(Pandas4Warning). pandas 3.0.6 says: "Constructing a Categorical with values not in its '
+        'categories is deprecated and will raise in a future version." [diff; warning]'
+    )
+    block = render_block(
+        [diff_note([some])], model="claude-sonnet-4-5", cutoff=CUTOFF, version_source="uv.lock"
+    )
+    assert "[warning] the deprecation is a warnings.warn" in block
+
+
+def test_use_a_call_to_do_something_is_advice_not_a_replacement() -> None:
+    """pandas 3's copy keyword: "Use .copy() to make an eager copy if necessary." The
+    sentence-initial "Use" stopped at the "(", so ``copy`` looked stated outright, and the
+    note said "Use `DataFrame.copy` instead of `copy`"."""
+    copy = warned(
+        WARNS_PARAMETER,
+        name="astype",
+        param="copy",
+        deprecation="The copy keyword is deprecated. Use .copy() to make an eager copy if "
+        "necessary.",
+        library_names=["pandas.core.frame.DataFrame.copy"],
+    )
+    note = diff_note([copy])
+    assert note.replacements == [] and TAG_LIBRARY not in note.tag_list
+    assert "instead of `copy`" not in note.line
+
+
+def test_a_note_for_a_behaviour_or_a_default_that_changes_does_not_say_avoid_it() -> None:
+    """pandas 3's ``to_pytimedelta`` warns that its result changes, scikit-learn 1.7's
+    ``smacof`` that its ``n_init`` default will: "is deprecated ...; avoid it in new code"
+    told agents to avoid a method that stays (#113). The note says what changes, quotes the
+    message, and for a default how to keep the old behaviour; a call of either only uses the
+    API."""
+    behavior = warned(
+        WARNS_ALWAYS,
+        extra={"behavior": True},
+        name="to_pytimedelta",
+        owner="TimedeltaProperties",
+        deprecation="The behavior of {...}.to_pytimedelta is deprecated, in a future version "
+        "this will return a Series containing python datetime.timedelta objects instead of an "
+        "ndarray. To retain the old behavior, call `np.array` on the result",
+    )
+    assert diff_note([behavior]).line == (
+        "`TimedeltaProperties.to_pytimedelta` will change behavior: pandas 3.0.6 warns at run "
+        'time (Pandas4Warning) at every call. pandas 3.0.6 says: "The behavior of '
+        "{...}.to_pytimedelta is deprecated, in a future version this will return a Series "
+        'containing python datetime.timedelta objects instead of an ndarray." [diff; warning]'
+    )
+    default = warned(
+        WARNS_DEFAULT,
+        extra={"behavior": True},
+        name="smacof",
+        owner=None,
+        param="n_init",
+        deprecation="The default value of `n_init` will change from 8 to 1 in 1.9.",
+    )
+    assert diff_note([default]).line == (
+        "The default of `n_init` for `pandas.smacof()` will change: pandas 3.0.6 warns at run "
+        "time (Pandas4Warning) when it is left out; pass `n_init=` explicitly. On `n_init`, "
+        "pandas 3.0.6 says: \"The default value of 'n_init' will change from 8 to 1 in 1.9.\" "
+        "[diff; warning]"
+    )
+    left_out = warned(
+        WARNS_DEFAULT,
+        extra={"condition": "any(dtype.kind in 'mM' for dtype in dtypes)"},
+        name="to_json",
+        param="date_format",
+        deprecation="The default 'epoch' date format is deprecated, please use 'iso' instead.",
+    )
+    assert diff_note([left_out]).line.startswith(
+        "Calling `DataFrame.to_json()` without `date_format` is deprecated: pandas 3.0.6 warns "
+        "at run time (Pandas4Warning) when it is left out, in some of those calls; pass "
+        "`date_format=` explicitly."
+    )
+    for c in (behavior, default, left_out):
+        assert "avoid" not in diff_note([c]).line
+        assert form(c, (c.path,)) == USES_API
+
+
+def test_a_note_for_a_warning_in_some_calls_says_which_calls() -> None:
+    """A deprecation that warns in some calls only quoted the advice alone ("Pass an Index
+    instead.", "Use 'verify=ssl.create_default_context(...)' instead."), which says nothing of
+    which calls: the sentence that says what is deprecated comes first. A condition that reads
+    the function's parameters alone is quoted, one that reads the library's own names is not
+    (in describe() either); a parameter warned of for some of its values says so, without
+    "when it is passed; avoid it in new code" (#113)."""
+    join = warned(
+        WARNS_CONDITION,
+        extra={"condition": "not isinstance(other, Index)"},
+        name="join",
+        owner="Index",
+        deprecation="Passing {...} to {...}.join is deprecated and will raise in a future "
+        "version. Pass an Index instead.",
+    )
+    assert diff_note([join]).line == (
+        "`Index.join` is deprecated in some calls: pandas 3.0.6 warns at run time "
+        '(Pandas4Warning). pandas 3.0.6 says: "Passing {...} to {...}.join is deprecated and '
+        'will raise in a future version. Pass an Index instead." [diff; warning]'
+    )
+    assert join.describe(versioned=False).startswith(
+        "`pandas.resources.messages.messages.Index.join` is deprecated in some calls, with a "
+        "Pandas4Warning at run time: "
+    )
+    readable = warned(
+        WARNS_CONDITION,
+        extra={"condition": "periods > 2", "readable": True},
+        name="shift",
+        deprecation="Shifting by more than 2 periods is deprecated.",
+    )
+    assert diff_note([readable]).line.startswith(
+        "`DataFrame.shift` is deprecated when `periods > 2`: pandas 3.0.6 warns at run time "
+        "(Pandas4Warning)."
+    )
+    assert "is deprecated when `periods > 2`" in readable.describe(versioned=False)
+    errors = warned(
+        WARNS_PARAMETER,
+        extra={"condition": "errors != 'raise'", "readable": True},
+        name="to_numeric",
+        owner=None,
+        param="errors",
+        deprecation="errors='ignore' is deprecated and will raise in a future version. Catch "
+        "exceptions explicitly instead",
+    )
+    assert diff_note([errors]).line == (
+        "`errors` is deprecated for `pandas.to_numeric()` in some calls: pandas 3.0.6 warns at "
+        "run time (Pandas4Warning) when it is passed and `errors != 'raise'`. On `errors`, "
+        "pandas 3.0.6 says: \"errors='ignore' is deprecated and will raise in a future version. "
+        'Catch exceptions explicitly instead" [diff; warning]'
+    )
+    assert form(errors, (errors.path, "errors")) == USES_API
+
+
+def test_a_note_for_an_access_and_for_more_warnings_of_one_api() -> None:
+    """A property's getter warns when it is read, a setter when it is set (WARNS_ACCESS);
+    the other warnings of one API and parameter (``warning["also"]``) are said too."""
+    getter = warned(
+        WARNS_ACCESS,
+        extra={"access": "read"},
+        name="ix",
+        deprecation="DataFrame.ix is deprecated",
+    )
+    assert diff_note([getter]).line == (
+        "`DataFrame.ix` is deprecated: pandas 3.0.6 warns at run time (Pandas4Warning) when it "
+        "is read; avoid it in new code. [diff; warning]"
+    )
+    assert form(getter, (getter.path,)) == OLD_FORM
+    setter = warned(
+        WARNS_ACCESS,
+        extra={"access": "set"},
+        name="number",
+        owner="Figure",
+        deprecation="Changing 'Figure.number' is deprecated since 3.10.",
+    )
+    assert diff_note([setter]).line == (
+        "Setting `Figure.number` is deprecated: pandas 3.0.6 warns at run time (Pandas4Warning) "
+        "when it is set; do not set it in new code. [diff; warning]"
+    )
+    assert changes_text([setter]) == (False, "setting it is deprecated (warns at run time)")
+    assert form(setter, (setter.path,)) == USES_API
+    also = warned(
+        WARNS_PARAMETER,
+        extra={
+            "condition": "date_format == 'epoch'",
+            "readable": True,
+            "also": [{"when": WARNS_DEFAULT, "category": "Pandas4Warning", "condition": None}],
+        },
+        name="to_json",
+        param="date_format",
+        deprecation="'epoch' date format is deprecated. The default 'epoch' date format is "
+        "deprecated.",
+    )
+    assert (
+        "when it is passed and `date_format == 'epoch'`. It also warns when it is left out (in "
+        "some calls)." in diff_note([also]).line
+    )
+
+
+def test_the_headline_says_every_deprecation_of_an_api_and_that_it_warns() -> None:
+    """pandas 3.0.6's ``concat``: its ``copy`` parameter, its ``sort`` default, and the
+    function in some calls. The headline (the terminal, report.md, the MCP tools, the
+    annotations) read "concat: copy is deprecated (warns at run time)" for code that does not
+    pass ``copy`` (#113)."""
+    copy = warned(
+        WARNS_PARAMETER,
+        name="concat",
+        owner=None,
+        param="copy",
+        deprecation="The copy keyword is deprecated.",
+    )
+    sort = warned(
+        WARNS_DEFAULT,
+        extra={"condition": None, "behavior": True},
+        name="concat",
+        owner=None,
+        param="sort",
+        deprecation="Sorting by default when concatenating all DatetimeIndex is deprecated.",
+    )
+    itself = warned(
+        WARNS_CONDITION,
+        extra={"condition": None},
+        name="concat",
+        owner=None,
+        deprecation="Concatenating empty entries is deprecated.",
+    )
+    assert changes_text([copy, sort, itself]) == (
+        True,
+        "is deprecated in some calls (warns at run time); copy is deprecated (warns at run "
+        "time); the default of sort will change (warns at run time)",
+    )
+    assert changes_text([copy], code=True) == (False, "`copy` is deprecated (warns at run time)")
+    assert "with a Pandas4Warning at run time" in mcp_server.change_line(copy)

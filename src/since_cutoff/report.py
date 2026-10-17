@@ -33,6 +33,9 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     REMOVED,
     TIER_INTERNAL,
+    WARNS_ACCESS,
+    WARNS_CONDITION,
+    WARNS_DEFAULT,
     APIChange,
     griffe_version,
 )
@@ -1065,8 +1068,10 @@ def changes_text(changes: Sequence[APIChange], *, code: bool = False) -> tuple[b
             text = f"{names} {'is' if one else 'are'} now keyword-only"
         elif kind == PARAM_POSITIONAL_ONLY:
             text = f"{names} {'is' if one else 'are'} now positional-only"
-        elif kind == CHANGE_DEPRECATED and params:
-            text = f"{names} {'is' if one else 'are'} deprecated"
+        elif kind == CHANGE_DEPRECATED:
+            about_api, said = _deprecated_texts(group, q)
+            first_is_api = first_is_api or (about_api and not parts)
+            text = "; ".join(said)
         elif kind == DEPENDENCY_SWITCHED:
             text = group[0].describe() if code else group[0].describe().replace("`", "")
         else:  # a change to the API itself
@@ -1081,20 +1086,82 @@ def changes_text(changes: Sequence[APIChange], *, code: bool = False) -> tuple[b
                 text = f"moved to {q(c.moved_to or '?')}"
             elif kind == KIND_CHANGED and c.old_kind and c.new_kind:
                 text = f"changed from {c.old_kind} to {c.new_kind}"
-            elif kind == KIND_CHANGED:
+            else:  # KIND_CHANGED without both kinds
                 text = "changed kind"
-            elif c.call_form_only:
-                keywords = _joined([q(f"{p}=") for p in c.call_form_only], "or")
-                text = f"is deprecated when called with {keywords}"
-            elif c.call_form and len(c.call_form) <= CALL_FORM_LIMIT:
-                text = f"is deprecated when called as {q(' '.join(c.call_form.split()))}"
-            elif c.call_form:
-                text = "is deprecated in one call form (an overload)"
-            else:
-                text = "is deprecated"
             first_is_api = first_is_api or not parts
         parts.append(text)
     return first_is_api, "; ".join(parts)
+
+
+def _deprecated_texts(
+    group: Sequence[APIChange], q: Callable[[str], str]
+) -> tuple[bool, list[str]]:
+    """What :func:`changes_text` says of the deprecations of one API, and whether it starts
+    with a verb about the API itself: the API's own (``is deprecated in some calls``,
+    ``will change behavior``), then the parameters it warns of whenever they are passed
+    (``copy is deprecated``), then the others, each as it is (``the default of sort will
+    change``, ``errors is deprecated in some calls``). Each says "(warns at run time)" when a
+    ``warnings.warn`` announces it."""
+    out: list[str] = []
+    api = [c for c in group if not c.parameter]
+    about_api = bool(api)
+    if api:
+        c = api[0]
+        w = c.warning or {}
+        verb = "will change behavior" if w.get("behavior") else "is deprecated"
+        if c.call_form_only:
+            keywords = _joined([q(f"{p}=") for p in c.call_form_only], "or")
+            out.append(f"is deprecated when called with {keywords}")
+        elif c.call_form and len(c.call_form) <= CALL_FORM_LIMIT:
+            out.append(f"is deprecated when called as {q(' '.join(c.call_form.split()))}")
+        elif c.call_form:
+            out.append("is deprecated in one call form (an overload)")
+        elif w.get("when") == WARNS_ACCESS and w.get("access") in ("set", "delete"):
+            doing = "setting" if w.get("access") == "set" else "deleting"
+            out.append(f"{doing} it {verb}" + _warns(api))
+            about_api = False  # "Figure.number: setting it is deprecated"
+        elif w.get("when") == WARNS_CONDITION or "condition" in w:
+            some = "in some cases" if w.get("when") == WARNS_ACCESS else "in some calls"
+            out.append(f"{verb} {some}" + _warns(api))
+        else:
+            out.append(verb + _warns(api))
+    plain = [c for c in group if c.parameter and not _partial_parameter(c)]
+    params = list(dict.fromkeys(c.parameter for c in plain if c.parameter))
+    if params:
+        names = _joined([q(p) for p in params], "and")
+        out.append(f"{names} {'is' if len(params) == 1 else 'are'} deprecated" + _warns(plain))
+    for c in group:
+        if not c.parameter or not _partial_parameter(c):
+            continue
+        w = c.warning or {}
+        p = q(c.parameter)
+        if w.get("when") == WARNS_DEFAULT:
+            said = (
+                f"the default of {p} will change"
+                if w.get("behavior")
+                else f"calling it without {p} is deprecated"
+            )
+        elif w.get("behavior"):
+            said = f"passing {p} will change behavior"
+        else:
+            said = f"{p} is deprecated in some calls"
+        out.append(said + _warns([c]))
+    return about_api, list(dict.fromkeys(out))
+
+
+def _partial_parameter(change: APIChange) -> bool:
+    """A parameter deprecation read from a ``warnings.warn`` that is not one whenever the
+    parameter is passed: of its default, of a behaviour, or under a condition."""
+    w = change.warning or {}
+    return bool(w) and (
+        w.get("when") == WARNS_DEFAULT or "condition" in w or bool(w.get("behavior"))
+    )
+
+
+def _warns(changes: Sequence[APIChange]) -> str:
+    """` (warns at run time)` for deprecations read from a ``warnings.warn`` (APIChange.warning),
+    which no type checker reports; "" for the others."""
+    return " (warns at run time)" if any(c.warning for c in changes) else ""
 
 
 def api_head(u: UsedAPI, *, code: bool = False) -> str:

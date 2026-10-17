@@ -96,7 +96,7 @@ uvx since-cutoff scan
 
 - 调用模型（`run` 除外）：`scan`、`sync`、`status`、MCP 服务器、Action 和钩子都不需要 API key；
 - 运行包代码或模型写的代码：包只被静态读取，回答只经过类型检查；
-- 发现函数签名不变但行为改变的情况，以及只在运行时发出警告的弃用；
+- 发现函数签名不变但行为改变的情况，或运行任何代码：只在运行时发出警告的弃用，是从库的 `warnings.warn` 调用中读出来的（标签 `[diff; warning]`）；
 - 给出替代写法，除非库自己的弃用文本中写明了替代写法；
 - 断言模型记住了什么：截止日期只用来选对比版本，只有 `run` 会去问模型；
 - 改写你的代码：要迁移已有代码，codemod 才是合适的工具（见[与其他工具的比较](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.zh-CN.md#与其他工具的比较)）；
@@ -463,7 +463,7 @@ jobs:
 | `args` | | 额外的 `since-cutoff scan` 参数，例如 `--all-deps --limit 20` |
 | `since-cutoff-version` | `0.5.0` | 要运行的 since-cutoff 版本，或 `latest` |
 
-`args: --fail-on old-form --annotate github` 只在你的代码以旧写法用到有变更的 API 时让任务失败，并为每个用到这类 API 的文件添加注解：旧写法为警告（warning），其他情况为提示（notice）。
+`args: --fail-on old-form --annotate github` 只在你的代码以旧写法用到有变更的 API 时让任务失败，并为每个用到这类 API 的文件添加注解：旧写法为警告（warning），其他情况为提示（notice）。自 0.7 起，从 `warnings.warn` 读出的弃用（`[diff; warning]`）在这里同样计入 `--fail-on changes`、`used` 和 `old-form`、注解以及 `deprecations` 输出：传入锁定版本会警告的参数（pandas 3 的 `copy=`、`verify_integrity=`）的调用属于旧写法，因此升级前能通过的任务，升级后可能失败。只在部分调用中、针对默认值或行为的警告，计为“uses this API”。
 
 输出：`changed-packages`（逗号分隔）、`changes`（破坏性变更数）、`deprecations`、`markdown`（摘要文件的路径，例如可用来把摘要发成 pull request 评论）、`report`（完整报告的路径），以及设置 `check-notes` 时的 `notes`（`up-to-date`、`out-of-date`、`edited-by-hand` 或 `error`）。能通过多个导入路径访问的同一个变更只计一次。
 
@@ -539,11 +539,12 @@ since-cutoff 从不单独使用“verified”（已验证）这个词。每条�
 | `[diff + library]` | 同 `[diff]`，并且库自己的弃用说明（docstring、docstring 中某个参数的条目、`@deprecated` 消息或 `warnings.warn` 文本，来自旧版本；对于弃用，则来自锁定版本）明确给出了替代项（“Use `stop` instead”），而且这个名称在你锁定的版本中存在。只是作为建议提到某个名称的文字，会在 `[diff]` 下引用，不被当作替代项。 | 替代项的行为是否相同。 |
 | `[diff + move checked]` | 同 `[diff]`，并且就能统计的方面而言，新路径上的对象就是同一个对象：类或模块至少保留了旧对象一半的公开名称，函数保留了它的参数，值保持不变。 | 行为。 |
 | `[diff + metadata]` | 旧版本的 Requires-Dist（其 wheel 的 METADATA）列出了一个锁定的版本不再列出的库，而公开 API 中原先用到该库类型的位置（参数、返回类型、属性、基类、重新导出）改为用到锁定的版本所依赖的另一个库的类型，或它自带的旧库副本的类型，旧库的类型一个也没有留下：openai 3.x、anthropic 1.8、huggingface-hub 2.0 和 mcp 2.2 在原先接受 `httpx` 对象的地方改为接受 `httpx2` 对象。单独的 `[metadata]` 标记的是你的代码导入的、在截止日期之后（或截止日期前的余量天数内）才首次发布的包的那一条说明：没有任何版本可以对比，所以说明给出它首次发布的日期、它在 PyPI 上的简介和它的变更日志链接。 | 行为：锁定的版本是否仍接受旧库的对象（根据各自的源码，openai 3 会转换其中一部分，anthropic 1.8 会抛出 `TypeError`）。终端、report.md、MCP 工具和 JSON 会加上一行“Installed:”（你的项目，包括其虚拟环境，是否仍有旧库）和一行“Runtime:”，指出锁定版本的源码在哪里仍提到它。 |
+| `[diff; warning]` | 同 `[diff]`，针对锁定版本在公开函数、方法或属性的函数体中（或在模块的 `__getattr__` 中）用 `warnings.warn` 宣布、而截止日期时的版本没有宣布的弃用：类别是 DeprecationWarning、PendingDeprecationWarning 或 FutureWarning，或派生自它们、或名称中含 "Deprecat" 的类（pandas 3 的 `Pandas4Warning`），直接发出或经由包内的辅助函数发出。每次调用都警告时，弃用的是这个函数；传入某个参数时才警告时（`if copy is not lib.no_default:`、`if "limit" in kwargs:`），弃用的是这个参数，或只是它的某些取值（`errors != "raise"`，会引用该条件）；省略该参数时才警告时（`if n_init == "warn":`），弃用的是它的默认值；在其他条件下警告时，这个函数在部分调用中被弃用；属性在读取或赋值时警告。消息说的是结果或默认值会改变（"in a future version this will return a Series"）时，说明写的是行为会改变，而不是 API 会消失。源码只被读取，不被运行。带 `+ library`（`[diff + library; warning]`）时，警告文本写明了替代写法。 | 你的调用是否会警告：类型检查器不会报告这些弃用，所以 `run` 不探测它们；“部分调用”取决于库自己的条件。 |
 | `[diff; probable rename]` | 位置相同、类型注解相同的参数换了新名字，且锁定版本 docstring 中的版本说明（`.. versionadded::`、`.. versionchanged::`）没有说新参数是新增的或旧参数已被移除。这是推测，并标明为推测。 | 它是否就是同一个参数。 |
 | `[type-checked]` | 由模型在 `since-cutoff run` 中写出，因为它的示例通过了下面的类型检查而被保留。 | 行为；这条说明的解释在它展示的名称之外是否也正确。 |
 | `[not confirmed]` | 仅在使用 `sync --suggestions` 时出现：锁定版本中与被移除内容相似的名称（这时说明条目的标签写作 `[diff; not confirmed]`）。 | 其中任何一个能替代它。 |
 
-标签可以组合：各项依据用 `+` 连接（`[diff + library]`），推测写在 `;` 之后（`[diff; probable rename]`、`[diff; not confirmed]`）。
+标签可以组合：各项依据用 `+` 连接（`[diff + library]`），依据之外的说明写在 `;` 之后：运行时警告（`[diff; warning]`）或推测（`[diff; probable rename]`、`[diff; not confirmed]`）。
 
 只是看起来相似的名称，默认从不写进说明。终端、report.md 和 MCP 工具把它们显示为“not confirmed as replacements”（未确认为替代项），当库表示没有替代项时则完全不显示；`sync --suggestions` 会加上它们，并标为 `[not confirmed]`。
 
@@ -576,7 +577,7 @@ AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明�
 ## 局限
 
 - 目前仅支持 Python。下一步是 TypeScript（`.d.ts` 对比、`tsc`）（[#1](https://github.com/MohammadHijjawi97/since-cutoff/issues/1)）。
-- 类型检查器能发现错误的名称、错误的参数和 PEP 702 弃用，但看不到签名不变而行为改变的情况，也看不到只在运行时发出警告的弃用。`scan` 还会列出用库自己的装饰器（名称包含 "deprecat"）声明的弃用，以及已被移除、但模块仍通过 `__getattr__` 提供并发出警告的名称；不过 `run` 不会探测这些弃用。
+- 类型检查器能发现错误的名称、错误的参数和 PEP 702 弃用，但看不到签名不变而行为改变的情况，也看不到只在运行时发出警告的弃用。`scan` 还会列出用库自己的装饰器（名称包含 "deprecat"）声明的弃用，已被移除、但模块仍通过 `__getattr__` 提供并发出警告的名称，以及公开函数、方法或属性用 `warnings.warn` 宣布的弃用（DeprecationWarning、PendingDeprecationWarning 或 FutureWarning，或包自己的类，从源码中读出：pandas 2.3.1 -> 3.0.6 从 0 个弃用变为 47 个）；不过 `run` 不会探测这些弃用。编译代码中的警告，以及类别在运行时才构造的警告，都看不到；消息无法静态读出的警告会被报告，但不引用消息。公开函数调用的私有函数（名称含 "deprecat" 或 "warn" 的辅助函数除外）、嵌套函数、描述符的 `__get__` 或类定义时发出的警告，以及没有类别的警告（UserWarning，即使文本提到弃用），也看不到。
 - 对比只覆盖公开 API：`_private` 名称，以及包内自带的测试、基准测试和示例，都会被跳过。
 - “Your code uses”（你的代码用到了）是逐个文件的静态匹配：导入（包括重新导出的名称）、调用、属性读取和关键字参数；方法调用的接收者会根据包自身的注解确定类型（`df = pd.read_csv(...)` 是一个 `DataFrame`；一个类连同它的基类一起计入，跨越你锁定的各个包）。它不追踪 `getattr` 这类动态访问，目前只指出文件，不指出行号（[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)）。在代码没有显示其类的值上读取的方法，可以只按名称计入：这个名称仅属于一个有变更的 API，既不是常见名称，也不是内置类型或标准库类型的成员。除非给出 `--include-name-matches`（通过 MCP 时为 `include_name_matches`），这种 `[name match]` 不会出现在任何报告、说明、`--fail-on` 和 `--annotate` 中，因为它们大多是另一个库中同名的方法。变为必需、仅限关键字或仅限位置的参数，目前总是显示为“uses this API”，从不显示为“old form”。
 - 只有当库自己的弃用说明明确给出替代项时，说明才会写出替代项。只出现在迁移指南里的建议（anthropic 的 [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md) 建议对仍接受 `temperature` 的旧模型使用 `extra_body`）不会出现在说明中。

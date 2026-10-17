@@ -3,7 +3,8 @@
 The diff answers one question: *which code that was correct for the old version is wrong for
 the new one?* So it reports removed objects and parameters, parameters that became required
 or keyword-only, objects that changed kind, and objects newly marked deprecated (PEP 702
-``@deprecated``, or a library's own decorator whose name contains "deprecat"). Cosmetic changes
+``@deprecated``, a library's own decorator whose name contains "deprecat", or a deprecation
+``warnings.warn`` in the body: _Differ._warning_deprecations). Cosmetic changes
 (defaults, attribute values, return annotations) are ignored.
 
 Only the public API is compared. Besides ``_private`` names, test suites, benchmarks and
@@ -22,6 +23,7 @@ from __future__ import annotations
 import ast
 import builtins
 import importlib
+import inspect
 import keyword
 import logging
 import re
@@ -35,7 +37,7 @@ from dataclasses import asdict, dataclass, field, replace
 from functools import cache
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from since_cutoff.cache import stable_hash
 
@@ -130,7 +132,17 @@ log = logging.getLogger(__name__)
 # a sibling (engine._star_imported: not one in a docstring, a function or an ``if
 # TYPE_CHECKING:`` block). The diff's cache key has the distributions read next to each release
 # (Engine._diff_key), which the cache keeps per release (Engine._siblings_key).
-DIFF_SCHEMA = 21
+# 22: a deprecation announced by a ``warnings.warn`` in a public function's or method's body
+# (issue #53: pandas 2.3.1 -> 3.0.6 had 0 deprecations; pandas warns in its methods), with a
+# DeprecationWarning, PendingDeprecationWarning, FutureWarning or a subclass the package defines
+# (pandas 3's ``Pandas4Warning``), called directly or through a helper of the package whose
+# name says "deprecat" or "warn" and that warns unconditionally (``_deprecate(msg)``), which the
+# release at the cutoff did not issue: ``deprecated_by`` "warnings.warn" and ``warning`` (when
+# it warns: at entry, the function or class is deprecated; under ``if p is not <default>``,
+# ``"p" in kwargs`` and the like, the parameter is; under another condition, the function is,
+# under that condition), the message read from a literal, an f-string's literal parts or a
+# constant of the module (_Differ._warning_deprecations).
+DIFF_SCHEMA = 22
 
 # Above this many removals in one package the release is a rewrite. Looking for similarly
 # named replacements (difflib over every owner's members) then costs minutes and adds little.
@@ -172,6 +184,21 @@ HINT_DOCSTRING = "docstring"  # a line of the old docstring that says "deprecate
 HINT_PARAM_DOC = "param_doc"  # the removed parameter's own entry in the old docstring
 HINT_WARNING = "warnings.warn"  # the old code's warnings.warn text when the parameter is passed
 
+# APIChange.warning["when"]: when the pinned release's ``warnings.warn`` that deprecates the API
+# is issued (_Differ._warning_deprecations).
+WARNS_ALWAYS = "always"  # at every call: the function (a class, for its __init__ or __new__)
+WARNS_PARAMETER = "parameter"  # when the caller passes the parameter (APIChange.parameter)
+# When the caller leaves the parameter out (APIChange.parameter): its default is deprecated, or
+# changes (``if n_init == "warn":``).
+WARNS_DEFAULT = "default"
+WARNS_CONDITION = "condition"  # under another condition, which ``warning["condition"]`` gives
+# When the name is read (a property, a name a module's ``__getattr__`` serves) or set (a
+# property's setter): ``warning["access"]`` says which.
+WARNS_ACCESS = "access"
+# The warning categories that announce a deprecation, and the module-level ``warn`` functions.
+_DEPRECATION_CATEGORIES = ("DeprecationWarning", "PendingDeprecationWarning", "FutureWarning")
+_WARN_FUNCTIONS = ("warnings.warn", "warnings.warn_explicit")
+
 KIND_PRIORITY = {
     DEPENDENCY_SWITCHED: 0,
     REMOVED: 0,
@@ -208,6 +235,8 @@ _NON_API_MODULES = {"benchmark", "benchmarks", "example", "examples"}
 _PLACEHOLDER_MODULE = re.compile(r"dummy_\w*objects")
 # Test helpers are API only directly under the top-level package (``pandas.testing``).
 _TEST_MODULES = {"test", "testing"}
+# A code generator's template, when the module generated from it is beside it (_is_template).
+_TEMPLATE_MODULE = re.compile(r"modular_(\w+)")
 _OWNER_NORMALIZE = re.compile(r"^(Async)|(With(Raw|Streaming)Response)$")
 # A module segment that holds an SDK's beta mirror of its API (``resources.beta``, ``v1beta1``).
 _BETA_SEGMENT = re.compile(r"(?:v\d+)?beta\d*")
@@ -376,6 +405,23 @@ class APIChange:
     # tools' ``include_internal``); results.json has both. None in a diff made before
     # DIFF_SCHEMA 21.
     tier: str | None = None
+    # DEPRECATED by a ``warnings.warn`` the pinned release's code issues and the release at the
+    # cutoff did not (``deprecated_by`` is "warnings.warn"; DIFF_SCHEMA 22): ``{"when":
+    # WARNS_ALWAYS | WARNS_PARAMETER | WARNS_DEFAULT | WARNS_CONDITION | WARNS_ACCESS,
+    # "category": "FutureWarning", "at": "pandas/core/frame.py:6950"}``. ``"access"`` ("read",
+    # "set", "delete") for WARNS_ACCESS. ``"condition"`` when it is issued in some of those
+    # calls only (always for WARNS_CONDITION): the tests it is issued under besides the one that
+    # says the parameter is passed or left out, joined with ``and``, as code, at most 120
+    # characters; None when they cannot be quoted (a loop, an ``except``, longer); with
+    # ``"readable": True`` when they read nothing but the function's parameters (the notes and
+    # describe() quote them then). ``"behavior": True`` when the message says a result or a
+    # default changes, not that the API goes ("The behavior of ... is deprecated, in a future
+    # version this will return a Series"): a call of it is "uses this API". ``"also"``: the
+    # other warnings of the same API and parameter (each a dict like this one, without
+    # ``also``), whose messages ``deprecation`` gives too. A deprecated name a module's
+    # ``__getattr__`` serves (deprecated_by "__getattr__") has one too (WARNS_ACCESS, "read").
+    # A type checker sees none of them: the call warns at run time. None for every other change.
+    warning: dict[str, Any] | None = None
 
     @property
     def id(self) -> str:
@@ -513,6 +559,8 @@ class APIChange:
         if self.kind == DEPRECATED:
             meaningful = self.deprecation and self.deprecation.strip(" .").lower() != "deprecated"
             extra = f": {self.deprecation}" if meaningful else ""
+            if self.warning:
+                return self._describe_warning(path, call, pkg, extra)
             if self.parameter:
                 return f"`{call}`: parameter `{self.parameter}` is deprecated{pkg}{extra}"
             if self.call_form_only:
@@ -525,6 +573,43 @@ class APIChange:
                 return f"`{path}`: one call form (an overload) is deprecated{pkg}{extra}"
             return f"`{path}` is deprecated{pkg}{extra}"
         return f"`{path}` changed{pkg}"
+
+    def _describe_warning(self, path: str, call: str, pkg: str, extra: str) -> str:
+        """DEPRECATED by a ``warnings.warn`` (APIChange.warning): ``` `pkg.f(x)`: parameter `x`
+        is deprecated, with a FutureWarning at run time (pkg 2): ...```. A condition is quoted
+        only when it reads nothing but the function's parameters (``warning["readable"]``):
+        the library's other names mean nothing to the reader."""
+        w = self.warning or {}
+        category = w.get("category") or "warning"
+        runtime = f", with {_a(category)} {category} at run time"
+        when = w.get("when")
+        condition = w.get("condition") if w.get("readable") else None
+        some = f" when `{condition}`" if condition else " in some calls"
+        partial = "condition" in w
+        behavior = bool(w.get("behavior"))
+        p = self.parameter
+        if when == WARNS_DEFAULT and p:
+            changes = "will change" if behavior else "is deprecated"
+            only = some if partial else ""
+            return (
+                f"`{call}`: the default of `{p}` {changes}{only}, with {_a(category)} {category} "
+                f"at run time when it is left out{pkg}{extra}"
+            )
+        if p:
+            what = (
+                f"passing `{p}` will change behavior"
+                if behavior
+                else f"parameter `{p}` is deprecated"
+            )
+            return f"`{call}`: {what}{some if partial else ''}{runtime}{pkg}{extra}"
+        verb = "will change behavior" if behavior else "is deprecated"
+        if when == WARNS_ACCESS:
+            access = {"set": "setting ", "delete": "deleting "}.get(str(w.get("access")), "")
+            only = (some if condition else " in some cases") if partial else ""
+            return f"{access}`{path}` {verb}{only}{runtime}{pkg}{extra}"
+        if when == WARNS_CONDITION:
+            return f"`{path}` {verb}{some}{runtime}{pkg}{extra}"
+        return f"`{path}` {verb}{runtime}{pkg}{extra}"
 
     def _describe_switch(self, versioned: bool) -> str:
         """DEPENDENCY_SWITCHED: ``openai 3.19.2 requires `httpx2` instead of `httpx```; for
@@ -561,6 +646,12 @@ def is_beta_segment(segment: str) -> bool:
     """A module (or attribute) name that holds an SDK's beta mirror of its API: ``beta``,
     ``v1beta1``."""
     return _BETA_SEGMENT.fullmatch(segment) is not None
+
+
+def _a(word: str) -> str:
+    """The article for a warning category's name: ``a FutureWarning``, ``an
+    ArrowDeprecationWarning``."""
+    return "an" if word[:1].lower() in "aeiou" else "a"
 
 
 def _argument(parameter: str | None) -> str:
@@ -1029,8 +1120,10 @@ class _Differ:
         # The names in the ``__all__`` of the modules below a module (see _listed_below).
         self._exported_below: dict[int, set[str]] = {}
         self._lost_bases: dict[str, bool] = {}
-        # Removed inherited members, by the member they were inherited from.
+        # Removed inherited members, by the member they were inherited from; those of a
+        # code generator's template (_in_template), which fold but are never shown.
         self._inherited: dict[str, list[Any]] = {}
+        self._from_templates: set[int] = set()
         self._sources: dict[int, _Source] = {}
         # The parsed __getattr__ of the lazy module each module swaps in (see _served_lazily).
         self._lazy_hooks: dict[int, tuple[Any, ast.AST] | None] = {}
@@ -1046,6 +1139,9 @@ class _Differ:
         # The target of each re-export the new release put where the old one defined an object,
         # by the target's path, to the old object's path (see _realiased, _reexported_as).
         self._realiased_paths: dict[str, str] = {}
+        # Where the new release serves a removed name with a warning: the module and the code
+        # (see _served, _served_warning).
+        self._served_scopes: dict[str, tuple[Any, ast.AST]] = {}
         self.fuzzy = True
 
     def run(self) -> list[APIChange]:
@@ -1076,6 +1172,10 @@ class _Differ:
             out.extend(self._deprecations())
         except Exception as exc:
             log.debug("deprecation scan failed for %s: %s", self.package, exc)
+        try:
+            out.extend(self._warning_deprecations(out))
+        except Exception as exc:
+            log.debug("warnings.warn scan failed for %s: %s", self.package, exc)
         self.unread |= self._compiled_since()
         return out
 
@@ -1387,6 +1487,18 @@ class _Differ:
                 self.unread.add(owner)
                 return None
         via = None  # the public path a change to a private class's method is reported under
+        if (
+            kind == "OBJECT_REMOVED"
+            and getattr(obj, "inherited", False)
+            and self._in_template(str(obj.path))
+            and getattr(obj, "parent", None) is not None
+            and not self.lost_bases(obj.parent.path)
+        ):
+            # A template's class (transformers' modular_*.py) is no API, but what it lost
+            # from a public base may be reported nowhere else: folded, never shown.
+            self._inherited.setdefault(_origin(obj), []).append(obj)
+            self._from_templates.add(id(obj))
+            return None
         if not self.is_public(obj.path, module=_kind_of(obj) == "module"):
             if not kind.startswith("PARAMETER_"):
                 return None
@@ -1418,6 +1530,7 @@ class _Differ:
                     old_obj=obj,
                     deprecation=warning or None,
                     deprecated_by="__getattr__",
+                    warning=self._served_warning(obj),
                     old_signature=signature_of(obj),
                     old_doc=doc_summary(obj),
                 )
@@ -1852,7 +1965,15 @@ class _Differ:
         """
         own = {c.path: c for c in changes if c.kind in (REMOVED, MOVED)}
         extra: list[APIChange] = []
-        for origin, objs in self._inherited.items():
+        for origin, every in self._inherited.items():
+            objs = [o for o in every if id(o) not in self._from_templates]
+            if not objs:  # only templates inherited it: the public base's own removal
+                base_member = self._removed_from_base(origin)
+                if base_member is None or self._maybe_inherited(base_member):
+                    continue
+                if (self.public_path(origin) or origin) not in own:
+                    extra.append(self._removal(base_member))
+                continue
             by_path = {self.public_path(o.path) or o.path: o for o in objs}
             paths = sorted(by_path, key=lambda p: (len(p), p))
             rep = own.get(self.public_path(origin) or origin)
@@ -1932,6 +2053,284 @@ class _Differ:
                 )
                 change.library_names = self.library_names(change, obj if parameter else None)
                 yield change
+
+    def _warning_deprecations(self, found: list[APIChange]) -> Iterator[APIChange]:
+        """Deprecations a public function, method or property announces with
+        ``warnings.warn`` in its body in the pinned release, and did not in the release at the
+        cutoff (issue #53): pandas 3's ``DataFrame.set_index`` warns ``"The 'verify_integrity'
+        keyword in DataFrame.set_index is deprecated ..."`` with a ``Pandas4Warning`` when it is
+        passed.
+
+        Read statically (:class:`_WarnReader`): nothing is imported or run. A warning issued
+        at every call deprecates the function, or the class for its ``__init__`` or
+        ``__new__``; one issued only when the caller passes a parameter (``if p is not
+        <default>:``, ``if "p" in kwargs:``, ``self.p != "deprecated"`` for a constructor's)
+        deprecates the parameter, of the constructor for ``self.p``; one issued only while
+        the caller leaves a parameter out deprecates its default (WARNS_DEFAULT); one under
+        another condition deprecates the function under that condition; a property's getter
+        or setter, and a module's ``__getattr__`` for a name it serves, warn when the name is
+        read or set (WARNS_ACCESS). An API already deprecated in the release at the cutoff (a
+        warning at every call, PEP 702, the library's decorator), a warning that release
+        issued already (:meth:`_Issuance.covers`), a parameter it did not take and a change ``found``
+        has (a decorator's deprecation, a removed parameter the code still reads) are left
+        out. The warnings of one API and parameter are one change, which keeps each one's
+        message and when it is issued (APIChange.warning["also"])."""
+        known = {(c.path, c.parameter) for c in found if c.kind in (DEPRECATED, PARAM_REMOVED)}
+        new = _WarnReader(self.new, self._source)
+        old = _WarnReader(self.old, self._source)
+        groups: dict[tuple[str, str | None], list[_Candidate]] = {}
+        for obj, _public in iter_public_objects(self.new, test_methods=True):
+            try:
+                candidates = list(self._warned(obj, new, old))
+            except Exception as exc:
+                log.debug("cannot read the warnings of %s: %s", obj.path, exc)
+                continue
+            for c in candidates:
+                groups.setdefault((c.path, c.warned.parameter), []).append(c)
+        try:
+            served = list(self._getattr_warned(new, old))
+        except Exception as exc:
+            log.debug("cannot read the __getattr__ warnings of %s: %s", self.package, exc)
+            served = []
+        for c in served:
+            groups.setdefault((c.path, None), []).append(c)
+        for (path, parameter), candidates in groups.items():
+            if (path, parameter) in known or (path, None) in known:
+                continue  # deprecated by a decorator, or already reported
+            try:
+                yield self._warned_change(candidates)
+            except Exception as exc:
+                log.debug("cannot report the warnings of %s: %s", path, exc)
+
+    def _warned(self, obj: Any, new: _WarnReader, old: _WarnReader) -> Iterator[_Candidate]:
+        """The warnings :meth:`_warning_deprecations` reports for one public function, method,
+        property or class (its ``__new__``)."""
+        readers: list[tuple[Any, str | None]] = []  # a function, and the access it is for
+        if "property" in _labels(obj):  # griffe loads one as an attribute with the label
+            readers.append((obj, "read"))
+            for done, attr in (("set", "setter"), ("delete", "deleter")):
+                fn = getattr(obj, attr, None)
+                if getattr(fn, "is_function", False):
+                    readers.append((fn, done))
+        elif getattr(obj, "is_function", False):
+            readers.append((obj, None))
+        elif getattr(obj, "is_class", False):
+            ctor = obj.members.get("__new__")
+            if getattr(ctor, "is_function", False) and not getattr(ctor, "is_alias", False):
+                readers.append((ctor, None))
+        if not readers or _deprecated_whole(obj):
+            return
+        old_obj = self._old_counterpart(obj)
+        if old_obj is None or _deprecated_whole(old_obj):
+            return  # a new API (the model cannot know it), or deprecated before
+        for fn, access in readers:
+            warned = new.deprecations(fn)
+            if not warned:
+                continue
+            old_fn, same_kind = self._old_function(obj, old_obj, fn, access, old)
+            before = old.deprecations(old_fn, every=True) if old_fn is not None else []
+            if access is not None:
+                before = [_as_access(w, access) for w in before]
+            if any(
+                w.deprecation and w.when in (WARNS_ALWAYS, WARNS_ACCESS) and not w.conditional
+                for w in before
+            ):
+                continue  # deprecated as a whole already
+            issued = _Issuance.of(before, old_fn, old)
+            old_params = _parameter_names(old_fn) if old_fn is not None else set()
+            old_kwargs = _accepts_var_keyword(old_fn) if old_fn is not None else False
+            for w in warned:
+                if access is not None:
+                    w = _as_access(w, access)
+                if issued.covers(w, str(getattr(fn, "name", ""))):
+                    continue  # the release at the cutoff warned already
+                if not same_kind and w.when != WARNS_ALWAYS:
+                    continue  # the name was another kind of object: only a deprecation of it
+                candidate = self._candidate(obj, old_obj, fn, w, old_params, old_kwargs)
+                if candidate is not None:
+                    yield candidate
+
+    def _candidate(
+        self,
+        obj: Any,
+        old_obj: Any,
+        fn: Any,
+        w: _Warned,
+        old_params: set[str],
+        old_kwargs: bool,
+    ) -> _Candidate | None:
+        """What a warning of ``fn`` (``obj``'s, or its ``__new__``) deprecates: the function,
+        its class (a constructor that warns at every call), a parameter of its own or of the
+        class's constructor (``self.p``); None for a parameter the release at the cutoff did
+        not take. A default warns calls that leave the parameter out, which code written then
+        does, though the parameter is new (statsmodels 0.15's ``result_object``)."""
+        target, old_target = obj, old_obj
+        parent, old_parent = getattr(fn, "parent", None), getattr(old_obj, "parent", None)
+        dunder_new = fn is not obj and getattr(obj, "is_class", False)  # the class's __new__
+        if dunder_new:
+            parent, old_parent = obj, old_obj
+        if w.on_init:
+            target = _member(parent, "__init__") if getattr(parent, "is_class", False) else None
+            old_target = (
+                _member(old_parent, "__init__") if getattr(old_parent, "is_class", False) else None
+            )
+            if target is None or old_target is None:
+                return None
+            old_params = _parameter_names(old_target)
+            old_kwargs = _accepts_var_keyword(old_target)
+        if (
+            w.parameter is not None
+            and w.when != WARNS_DEFAULT
+            and w.parameter not in old_params
+            and not (w.from_kwargs and old_kwargs)
+        ):
+            return None  # never accepted by the release at the cutoff
+        constructor = (
+            fn.name in ("__init__", "__new__")
+            and getattr(parent, "is_class", False)
+            and getattr(old_parent, "is_class", False)
+        )
+        if w.when == WARNS_ALWAYS and constructor:
+            if _deprecated_whole(parent) or _deprecated_whole(old_parent):
+                return None
+            target, old_target = parent, old_parent  # the class is deprecated
+        elif dunder_new:
+            return None  # a __new__ that warns in some calls only: not read
+        path = self.public_path(target.path) or target.path
+        return _Candidate(path, target, old_target, fn if not w.on_init else target, w)
+
+    def _old_counterpart(self, obj: Any) -> Any:
+        """The release at the cutoff's object for ``obj``: at its path, else at its public
+        path or another path it is reached by (statsmodels 0.15 moved ``seasonal_decompose``
+        into ``tsa/seasonal/_seasonal.py`` and re-exports it where it was); None when there is
+        none."""
+        found = _get(self.old, _rel(obj.path, self.old.path))
+        if found is not None:
+            return found
+        paths = [self.public_path(obj.path), *self.paths_in(self.new, obj)]
+        for path in dict.fromkeys(p for p in paths if p):
+            found = find_object(self.old, path)
+            if found is not None:
+                return found
+        return None
+
+    def _old_function(
+        self, obj: Any, old_obj: Any, fn: Any, access: str | None, old: _WarnReader
+    ) -> tuple[Any, bool]:
+        """The release at the cutoff's function to compare ``fn`` (``obj``'s, or its getter,
+        setter or ``__new__``) with, and whether ``old_obj`` is the same kind of object. An
+        alias the old release bound (``graph_could_be_isomorphic = could_be_isomorphic`` in
+        networkx 3.4) is the function it names, and another kind of object: only a warning at
+        every call deprecates it."""
+        if access is not None:
+            if "property" not in _labels(old_obj):
+                return None, False
+            if access == "read":
+                return old_obj, True
+            other = getattr(old_obj, "setter" if access == "set" else "deleter", None)
+            return (other if getattr(other, "is_function", False) else None), True
+        if fn is not obj and getattr(obj, "is_class", False):  # __new__
+            if not getattr(old_obj, "is_class", False):
+                return None, False
+            other = old_obj.members.get("__new__")
+            return (other if getattr(other, "is_function", False) else None), True
+        if getattr(old_obj, "is_function", False):
+            return old_obj, True
+        if getattr(old_obj, "is_attribute", False):
+            value = getattr(old_obj, "value", None)
+            parent = getattr(old_obj, "parent", None)
+            if value is not None and getattr(parent, "is_module", False):
+                named = old.resolve(parent, str(value))
+                if getattr(named, "is_function", False):
+                    return named, False
+        return None, False
+
+    def _warned_change(self, candidates: list[_Candidate]) -> APIChange:
+        """The change for the warnings of one API and parameter: the first by
+        :func:`_warned_order` says when, the others are ``also`` (each when it is issued),
+        and the message is each one's, in that order."""
+        ordered = sorted(candidates, key=lambda c: _warned_order(c.warned))
+        main = ordered[0]
+        w = main.warned
+        messages = list(dict.fromkeys(c.warned.message for c in ordered if c.warned.message))
+        text = " ".join(messages)
+        evidence = w.evidence()
+        also = []
+        for c in ordered[1:]:
+            more = c.warned.evidence()
+            if more != evidence and more not in also:
+                also.append(more)
+        if also:
+            evidence["also"] = also[:4]
+        target, old_target = main.target, main.old_target
+        change = self._change(
+            DEPRECATED,
+            target,
+            old_obj=old_target,
+            new_obj=target,
+            path=main.path if main.path != (self.public_path(target.path) or target.path) else None,
+            parameter=w.parameter,
+            deprecation=text[: 300 * len(messages)] or None,
+            deprecation_file=_file_of(target) if text else None,
+            deprecated_by=HINT_WARNING,
+            warning=evidence,
+            old_signature=signature_of(old_target),
+            new_signature=signature_of(target),
+            old_doc=doc_summary(old_target),
+            new_doc=doc_summary(target),
+        )
+        if isinstance(target, _ServedName):  # a name a module's __getattr__ serves
+            module, old_module = target.parent, getattr(old_target, "parent", None)
+            paths = [*self.paths_in(self.old, old_module), *self.paths_in(self.new, module)]
+            change.import_paths = _ordered([change.path, *(f"{p}.{target.name}" for p in paths)])
+            change.tier = self.tier_of(old_module, module)
+        itself = {change.path, *(change.import_paths or ())}
+        change.library_names = [  # "... in DataFrame.set_index is deprecated" names itself
+            n
+            for n in self.library_names(change, main.fn if w.parameter else None)
+            if n not in itself
+        ]
+        return change
+
+    def _getattr_warned(self, new: _WarnReader, old: _WarnReader) -> Iterator[_Candidate]:
+        """Names a public module's ``__getattr__`` (PEP 562) serves in both releases and
+        warns of in the pinned one only: ``if name == "Old": warnings.warn("Old is
+        deprecated, use New", DeprecationWarning); return New``, or a table it looks the name
+        up in. A name the release at the cutoff defined itself is the removal path's
+        (:meth:`_served`)."""
+        for module in _walk_modules(self.new):
+            path = str(module.path)
+            if _has_private_segment(path) or _non_api_path(path, module=True):
+                continue
+            hook = module.members.get("__getattr__")
+            if not getattr(hook, "is_function", False) or getattr(hook, "is_alias", False):
+                continue
+            warned = _getattr_warnings(new, hook, self._source(module).tree)
+            if not warned:
+                continue
+            old_module = _get(self.old, _rel(path, self.old.path))
+            if not getattr(old_module, "is_module", False):
+                continue
+            old_hook = old_module.members.get("__getattr__")
+            old_tree = self._source(old_module).tree
+            before: dict[str, list[_Warned]] = {}
+            served: set[str] = set()
+            if getattr(old_hook, "is_function", False) and not getattr(old_hook, "is_alias", False):
+                before = _getattr_warnings(old, old_hook, old_tree, every=True)
+                served = _getattr_names(old_hook, old_tree)
+            for name, warnings_of in warned.items():
+                if name in old_module.members or name not in served:
+                    continue  # the old release's own name, or a new one
+                if any(w.deprecation for w in before.get(name, ())):
+                    continue
+                for w in warnings_of:
+                    yield _Candidate(
+                        f"{self.public_path(path) or path}.{name}",
+                        _ServedName(name, module),
+                        _ServedName(name, old_module),
+                        None,
+                        _as_access(w, "read"),
+                    )
 
     # ------------------------------------------- what a static reading misses
     def _not_removed(self, obj: Any) -> bool:
@@ -2228,10 +2627,35 @@ class _Differ:
             scope = _branch(node, obj.name)
             warning = _warning_text(scope, obj.name)
             if warning:
+                self._served_scopes[str(obj.path)] = (module, scope)
                 return True, warning
             if found is None:  # keep looking for a message: the hook may name it elsewhere
                 found = (True, "" if "deprecat" in ast.unparse(scope).lower() else None)
+                if found[1] is not None:
+                    self._served_scopes[str(obj.path)] = (module, scope)
         return found or self._served_lazily(obj, module, statements)
+
+    def _served_warning(self, obj: Any) -> dict[str, Any]:
+        """APIChange.warning of a removed name the new release still serves with a warning
+        (:meth:`_served`): issued when the name is read (WARNS_ACCESS), with the category and
+        the line of the code that serves it, when they can be read ("" and None else)."""
+        module, scope = self._served_scopes.get(str(obj.path), (None, None))
+        category, at = "", None
+        if scope is not None:
+            for node in ast.walk(scope):
+                if not isinstance(node, ast.Call) or not _HELPER_NAME.search(_name(node.func)):
+                    continue
+                kind = node.args[1] if len(node.args) > 1 else None
+                kind = next((k.value for k in node.keywords if k.arg == "category"), kind)
+                if kind is None and node.args and isinstance(node.args[0], ast.Call):
+                    kind = node.args[0].func
+                name = _name(kind) if kind is not None else ""
+                if name.endswith("Warning"):
+                    category = name
+                    break
+            file = _source_file(module) if module is not None else None
+            at = f"{file}:{scope.lineno}" if file and hasattr(scope, "lineno") else None
+        return {"when": WARNS_ACCESS, "category": category, "at": at, "access": "read"}
 
     def _served_lazily(
         self, obj: Any, module: Any, statements: list[ast.stmt]
@@ -2272,6 +2696,7 @@ class _Differ:
                 ):
                     if "deprecat" not in ast.unparse(guard).lower():
                         return True, None
+                    self._served_scopes[str(obj.path)] = (None, guard)
                     return True, _warning_text(guard, obj.name)
         return False, None
 
@@ -2345,6 +2770,7 @@ class _Differ:
                 return True, None
             if "deprecat" not in ast.unparse(tree).lower():
                 return True, None
+            self._served_scopes[str(obj.path)] = (None, tree)
             return True, _warning_text(tree, obj.name)
         return False, None
 
@@ -2491,10 +2917,22 @@ class _Differ:
         return None
 
     def is_public(self, path: str, *, module: bool = False) -> bool:
-        if any(_skipped_segment(p) for p in path.split(".")):
+        if any(_skipped_segment(p) for p in path.split(".")) or self._in_template(path):
             return False
         public = self.public_path(path)
         return public is not None and not _non_api_path(public, module=module)
+
+    def _in_template(self, path: str) -> bool:
+        """Is ``path`` in a code generator's template (:func:`_is_template`: transformers'
+        ``modular_*.py``), in either release?"""
+        parts = path.split(".")
+        for i, part in enumerate(parts[1:], start=2):
+            if _TEMPLATE_MODULE.fullmatch(part):
+                prefix = ".".join(parts[:i])
+                found = self.new_object(prefix) or _get(self.old, _rel(prefix, self.old.path))
+                if getattr(found, "is_module", False) and _is_template(found):
+                    return True
+        return False
 
     # ------------------------------------------------------------- lookups
     def new_object(self, path: str | None) -> Any:
@@ -3065,6 +3503,19 @@ def _non_api_path(path: str, *, module: bool = False) -> bool:
     return False
 
 
+def _is_template(module: Any) -> bool:
+    """Is this module a code generator's template, next to the module generated from it
+    (transformers' ``models/bert/modular_bert.py`` beside ``modeling_bert.py``, whose header
+    says it is generated from it)? Nothing imports a template: it is no API."""
+    found = _TEMPLATE_MODULE.fullmatch(str(getattr(module, "name", "")))
+    if found is None:
+        return False
+    try:
+        return f"modeling_{found.group(1)}" in module.parent.members
+    except Exception:
+        return False
+
+
 def _has_private_segment(path: str) -> bool:
     return any(_private(p) for p in path.split(".")[1:])
 
@@ -3276,10 +3727,20 @@ def _function_def(fn: Any) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
 
 
 def _parsed(obj: Any) -> ast.stmt | None:
+    """The parsed ``def`` or ``class`` statement of a griffe object, or None. A source whose
+    docstring has a line less indented than the statement (matplotlib 3.10's ``Axes.bxp``)
+    cannot be dedented as a whole: it is parsed as the body of an ``if``, which a string's
+    lines do not need to line up with."""
     try:
-        source = textwrap.dedent(obj.source or "")
+        raw = obj.source or ""
         with _quiet():
-            body = ast.parse(source).body
+            try:
+                body = ast.parse(textwrap.dedent(raw)).body
+            except SyntaxError:
+                if not raw[:1].isspace():
+                    return None
+                wrapped = ast.increment_lineno(ast.parse("if True:\n" + raw).body[0], -1)
+                body = wrapped.body if isinstance(wrapped, ast.If) else []
     except Exception:
         return None
     return next((n for n in body if isinstance(n, (ast.ClassDef, *_FUNCTIONS))), None)
@@ -3810,14 +4271,17 @@ def _pair_breakages(old: Any, new: Any) -> list[Any]:
     return list(griffe.find_breaking_changes(*holders))
 
 
-def iter_public_objects(root: Any) -> Iterator[tuple[Any, str]]:
+def iter_public_objects(root: Any, *, test_methods: bool = False) -> Iterator[tuple[Any, str]]:
     """Publicly reachable objects of a loaded package, as ``(object, public_path)`` pairs.
 
     Objects defined in public modules are yielded under their own path or a shorter re-export
     (``pkg.Session`` for ``pkg.sessions.Session``); objects defined in private modules under the
     shortest public path that re-exports them (``pkg.Client`` for ``pkg._client.Client``). A plain
     import (``from pkg.protocol import X`` in ``pkg.server``) is a path only to an object of a
-    private module that nothing re-exports. Each object is yielded once.
+    private module that nothing re-exports. Each object is yielded once. A code generator's
+    template (:func:`_is_template`) is no API. With ``test_methods``, a class's methods named
+    like tests (statsmodels' ``DescStatUV.test_mean``, ``OLSResults.el_test``) are yielded
+    too: only modules and module-level names are test code by their name.
     """
     package = root.path.split(".")[0]
     seen: set[str] = set()
@@ -3837,8 +4301,11 @@ def iter_public_objects(root: Any) -> Iterator[tuple[Any, str]]:
             members = list(container.members.values())
         except Exception:
             continue
+        in_class = test_methods and getattr(container, "is_class", False)
         for member in members:
-            if _private(member.name) or _skipped_segment(member.name):
+            if _private(member.name):
+                continue
+            if member.name in _SKIP_SEGMENTS if in_class else _skipped_segment(member.name):
                 continue
             target = member
             path = f"{public}.{member.name}"
@@ -3855,7 +4322,9 @@ def iter_public_objects(root: Any) -> Iterator[tuple[Any, str]]:
                     continue  # an import: the object is reached where it is defined
             if target.path in seen:
                 continue
-            if getattr(target, "is_module", False) and _non_api_path(path, module=True):
+            if getattr(target, "is_module", False) and (
+                _non_api_path(path, module=True) or _is_template(target)
+            ):
                 continue
             seen.add(target.path)
             yield target, path
@@ -3902,7 +4371,7 @@ def path_index(root: Any) -> dict[str, list[str]]:
                     continue
             path = f"{public}.{name}"
             is_module = getattr(target, "is_module", False)
-            if is_module and _non_api_path(path, module=True):
+            if is_module and (_non_api_path(path, module=True) or _is_template(target)):
                 continue
             paths = index.setdefault(str(target.path), [])
             if path in paths or len(paths) >= _MAX_PATHS:
@@ -4608,7 +5077,9 @@ def decorator_deprecations(obj: Any) -> list[tuple[str | None, str, str]]:
         if not _is_parameter_decorator(name):
             out.append((None, _decorator_message(name, args, kwargs), name))
             continue
-        strings = [a if isinstance(a, str) else None for a in args]
+        # The names are the string arguments: pandas 3's deprecate_kwarg(Pandas4Warning,
+        # "method", new_arg_name=None) passes the warning's category before them.
+        strings = [a for a in args if isinstance(a, str)]
         old = next((kwargs[k] for k in _OLD_NAME_KEYS if isinstance(kwargs.get(k), str)), None)
         new = next((kwargs[k] for k in _NEW_NAME_KEYS if isinstance(kwargs.get(k), str)), None)
         old = old or (strings[0] if strings else None)
@@ -4833,24 +5304,2165 @@ def _warn_messages(tree: ast.AST) -> Iterator[str]:
         yield " ".join(_message(message).split())
 
 
-def _message(node: ast.AST) -> str:
-    """The text of a message expression: a string, an f-string (its values as "..."), strings
-    joined with ``+``, or the template of ``"...".format(...)`` or ``"..." % x``."""
+def _message(node: ast.AST, value: str = "...") -> str:
+    """The text of a message expression: a string, an f-string (its values as ``value``),
+    strings joined with ``+``, or the template of ``"...".format(...)`` or ``"..." % x``."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.JoinedStr):
-        return "".join(str(v.value) if isinstance(v, ast.Constant) else "..." for v in node.values)
+        return "".join(str(v.value) if isinstance(v, ast.Constant) else value for v in node.values)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _message(node.left) + _message(node.right)
+        return _message(node.left, value) + _message(node.right, value)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
-        return _message(node.left)
+        return _message(node.left, value)
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "format"
     ):
-        return _message(node.func.value)
+        return _message(node.func.value, value)
     return ""
+
+
+# ------------------------------------------- deprecations announced with warnings.warn
+# A function whose source has neither word issues no warning (a quick test before parsing it).
+_MAY_WARN = re.compile(r"warn|deprecat", re.IGNORECASE)
+# A helper that warns for its callers (``_deprecate(msg)``, ``warn_deprecated(...)``): a
+# function of the package whose name says so, and that warns at every call. A flag of a
+# function whose name says so (``deprecated=False``) asks it to warn: a warning only when the
+# caller sets it is opt-in (statsmodels' internal ``check_random_state``), not a deprecation.
+_HELPER_NAME = re.compile(r"deprecat|warn", re.IGNORECASE)
+# A string default that stands for "not passed" (scikit-learn's ``n_init="warn"`` and
+# ``y_pred="deprecated"``): a caller that gives anything else passes the parameter.
+_SENTINEL_STRING = re.compile(r"deprecated?|warn|default|no_?default|unset|<[^<>]*>", re.I)
+# The parameter of a helper its message comes from when the helper builds the message from
+# several (matplotlib's ``warning = _generate_deprecation_warning(since, message, name, ...)``).
+_MESSAGE_PARAMETER = re.compile(r"msg|message|text|warning|reason", re.IGNORECASE)
+# What a warning's message shows for a value an f-string or a format puts in it ("Passing {...}
+# to {...}.join is deprecated"): not "...", which reads as the end of a sentence.
+_VALUE = "{...}"
+# The longest condition APIChange.warning["condition"] quotes.
+_CONDITION_LIMIT = 120
+# A condition a warning is issued under (:func:`_calls_under`): the ``if`` test (or the left
+# operand of an ``and``/``or``, the test of ``x if c else y``) and the branch (False for its
+# ``else``), or ``(None, True)`` for a loop, a comprehension, an ``except`` or a ``match`` case.
+_Condition = tuple[ast.expr | None, bool]
+
+
+class _Guard(tuple):  # type: ignore[type-arg]
+    """A :data:`_Condition` that an ``if <test>: return`` at the top of a function puts
+    what follows it under (:func:`_calls_under`)."""
+
+    __slots__ = ()
+
+
+# A message that says a result or a default will change rather than that the API goes away
+# (pandas 3's "The behavior of X.to_pytimedelta is deprecated, in a future version this will
+# return a Series", scikit-learn's "The default value of `n_init` will change from 4 to 1"):
+# the function is not deprecated, the behaviour is (APIChange.warning["behavior"]). It says so
+# in words (:data:`_BEHAVIOR`) and does not say the API is deprecated or goes (_DEPRECATES),
+# unless it names the behaviour or the default; or it is a FutureWarning that says neither.
+_BEHAVIOR = re.compile(
+    r"\bbehaviou?r\b"
+    r"|\bdefault\b[^.]*\b(?:will|is going to|is changing|is switching)\b"
+    r"|\bin (?:a |the )?future(?: versions?| releases?)?(?: of \w+)?,?\s+(?:\S+\s+){0,10}?"
+    r"will\s+(?!raise|be\s+removed|stop|no\s+longer|not\b|error|fail)"
+    r"|\b(?:beginning|starting) (?:in|with|from)\b[^.]*\bwill\s+"
+    r"(?!raise|be\s+removed|stop|no\s+longer|not\b|error|fail)"
+    r"|\bwill (?:return|change|become|switch|now)\b|\bis (?:changing|switching) to\b",
+    re.IGNORECASE,
+)
+_DEPRECATES = re.compile(
+    r"deprecat|\bremov|\bwill (?:raise|error|fail|stop)\b|\braise an? \w*(?:error|exception)"
+    r"|\b(?:error|exception) will be raised|\bno longer\b|\bnot be (?:supported|allowed|accepted)"
+    r"|\bunsupported\b|\brenamed\b|\bdisallow",
+    re.IGNORECASE,
+)
+_BEHAVIOR_WORD = re.compile(r"\bbehaviou?r\b|\bdefault\b", re.IGNORECASE)
+# What the text of a warning of another category says when it announces a deprecation all the
+# same: scikit-learn 1.6 warned "The `cv='prefit'` option is deprecated in 1.6 ..." as a
+# UserWarning, and 1.7 as a FutureWarning (no new deprecation).
+_DEPRECATION_TEXT = re.compile(
+    r"deprecat|will be removed|removed in|will raise|in the future|future versions?|no longer",
+    re.IGNORECASE,
+)
+# A version in a message ("will be removed in 3.0", "in version 4", "v5.19"), which two releases'
+# texts of the same warning may differ in.
+_VERSION_TOKEN = re.compile(r"\bv?\d+(?:\.\d+)+\w*|\b(?:version|release|v)\s*\d+\b", re.IGNORECASE)
+# The words a message names a parameter with: "the 'copy' keyword", "the inv argument".
+_PARAMETER_NOUNS = r"(?:keyword|parameter|argument|kwarg|option)s?"
+# The builtin types an ``isinstance`` test is evaluated with (:func:`_evaluate`).
+_TYPES: dict[str, type] = {
+    t.__name__: t
+    for t in (str, int, float, bool, complex, bytes, list, tuple, dict, set, frozenset, type)
+}
+_TYPES["object"] = object
+# A printf-style placeholder (``%s``, ``%(name)s``, ``%%``).
+_PRINTF = re.compile(
+    r"%(?:\((\w+)\))?[-#0 +]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[hlL]?([diouxXeEfFgGcrsa%])"
+)
+
+
+@dataclass
+class _Warned:
+    """One deprecation warning a function issues (:meth:`_WarnReader.deprecations`)."""
+
+    when: str  # WARNS_*
+    category: str  # as the code names it: "FutureWarning", "Pandas4Warning"
+    message: str  # on one line; "" when it cannot be read statically
+    at: str | None  # "pandas/core/frame.py:6950"
+    parameter: str | None = None  # WARNS_PARAMETER, WARNS_DEFAULT
+    # The tests it is issued under, as code: for WARNS_CONDITION all of them; for a parameter
+    # those besides the one that says it is passed (or left out). None when there is none to
+    # quote: a loop, an ``except``, a ``return`` in a block before it, or longer than
+    # _CONDITION_LIMIT.
+    condition: str | None = None
+    from_kwargs: bool = False  # the parameter is a key of ``**kwargs`` ("p" in kwargs)
+    # Issued only in some of the calls ``when`` says (WARNS_CONDITION always is).
+    conditional: bool = False
+    readable: bool = False  # the condition reads nothing but the function's parameters
+    behavior: bool = False  # the message says the behaviour or the default changes
+    on_init: bool = False  # the parameter is the class constructor's (``self.p`` in a method)
+    access: str | None = None  # WARNS_ACCESS: "read", "set" or "delete"
+    deprecation: bool = True  # its category announces a deprecation (not a UserWarning)
+
+    @property
+    def key(self) -> tuple[Any, ...]:
+        """What is deprecated: the function, a parameter, an access, or the function under a
+        condition. Two releases' warnings with one key are one deprecation."""
+        if self.parameter is not None:
+            return self.when, self.parameter, self.on_init
+        if self.when == WARNS_ACCESS:
+            return self.when, self.access, self.condition
+        return self.when, self.condition
+
+    def evidence(self) -> dict[str, Any]:
+        """APIChange.warning."""
+        out: dict[str, Any] = {"when": self.when, "category": self.category, "at": self.at}
+        if self.access is not None:
+            out["access"] = self.access
+        if self.when == WARNS_CONDITION or self.conditional:
+            out["condition"] = self.condition
+            if self.condition and self.readable:
+                out["readable"] = True
+        if self.behavior:
+            out["behavior"] = True
+        return out
+
+
+@dataclass
+class _Reading:
+    """A function whose warnings are read: its parsed ``def`` and what its names stand for."""
+
+    node: ast.FunctionDef | ast.AsyncFunctionDef
+    module: Any
+    owner: Any  # the class of a method, else None
+    names: set[str]  # every parameter's name, ``self`` and ``cls`` included
+    defaults: dict[str, str | None]  # each parameter but ``self``/``cls``: its default, as code
+    var_keyword: str | None  # the name of its ``**kwargs``
+    me: str | None  # a method's first parameter (``self``)
+    init: dict[str, str | None]  # its class's constructor's parameters, read as ``self.p``
+    aliases: dict[str, list[tuple[int, ast.expr | None, bool]]]  # where locals are bound (_aliases)
+    imports: dict[str, str]  # a name the function imports itself: the path it stands for
+
+
+@dataclass(frozen=True)
+class _Read:
+    """A parameter a test reads (:func:`_parameter_read`): its name, whether it is a key of
+    ``**kwargs``, its default as code (None for a required one), and whether it is the class
+    constructor's (``self.n_init`` in ``MDS.fit_transform``)."""
+
+    name: str
+    from_kwargs: bool
+    default: str | None
+    on_init: bool = False
+
+
+@dataclass(frozen=True)
+class _Passes:
+    """A helper's call that warns while one of the caller's parameters is not a sentinel
+    (``("copy", "lib.no_default")``), or while ``**kwargs`` has a key (``("all", None, True)``):
+    the parameter, and the sentinel."""
+
+    name: str
+    sentinel: str | None
+    from_kwargs: bool = False
+
+
+@dataclass
+class _Helper:
+    """A function or method of the package that warns of a deprecation for its callers, and
+    what it takes from them: the message and the category may be its parameters (or a
+    template of its parameters, filled with what a call gives), and it may warn only when one
+    of its parameters is not a sentinel (pandas 3's ``NDFrame._check_copy_deprecation(copy)``:
+    ``if copy is not lib.no_default: warn``) or when its ``**kwargs`` has a key (Django 5.2's
+    ``_check_deprecated_find_param(**kwargs)``: ``if "all" in kwargs: warn``)."""
+
+    parameters: list[str]  # in the order a call passes them positionally
+    defaults: dict[str, ast.expr]
+    reading: _Reading  # its own: where its names (a default category, a template) are read
+    message: str  # its own message, when it does not take one
+    message_from: str | None  # the parameter that is the message
+    message_node: ast.expr | None  # a template of its parameters (f"{name} is deprecated")
+    message_line: int
+    category: str | None  # its own category, when it does not take one
+    category_from: str | None  # the parameter that is the category
+    # The parameter it warns of, when it warns only while that one is not ``guard_default``
+    # (as code): a caller that hands it a parameter of its own with that default warns when
+    # that parameter is passed.
+    guard: str | None = None
+    guard_default: str | None = None
+    guard_key: str | None = None  # it warns while its ``**kwargs`` has this key
+
+    def argument(self, call: ast.Call, name: str) -> ast.expr | None:
+        """What ``call`` passes for the parameter ``name``, or its default."""
+        for k in call.keywords:
+            if k.arg == name:
+                return k.value
+        i = self.parameters.index(name) if name in self.parameters else -1
+        if 0 <= i < len(call.args) and not any(
+            isinstance(a, ast.Starred) for a in call.args[: i + 1]
+        ):
+            return call.args[i]
+        return self.defaults.get(name)
+
+
+@dataclass
+class _Issued:
+    """What a call issues (:meth:`_WarnReader.warning_of`): the category (its name, "" when
+    the call does not say) and whether it announces a deprecation, the message, and for a
+    helper that warns while a parameter is not a sentinel, the caller's parameter handed to
+    it (:class:`_Passes`). Read inside a helper, what of the warning its own parameters give:
+    the message, a template of them, the category."""
+
+    category: str
+    deprecation: bool
+    message: str
+    passes: _Passes | None = None
+    message_from: str | None = None
+    message_node: ast.expr | None = None
+    category_from: str | None = None
+
+
+class _WarnReader:
+    """The deprecation warnings that the functions of one loaded release issue, read from
+    their sources (nothing is imported or run).
+
+    A warning is a call of ``warnings.warn`` (or ``warn`` imported from it, or
+    ``warnings.warn_explicit``), resolved through the module's imports and the function's own
+    (``from . import warn_external`` in matplotlib's ``warn_deprecated``), whose category is a
+    DeprecationWarning, PendingDeprecationWarning or FutureWarning, or a class that derives
+    from one (pandas 3's ``Pandas4Warning(PandasDeprecationWarning)``), or a class whose name
+    says "Deprecat" (astropy's ``AstropyDeprecationWarning(AstropyWarning)``): given as the
+    second argument, as ``category=``, or as the warning itself (``warn(FutureWarning("..."))``,
+    ``w = SymPyDeprecationWarning(...); warn(w)``). A call of a helper of the package
+    (:meth:`helper`) counts as the warning it issues. The message is a literal, an f-string (a
+    constant its value is, else ``{...}``), strings joined with ``+``, a ``%`` or ``.format``
+    template filled with the constants given (``{...}`` for the others), ``textwrap.dedent``,
+    ``.strip()`` or ``.replace()`` of one, a name assigned one of them earlier in the function
+    (``msg += "..."`` included), or a constant of the module (or one it imports from the
+    package)."""
+
+    def __init__(self, root: Any, source: Any) -> None:
+        self.root = root
+        self.package = str(root.path).split(".")[0]
+        self._source = source  # _Differ._source: a module's parsed source, cached
+        self._helpers: dict[tuple[str, int], _Helper | None] = {}
+        self._categories: dict[str, tuple[str, bool]] = {}
+        self._module_texts: dict[str, set[str]] = {}
+
+    # ------------------------------------------------------------ a function's warnings
+    def deprecations(self, fn: Any, *, every: bool = False, depth: int = 0) -> list[_Warned]:
+        """The deprecation warnings ``fn`` issues, in the order of its source, each with when
+        it is issued (:func:`_classify`); with ``every``, its warnings of any category too
+        (the release at the cutoff's, which :meth:`_Differ._warned` compares with). [] for a
+        function without a source (a stub). A method whose body only returns
+        ``super().<its name>(...)`` issues what the base's method does (scikit-learn's
+        ``LassoCV.fit``)."""
+        try:
+            if getattr(fn, "is_alias", False):
+                fn = fn.final_target
+            source = fn.source or ""
+        except Exception:
+            return []
+        node = _function_def(fn)
+        if node is None:
+            return []
+        delegated = self._delegated(fn, node)
+        if delegated is not None:
+            return self.deprecations(delegated, every=every, depth=depth + 1) if depth < 2 else []
+        if not _MAY_WARN.search(source):
+            return []
+        r = self.reading(fn, node)
+        file = _file_of(fn)
+        found: list[_Warned] = []
+        for call, conditions, exited in _calls_under(node):
+            got = self.warning_of(call, r, every=every)
+            if got is None or not (got.deprecation or every):
+                continue
+            passes = got.passes
+            if (
+                passes is not None
+                and not passes.from_kwargs
+                and not _same_code(r.defaults.get(passes.name) or "", passes.sentinel or "")
+            ):
+                continue  # hands the helper something else: not read
+            behavior = _behavior(got.message, got.category)
+            found_class = _classify(conditions, exited, r, got.message, passes, behavior)
+            if found_class is None:
+                continue  # opt-in: the caller asks for the warning
+            when, parameter, condition, from_kwargs, conditional, readable, on_init = found_class
+            line = int(getattr(fn, "lineno", 1) or 1) + call.lineno - 1
+            found.append(
+                _Warned(
+                    when,
+                    got.category or "UserWarning",
+                    got.message,
+                    f"{file}:{line}" if file else None,
+                    parameter,
+                    condition,
+                    from_kwargs,
+                    conditional or when == WARNS_CONDITION,
+                    readable,
+                    behavior,
+                    on_init,
+                    None,
+                    got.deprecation,
+                )
+            )
+        return found
+
+    def reading(self, fn: Any, node: ast.FunctionDef | ast.AsyncFunctionDef) -> _Reading:
+        """``fn`` (loaded, and parsed as ``node``) as :class:`_Reading` reads it."""
+        module = fn.module
+        parent = getattr(fn, "parent", None)
+        owner = parent if getattr(parent, "is_class", False) else None
+        args = node.args
+        names = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
+        names |= {a.arg for a in (args.vararg, args.kwarg) if a is not None}
+        defaults, var_keyword = _signature_defaults(node)
+        me = _first_parameter(node) if owner is not None else None
+        init: dict[str, str | None] = {}
+        if owner is not None and me is not None and fn.name != "__init__":
+            ctor = _member(owner, "__init__")
+            ctor_node = _function_def(ctor) if getattr(ctor, "is_function", False) else None
+            if ctor_node is not None:
+                init = _signature_defaults(ctor_node)[0]
+        return _Reading(
+            node,
+            module,
+            owner,
+            names,
+            defaults,
+            var_keyword,
+            me,
+            init,
+            _aliases(node),
+            _local_imports(node, module),
+        )
+
+    def _delegated(self, fn: Any, node: ast.FunctionDef | ast.AsyncFunctionDef) -> Any:
+        """The base's method a method hands its call to, when its body (its docstring aside)
+        is only ``return super().<its name>(...)``; else None."""
+        body = [s for s in node.body if not _is_docstring_statement(s)]
+        if len(body) != 1 or not isinstance(body[0], (ast.Return, ast.Expr)):
+            return None
+        value = body[0].value
+        if not (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == fn.name
+            and isinstance(value.func.value, ast.Call)
+            and _is_name(value.func.value.func, "super")
+        ):
+            return None
+        owner = getattr(fn, "parent", None)
+        try:
+            bases = owner.mro() if owner is not None and getattr(owner, "is_class", False) else []
+        except Exception:
+            return None
+        for base in bases:
+            member = _member(base, fn.name) if fn.name in base.members else None
+            if member is not None:
+                return member if getattr(member, "is_function", False) else None
+        return None
+
+    def warning_of(
+        self, call: ast.Call, r: _Reading, depth: int = 0, *, every: bool = False
+    ) -> _Issued | None:
+        """What warning ``call`` (in the function ``r`` reads) issues, or None when it issues
+        no deprecation warning (another call, another category, or none given: a
+        UserWarning; with ``every``, any warning). ``self.helper(...)`` and
+        ``cls.helper(...)`` are looked up on the method's class."""
+        dotted = _dotted(call.func)
+        if dotted is None:
+            return None
+        head, _, name = dotted.partition(".")
+        bound = False
+        if r.owner is not None and head in ("self", "cls") and name and "." not in name:
+            resolved = _member(r.owner, name)
+            bound = resolved is not None and "staticmethod" not in _labels(resolved)
+        else:
+            resolved = self.resolve(r.module, dotted, r.imports)
+        if isinstance(resolved, str):
+            if resolved not in _WARN_FUNCTIONS and dotted != "warn":
+                return None
+            return self._direct(call, r, every)
+        if not getattr(resolved, "is_function", False) or depth > 2:
+            return None
+        helper = self.helper(resolved, depth)
+        if helper is None:
+            return None
+        if bound and helper.parameters:
+            helper = replace(helper, parameters=helper.parameters[1:])  # self, cls
+        return self._through(helper, call, r, every)
+
+    def _direct(self, call: ast.Call, r: _Reading, every: bool) -> _Issued | None:
+        """:meth:`warning_of` for a call of ``warnings.warn`` itself."""
+        keywords = {k.arg: k.value for k in call.keywords if k.arg}
+        message = call.args[0] if call.args else keywords.get("message")
+        kind = call.args[1] if len(call.args) > 1 else keywords.get("category")
+        if kind is None:
+            instance = self._instance(message, r, call.lineno)
+            if instance is not None:  # warn(FutureWarning("...")), or one built before
+                kind = instance.func
+                message = _first_argument(instance)
+        category_from = _name_in(kind, r.names)
+        if kind is None:
+            category, deprecation = "UserWarning", False
+        else:
+            category, deprecation = self.category_of(r.module, kind, r.imports)
+        if category_from is None and not deprecation and not every:
+            return None
+        message_from, message_node = self._from_parameters(message, r, call.lineno)
+        return _Issued(
+            category,
+            deprecation,
+            self.text(message, r, call.lineno),
+            None,
+            message_from,
+            message_node,
+            category_from,
+        )
+
+    def _through(self, helper: _Helper, call: ast.Call, r: _Reading, every: bool) -> _Issued | None:
+        """:meth:`warning_of` for a call of a helper: the category and the message the call
+        gives it (or the helper's own), and when it warns."""
+        category = helper.category or ""
+        deprecation = helper.category is not None
+        category_from = None
+        if helper.category_from is not None:
+            given = helper.argument(call, helper.category_from)
+            if given is not None and given is helper.defaults.get(helper.category_from):
+                category, deprecation = self.category_of(
+                    helper.reading.module, given, helper.reading.imports
+                )
+            elif given is not None:
+                category_from = _name_in(given, r.names)
+                category, deprecation = self.category_of(r.module, given, r.imports)
+        message_from: str | None = None
+        message_node: ast.expr | None = None
+        if helper.message_from is not None:
+            given = helper.argument(call, helper.message_from)
+            instance = self._instance(given, r, call.lineno)
+            if instance is not None and not deprecation and category_from is None:
+                # _warnings_warn(warn) of a warning built from its class (sqlalchemy)
+                category, deprecation = self.category_of(r.module, instance.func, r.imports)
+                category_from = _name_in(instance.func, r.names)
+                given = _first_argument(instance)
+            message = self.text(given, r, call.lineno, from_helper=True)
+            message_from, message_node = self._from_parameters(given, r, call.lineno)
+        elif helper.message_node is not None:
+            message = self._filled(helper, call, r)
+        else:
+            message = helper.message
+        if not deprecation and category_from is None and not (every and category):
+            return None
+        passes = None
+        if helper.guard is not None:
+            given = helper.argument(call, helper.guard)
+            if not isinstance(given, ast.Name):
+                return None  # not a parameter of the caller's: when it warns is not read
+            passes = _Passes(given.id, helper.guard_default)
+        elif helper.guard_key is not None:
+            passed = {k.arg for k in call.keywords if k.arg}
+            if helper.guard_key in passed or not _forwards(call, r.var_keyword):
+                return None  # passes the key itself, or not the caller's **kwargs
+            passes = _Passes(helper.guard_key, None, True)
+        return _Issued(
+            category, deprecation, message, passes, message_from, message_node, category_from
+        )
+
+    def _filled(self, helper: _Helper, call: ast.Call, r: _Reading) -> str:
+        """A helper's template message (``f"The {name!r} keyword is deprecated"``) with what
+        ``call`` gives its parameters: a constant, or a name of the caller's with a constant
+        value; ``{...}`` for the others."""
+        bindings: dict[str, str] = {}
+        for name in helper.parameters:
+            given = helper.argument(call, name)
+            if given is None or given is helper.defaults.get(name):
+                continue
+            value = self._render(given, r, call.lineno, {}, 0)
+            if value is not None:
+                bindings[name] = value
+        out = self._render(helper.message_node, helper.reading, helper.message_line, bindings, 0)
+        return " ".join((out or "").split())
+
+    def _instance(self, node: ast.expr | None, r: _Reading, line: int) -> ast.Call | None:
+        """The call that builds the warning ``node`` is, when it is one: ``FutureWarning(
+        "...")``, a name assigned one before (``w = SymPyDeprecationWarning(...)``), or a call
+        of the function's own parameter (``type_(msg)``); else None."""
+        if isinstance(node, ast.Name) and node.id not in r.names:
+            node = _assigned_value(r.node, node.id, line)
+        if not isinstance(node, ast.Call):
+            return None
+        dotted = _dotted(node.func)
+        if dotted is None:
+            return None
+        if _name_in(node.func, r.names) or dotted.rsplit(".", 1)[-1].endswith("Warning"):
+            return node
+        resolved = self.resolve(r.module, dotted, r.imports)
+        return node if getattr(resolved, "is_class", False) else None
+
+    def _from_parameters(
+        self, node: ast.expr | None, r: _Reading, line: int
+    ) -> tuple[str | None, ast.expr | None]:
+        """What of a message ``node`` comes from the parameters of the function ``r`` reads:
+        the parameter it is (or the message-like one a value built from several is: polars'
+        ``message = f"{message.strip()} ..."``, matplotlib's ``warning =
+        _generate_deprecation_warning(since, message, ...)``), or a template of them
+        (``f"{name} is deprecated"``); ``(None, None)`` when nothing does."""
+        if node is None:
+            return None, None
+        if isinstance(node, ast.Name):
+            if node.id in r.names:
+                return node.id, None
+            value = _assigned_value(r.node, node.id, line)
+            if value is None:
+                return None, None
+            if not isinstance(value, (ast.JoinedStr, ast.BinOp, ast.Constant)):
+                read = _loaded_names(value) & r.names
+                message = sorted(n for n in read if _MESSAGE_PARAMETER.fullmatch(n))
+                return (message[0], None) if message else (None, None)
+            node = value
+        if _loaded_names(node) & r.names:
+            return None, node
+        return None, None
+
+    # ------------------------------------------------------------------- helpers
+    def helper(self, fn: Any, depth: int = 0) -> _Helper | None:
+        """``fn`` as a helper that warns of a deprecation for its callers, or None: a function
+        of the package, or a method of one of its classes, whose name says "deprecat" or
+        "warn" (``_deprecate``, ``warn_deprecated``, ``_check_copy_deprecation``) and that
+        issues a deprecation warning at every call, directly or through another such helper,
+        or whenever one of its parameters is not a sentinel (``if copy is not
+        lib.no_default:``), or whenever its ``**kwargs`` has a key (``if "all" in kwargs:``).
+        A helper's own category and message parameters are no such guard: sqlalchemy's
+        ``_warnings_warn(message, category=None)`` warns at every call."""
+        path = str(fn.path)
+        key = (path, depth)
+        if key in self._helpers:
+            return self._helpers[key]
+        self._helpers[key] = None  # a helper that calls itself is none
+        found: _Helper | None = None
+        parent = getattr(fn, "parent", None)
+        if (
+            _HELPER_NAME.search(fn.name)
+            and (getattr(parent, "is_module", False) or getattr(parent, "is_class", False))
+            and path.split(".")[0] == self.package
+        ):
+            node = _function_def(fn)
+            if node is not None:
+                found = self._helper_of(fn, node, depth)
+        self._helpers[key] = found
+        return found
+
+    def _helper_of(
+        self, fn: Any, node: ast.FunctionDef | ast.AsyncFunctionDef, depth: int
+    ) -> _Helper | None:
+        """:meth:`helper` for the parsed ``def`` of a function or method."""
+        r = self.reading(fn, node)
+        args = node.args
+        positional = [a.arg for a in (*args.posonlyargs, *args.args)]
+        parameters = positional + [a.arg for a in args.kwonlyargs]
+        defaults: dict[str, ast.expr] = dict(
+            zip(positional[len(positional) - len(args.defaults) :], args.defaults, strict=True)
+        )
+        defaults.update(
+            {a.arg: d for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True) if d}
+        )
+        for call, conditions, exited in _calls_under(node):
+            got = self.warning_of(call, r, depth + 1, every=True)
+            if got is None:
+                continue
+            instance_later = (
+                got.message_from is not None and got.category == "UserWarning"
+            )  # warn(message): a warning instance its callers build
+            if not (got.deprecation or got.category_from is not None or instance_later):
+                continue
+            guard: tuple[str, str] | None = None
+            key: str | None = None
+            if conditions or exited:
+                own = {n for n in (got.message_from, got.category_from) if n is not None}
+                guard = _sentinel_guard(conditions, r.names - own)
+                key = _kwargs_guard(conditions, r.var_keyword) if guard is None else None
+                if guard is None and key is None and not (own and _sentinel_guard(conditions, own)):
+                    continue  # a helper warns at every call, or while a parameter is passed
+            if got.passes is not None:
+                if guard is not None or key is not None:
+                    continue
+                if got.passes.from_kwargs:
+                    key = got.passes.name  # through this helper's own **kwargs
+                elif got.passes.name in r.names and got.passes.sentinel is not None:
+                    guard = (got.passes.name, got.passes.sentinel)
+                else:
+                    continue
+            own_text = not (got.message_from or got.message_node is not None)
+            return _Helper(
+                parameters,
+                defaults,
+                r,
+                message=got.message if own_text else "",
+                message_from=got.message_from,
+                message_node=got.message_node,
+                message_line=call.lineno,
+                category=got.category if got.deprecation and not got.category_from else None,
+                category_from=got.category_from,
+                guard=guard[0] if guard else None,
+                guard_default=guard[1] if guard else None,
+                guard_key=key,
+            )
+        return None
+
+    # ------------------------------------------------------------------- names
+    def resolve(self, module: Any, dotted: str, imports: dict[str, str] | None = None) -> Any:
+        """What ``dotted`` (``warnings.warn``, ``errors.Pandas4Warning``) is in ``module``:
+        the loaded object, or the path it stands for when that is outside the package
+        (``"warnings.warn"``), or the name itself when nothing binds it (a builtin).
+        ``imports`` are the function's own imports, which come first."""
+        head, *rest = dotted.split(".")
+        if imports and head in imports:
+            target = ".".join([imports[head], *rest])
+            if target.split(".")[0] != self.package:
+                return target
+            found = find_object(self.root, target)
+            return found if found is not None else target
+        try:
+            obj = module.members.get(head)
+        except Exception:
+            obj = None
+        if obj is None:
+            return dotted
+        for i, part in enumerate([*rest, None]):
+            if getattr(obj, "is_alias", False):
+                try:
+                    obj = obj.final_target
+                except Exception:
+                    return ".".join([str(getattr(obj, "target_path", head)), *rest[i:]])
+            if part is None:
+                return obj
+            try:
+                member = obj.members.get(part)
+            except Exception:
+                member = None
+            if member is None:
+                return ".".join([str(obj.path), *rest[i:]])
+            obj = member
+        return obj
+
+    def category_of(
+        self, module: Any, node: ast.expr | None, imports: dict[str, str] | None = None
+    ) -> tuple[str, bool]:
+        """The name of the warning category ``node`` names in ``module`` ("" for none it can
+        read), and whether it announces a deprecation (:meth:`announces`)."""
+        dotted = _dotted(node) if node is not None else None
+        if dotted is None:
+            return "", False
+        resolved = self.resolve(module, dotted, imports)
+        found = self.announces(resolved)
+        if found:
+            return found, True
+        if isinstance(resolved, str):
+            return resolved.rsplit(".", 1)[-1], False
+        return str(getattr(resolved, "name", dotted.rsplit(".", 1)[-1])), False
+
+    def category(self, module: Any, node: ast.expr | None) -> str | None:
+        """The name of a deprecation category ``node`` names in ``module``, else None."""
+        name, deprecation = self.category_of(module, node)
+        return name if deprecation else None
+
+    def announces(self, resolved: Any, depth: int = 0) -> str | None:
+        """The name of a category (:meth:`resolve`'s result) that is a deprecation warning, or
+        None: one of the three built-in ones, a class that derives from one (``Pandas4Warning``),
+        a name bound to one (``_DEPRECATION = FutureWarning``), or a class whose name says
+        "Deprecat" (astropy's ``AstropyDeprecationWarning``, which derives from a
+        ``UserWarning``; another package's, which is not loaded)."""
+        if depth > 8:
+            return None
+        if isinstance(resolved, str):
+            name = resolved.removeprefix("builtins.")
+            last = name.rsplit(".", 1)[-1]
+            return last if name in _DEPRECATION_CATEGORIES or "Deprecat" in last else None
+        path = str(getattr(resolved, "path", ""))
+        if path in self._categories:
+            name, deprecation = self._categories[path]
+            return name if deprecation else None
+        self._categories[path] = ("", False)  # a class among its own bases is none
+        found: str | None = None
+        if getattr(resolved, "is_attribute", False):
+            value = getattr(resolved, "value", None)
+            parent = getattr(resolved, "parent", None)
+            if value is not None and getattr(parent, "is_module", False):
+                found = self.announces(self.resolve(parent, str(value)), depth + 1)
+        elif getattr(resolved, "is_class", False):
+            if "Deprecat" in str(resolved.name):
+                found = str(resolved.name)
+            for base in getattr(resolved, "bases", None) or ():
+                if found:
+                    break
+                where = str(getattr(base, "canonical_path", None) or base)
+                target = find_object(self.root, where) if "." in where else None
+                if self.announces(target if target is not None else where, depth + 1):
+                    found = str(resolved.name)
+        self._categories[path] = (found or "", found is not None)
+        return found
+
+    # ------------------------------------------------------------------- messages
+    def text(
+        self, node: ast.expr | None, r: _Reading, line: int, *, from_helper: bool = False
+    ) -> str:
+        """The message ``node`` gives, on one line (:class:`_WarnReader`); "" when it cannot be
+        read statically. A message a caller hands a helper may hold the helper's own
+        ``%(since)s`` placeholders (matplotlib): ``{...}``."""
+        out = self._render(node, r, line, {}, 0)
+        if not out:
+            return ""
+        if from_helper:
+            out = re.sub(r"%\(\w+\)[a-z]", _VALUE, out)
+        return " ".join(out.split())
+
+    def _render(
+        self,
+        node: ast.AST | None,
+        r: _Reading | None,
+        line: int,
+        bindings: dict[str, str],
+        depth: int,
+        module: Any = None,
+    ) -> str | None:
+        """The text of the expression ``node`` in the function ``r`` reads (or at the top of
+        ``module``), with ``bindings`` for its names; None when it is not a string this can
+        read."""
+        if node is None or depth > 8:
+            return None
+        module = r.module if r is not None else module
+
+        def again(n: ast.AST | None) -> str | None:
+            return self._render(n, r, line, bindings, depth + 1, module)
+
+        if isinstance(node, ast.Constant):
+            return node.value if isinstance(node.value, str) else None
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(str(v.value))
+                    continue
+                inner = getattr(v, "value", None)
+                text = None
+                if isinstance(inner, ast.Constant):
+                    text = str(inner.value)
+                elif isinstance(inner, ast.Name) and inner.id in bindings:
+                    text = bindings[inner.id]
+                if text is not None and getattr(v, "conversion", -1) == ord("r"):
+                    text = repr(text)
+                parts.append(_VALUE if text is None else text)
+            return "".join(parts)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = again(node.left), again(node.right)
+            if left is None and right is None:
+                return None
+            return (_VALUE if left is None else left) + (_VALUE if right is None else right)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+            template = again(node.left)
+            if template is None:
+                return None
+            given = node.right
+            if isinstance(given, ast.Dict):
+                named = {
+                    str(k.value): again(v) or _VALUE
+                    for k, v in zip(given.keys, given.values, strict=True)
+                    if isinstance(k, ast.Constant)
+                }
+                return _printf(template, [], named)
+            values = given.elts if isinstance(given, ast.Tuple) else [given]
+            return _printf(template, [again(v) or _VALUE for v in values], {})
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            attr = node.func.attr
+            if attr == "format":
+                template = again(node.func.value)
+                if template is None:
+                    return None
+                return _format(
+                    template,
+                    [again(a) or _VALUE for a in node.args],
+                    {k.arg: again(k.value) or _VALUE for k in node.keywords if k.arg},
+                )
+            if attr in ("strip", "lstrip", "rstrip") and not node.args:
+                text = again(node.func.value)
+                return getattr(text, attr)() if text is not None else None
+            if attr == "replace" and len(node.args) == 2:
+                text, old, new = again(node.func.value), again(node.args[0]), again(node.args[1])
+                if text is not None and old is not None and new is not None:
+                    return text.replace(old, new)
+                return text
+        if isinstance(node, ast.Call) and node.args:
+            dotted = _dotted(node.func) or ""
+            if dotted in ("textwrap.dedent", "dedent"):
+                text = again(node.args[0])
+                return textwrap.dedent(text) if text is not None else None
+            if dotted in ("inspect.cleandoc", "cleandoc"):
+                text = again(node.args[0])
+                return inspect.cleandoc(text) if text is not None else None
+            return None
+        if isinstance(node, ast.Name):
+            if node.id in bindings:
+                return bindings[node.id]
+            if r is not None:
+                value = _assigned_text(self, r, node.id, line, depth)
+                if value is not None:
+                    return value
+                if node.id in r.names:
+                    return None  # a parameter: what the caller gives
+            return self.constant(module, node.id, imports=r.imports if r else None) or None
+        if isinstance(node, ast.Attribute):
+            chain = _dotted(node)
+            if chain is None:
+                return None
+            return self.constant(module, chain, imports=r.imports if r else None) or None
+        return None
+
+    def constant(
+        self, module: Any, dotted: str, depth: int = 0, imports: dict[str, str] | None = None
+    ) -> str:
+        """The text of a module-level string constant (``_DEPRECATION_MSG = "..."``) that
+        ``dotted`` names in ``module``, imported from elsewhere in the package or its own; ""
+        when there is none."""
+        if module is None or depth > 4:
+            return ""
+        if "." not in dotted and not (imports and dotted in imports):
+            tree = self._source(module).tree if getattr(module, "is_module", False) else None
+            for stmt in reversed(tree.body if tree is not None else []):
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and _is_name(stmt.targets[0], dotted)
+                ) or (isinstance(stmt, ast.AnnAssign) and _is_name(stmt.target, dotted)):
+                    out = self._render(stmt.value, None, 0, {}, depth + 1, module)
+                    return " ".join(out.split()) if out else ""
+        resolved = self.resolve(module, dotted, imports)
+        if not getattr(resolved, "is_attribute", False):
+            return ""
+        parent = getattr(resolved, "parent", None)
+        if parent is module or not getattr(parent, "is_module", False):
+            return ""
+        return self.constant(parent, resolved.name, depth + 1)
+
+    def module_texts(self, module: Any) -> set[str]:
+        """The messages (:func:`_comparable`) of every call in ``module`` whose name says
+        "warn" or "deprecat", whatever its category, read where they are literal: the
+        release at the cutoff warned of them, if not in the function that warns now."""
+        path = str(getattr(module, "path", ""))
+        if path in self._module_texts:
+            return self._module_texts[path]
+        texts: set[str] = set()
+        tree = self._source(module).tree if getattr(module, "is_module", False) else None
+        for node in ast.walk(tree) if tree is not None else ():
+            if not isinstance(node, ast.Call) or not _HELPER_NAME.search(_name(node.func)):
+                continue
+            text = self._render(_first_argument(node), None, 0, {}, 0, module)
+            if text and _VALUE not in text and (comparable := _comparable(text)):
+                texts.add(comparable)
+        self._module_texts[path] = texts
+        return texts
+
+
+def _assigned_value(scope: ast.AST, name: str, line: int) -> ast.expr | None:
+    """The value last assigned to the local ``name`` at or before ``line`` in ``scope``, or
+    None."""
+    earlier = [
+        (n.lineno, n.value)
+        for n in _own_nodes(scope)
+        if (isinstance(n, ast.Assign) and len(n.targets) == 1 and _is_name(n.targets[0], name))
+        or (isinstance(n, ast.AnnAssign) and _is_name(n.target, name) and n.value is not None)
+    ]
+    earlier = [(at, v) for at, v in earlier if at <= line and v is not None]
+    return max(earlier, key=lambda a: a[0])[1] if earlier else None
+
+
+def _assigned_text(
+    reader: _WarnReader, r: _Reading, name: str, line: int, depth: int
+) -> str | None:
+    """The text of the local ``name`` at ``line``: the value last assigned to it, with the
+    strings added to it since (``msg += " Use `a` instead."``); None when it has none."""
+    statements = sorted(
+        (
+            n
+            for n in _own_nodes(r.node)
+            if (isinstance(n, ast.Assign) and len(n.targets) == 1 and _is_name(n.targets[0], name))
+            or (isinstance(n, ast.AnnAssign) and _is_name(n.target, name) and n.value is not None)
+            or (
+                isinstance(n, ast.AugAssign)
+                and isinstance(n.op, ast.Add)
+                and _is_name(n.target, name)
+            )
+        ),
+        key=lambda n: n.lineno,
+    )
+    statements = [n for n in statements if n.lineno <= line]
+    start = max(
+        (i for i, n in enumerate(statements) if not isinstance(n, ast.AugAssign)), default=None
+    )
+    if start is None:
+        return None
+    text = reader._render(statements[start].value, r, statements[start].lineno - 1, {}, depth + 1)
+    if text is None:
+        return None
+    for n in statements[start + 1 :]:
+        more = reader._render(n.value, r, n.lineno - 1, {}, depth + 1)
+        text += _VALUE if more is None else more
+    return text
+
+
+def _printf(template: str, values: list[str], named: dict[str, str]) -> str:
+    """``template % values`` (or ``% named``), each placeholder filled, ``{...}`` for one
+    without a value."""
+    left = iter(values)
+
+    def fill(m: re.Match[str]) -> str:
+        if m.group(2) == "%":
+            return "%"
+        if m.group(1):
+            return named.get(m.group(1), _VALUE)
+        return next(left, _VALUE)
+
+    return _PRINTF.sub(fill, template)
+
+
+def _format(template: str, values: list[str], named: dict[str, str]) -> str:
+    """``template.format(*values, **named)``, each field filled, ``{...}`` for one without a
+    value."""
+    import string
+
+    out: list[str] = []
+    auto = iter(values)
+    try:
+        for literal, field_name, _spec, conversion in string.Formatter().parse(template):
+            out.append(literal)
+            if field_name is None:
+                continue
+            base = re.split(r"[.\[]", field_name, maxsplit=1)[0]
+            if base == "":
+                value = next(auto, _VALUE)
+            elif base.isdigit():
+                index = int(base)
+                value = values[index] if index < len(values) else _VALUE
+            else:
+                value = named.get(base, _VALUE)
+            if conversion == "r" and value != _VALUE:
+                value = repr(value)
+            out.append(value)
+    except ValueError:
+        return re.sub(r"\{[^{}]*\}", _VALUE, template)
+    return "".join(out)
+
+
+def _first_argument(call: ast.Call) -> ast.expr | None:
+    """The first argument of a call: its first positional, else its ``message=``."""
+    if call.args:
+        return call.args[0]
+    return next((k.value for k in call.keywords if k.arg in ("message", "msg")), None)
+
+
+def _loaded_names(node: ast.AST) -> set[str]:
+    """The names ``node`` reads."""
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    """The nodes of a function's body, not those of a function, class or lambda it defines."""
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        current = stack.pop()
+        yield current
+        if isinstance(current, (*_FUNCTIONS, ast.ClassDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(current))
+
+
+def _aliases(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> dict[str, list[tuple[int, ast.expr | None, bool]]]:
+    """Each local a function binds, with every place it binds it, in order: the line, what
+    was assigned (None for any other binding: ``+=``, a loop's target, ``with ... as``), and
+    whether the assignment is a statement of the body itself, run on every path
+    (``tp_plan = kwargs.pop("tp_plan", None)``; scikit-learn's ``quantile_method =
+    self.quantile_method``, assigned again under an ``if`` later)."""
+    top = {id(s) for s in node.body}
+    found: dict[str, list[tuple[int, ast.expr | None, bool]]] = {}
+    assigned: set[int] = set()
+    for n in _own_nodes(node):
+        value: ast.expr | None = None
+        target: ast.expr | None = None
+        if isinstance(n, ast.Assign) and len(n.targets) == 1:
+            target, value = n.targets[0], n.value
+        elif isinstance(n, ast.AnnAssign) and n.value:
+            target, value = n.target, n.value
+        name = _bound_name(target) if target is not None else None
+        if name is not None and target is not None:
+            assigned.add(id(target))
+            found.setdefault(name, []).append((getattr(n, "lineno", 0), value, id(n) in top))
+    for n in _own_nodes(node):
+        if isinstance(n, (ast.Name, ast.Attribute)) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            name = _bound_name(n)
+            if name is not None and id(n) not in assigned:
+                found.setdefault(name, []).append((n.lineno, None, False))
+        elif isinstance(n, ast.arg) and n not in (*node.args.args, *node.args.kwonlyargs):
+            found.setdefault(n.arg, []).append((n.lineno, None, False))  # a lambda's
+    for places in found.values():
+        places.sort(key=lambda p: p[0])
+    return found
+
+
+def _bound_name(target: ast.expr) -> str | None:
+    """The name an assignment binds: a local's (``x``), or an attribute of a name's
+    (``self.x``, transformers 5's ``self.continuous_batching_config = kwargs.pop(...)`` in a
+    constructor); None for any other target."""
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+        return f"{target.value.id}.{target.attr}"
+    return None
+
+
+def _alias(r: _Reading, name: str, line: int | None) -> ast.expr | None:
+    """What the local ``name`` holds where it is read at ``line``: the value of its one
+    assignment, or of the last assignment before ``line`` when that one runs on every path
+    and nothing binds the name again before the read; else None."""
+    places = r.aliases.get(name)
+    if not places:
+        return None
+    if len(places) == 1:
+        return places[0][1]
+    before = [p for p in places if line is not None and p[0] < line]
+    if not before:
+        return None
+    _at, value, top = before[-1]
+    return value if top else None
+
+
+def _local_imports(node: ast.AST, module: Any) -> dict[str, str]:
+    """The names a function's own ``import`` and ``from ... import`` bind, with the paths
+    they stand for (a relative one against ``module``'s package)."""
+    found: dict[str, str] = {}
+    package = str(getattr(module, "path", "")).split(".")
+    try:
+        is_package = bool(module.is_init_module)
+    except Exception:
+        is_package = False
+    for n in _own_nodes(node):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                if a.asname:
+                    found[a.asname] = a.name
+                else:
+                    head = a.name.split(".")[0]
+                    found[head] = head
+        elif isinstance(n, ast.ImportFrom):
+            if n.level:
+                base = package if is_package else package[:-1]
+                base = base[: len(base) - (n.level - 1)]
+                prefix = ".".join([*base, *([n.module] if n.module else [])])
+            else:
+                prefix = n.module or ""
+            for a in n.names:
+                if a.name != "*":
+                    found[a.asname or a.name] = f"{prefix}.{a.name}" if prefix else a.name
+    return found
+
+
+def _is_docstring_statement(stmt: ast.stmt) -> bool:
+    return (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and isinstance(stmt.value.value, str)
+    )
+
+
+def _forwards(call: ast.Call, var_keyword: str | None) -> bool:
+    """Does ``call`` pass on the caller's own ``**kwargs``?"""
+    return var_keyword is not None and any(
+        k.arg is None and _is_name(k.value, var_keyword) for k in call.keywords
+    )
+
+
+def _dotted(node: ast.AST | None) -> str | None:
+    """``a.b.c`` for a name or a chain of attributes of one, else None (``self.x()``'s
+    ``self.x`` is ``"self.x"``, which resolves to nothing)."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([node.id, *reversed(parts)])
+
+
+def _name_in(node: ast.AST | None, names: set[str]) -> str | None:
+    """The name ``node`` is when it is one of ``names``, else None."""
+    return node.id if isinstance(node, ast.Name) and node.id in names else None
+
+
+def _member(cls: Any, name: str) -> Any:
+    """The member ``name`` of a loaded class, inherited ones included (aliases followed), or
+    None."""
+    try:
+        member = cls.members.get(name)
+        if member is None:
+            member = cls.all_members.get(name)
+        if getattr(member, "is_alias", False):
+            member = member.final_target
+        return member
+    except Exception:
+        return None
+
+
+def _labels(obj: Any) -> set[str]:
+    """griffe's labels of an object (``staticmethod``, ``classmethod``, ``property``)."""
+    try:
+        return {str(label) for label in obj.labels}
+    except Exception:
+        return set()
+
+
+def _sentinel_guard(conditions: list[_Condition], names: set[str]) -> tuple[str, str] | None:
+    """For a helper's warning under ``conditions``: the helper's parameter it warns of and
+    the sentinel, as code, when the one condition is that the parameter is not the sentinel
+    (``if copy is not lib.no_default:``, or the ``else`` of ``if copy is lib.no_default:``);
+    else None."""
+    if len(conditions) != 1 or conditions[0][0] is None:
+        return None
+    test, branch = conditions[0]
+    while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test, branch = test.operand, not branch
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    op = test.ops[0]
+    if not isinstance(op, (ast.IsNot, ast.NotEq, ast.Is, ast.Eq)):
+        return None
+    for a, b in ((test.left, test.comparators[0]), (test.comparators[0], test.left)):
+        if (
+            isinstance(a, ast.Name)
+            and a.id in names
+            and isinstance(op, (ast.IsNot, ast.NotEq)) == branch
+        ):
+            return a.id, ast.unparse(b)
+    return None
+
+
+def _kwargs_guard(conditions: list[_Condition], var_keyword: str | None) -> str | None:
+    """For a helper's warning under ``conditions``: the key of its ``**kwargs`` it warns of,
+    when the one condition is that the key is there (``if "all" in kwargs:``); else None."""
+    if len(conditions) != 1 or conditions[0][0] is None or var_keyword is None:
+        return None
+    test, branch = conditions[0]
+    found = _kwargs_key(test, branch, var_keyword) if test is not None else None
+    return found[0] if found is not None and found[1] else None
+
+
+def _kwargs_key(test: ast.expr, branch: bool, var_keyword: str | None) -> tuple[str, bool] | None:
+    """For ``"p" in kwargs`` (and ``not in``) under ``branch``: the key, and whether the test
+    holds when the key is there; else None."""
+    while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test, branch = test.operand, not branch
+    if (
+        var_keyword
+        and isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.In, ast.NotIn))
+        and _is_name(test.comparators[0], var_keyword)
+        and isinstance(test.left, ast.Constant)
+        and isinstance(test.left.value, str)
+        and test.left.value.isidentifier()
+    ):
+        return test.left.value, isinstance(test.ops[0], ast.In) == branch
+    return None
+
+
+def _deprecated_whole(obj: Any) -> bool:
+    """Whether ``obj`` is deprecated as a whole by PEP 702 or by the library's decorator."""
+    try:
+        return pep702_message(obj) is not None or any(
+            m[0] is None for m in decorator_deprecations(obj)
+        )
+    except Exception:
+        return False
+
+
+def _comparable(text: str) -> str:
+    """A warning's text as two releases are compared: without versions ("will be removed in
+    3.0" in one, "in 4.0" in the other), case, punctuation or spacing; other numbers stay
+    ("axis=0" is not "axis=2")."""
+    return " ".join(re.sub(r"\W+", " ", _VERSION_TOKEN.sub(" ", text.lower())).split())
+
+
+def _behavior(message: str, category: str) -> bool:
+    """Does a warning's message say that a behaviour or a default changes, not that the API
+    goes away (:data:`_BEHAVIOR`)?"""
+    if not message:
+        return False
+    deprecates = _DEPRECATES.search(message)
+    if not _BEHAVIOR.search(message):
+        return category == "FutureWarning" and deprecates is None
+    if deprecates is None:
+        return True
+    # It says something is deprecated: a behaviour or a default when that is what it says
+    # is ("The behavior of X is deprecated"; not "'n_alphas' was deprecated ..., the
+    # default value of 'alphas' will change").
+    start = message.rfind(". ", 0, deprecates.start()) + 1
+    return _BEHAVIOR_WORD.search(message, start, deprecates.start()) is not None
+
+
+def _named_parameters(message: str, names: Iterable[str]) -> set[str]:
+    """The parameters among ``names`` that a message names as what it is about: in quotes or
+    backticks (``'copy'``, `` `p=...` ``), as ``p=``, or with a word that says so ("the copy
+    keyword", "argument p", "passing p"); not one it names as the replacement ("use `name`",
+    "`name` instead")."""
+    found: set[str] = set()
+    if not message:
+        return found
+    for p in names:
+        e = re.escape(p)
+        mention = re.compile(
+            rf"[`'\"]{e}(?:=[^`'\"\s]*)?[`'\"]|(?<![\w.]){e}="
+            rf"|(?<![\w.`'\"]){e}[`'\"]?\s+{_PARAMETER_NOUNS}\b"
+            rf"|\b{_PARAMETER_NOUNS}\s+[`'\"]?{e}(?!\w)|\bpassing\s+[`'\"]?{e}(?!\w)",
+            re.IGNORECASE,
+        )
+        for m in mention.finditer(message):
+            before = message[max(0, m.start() - 24) : m.start()]
+            after = message[m.end() : m.end() + 12]
+            if re.search(
+                r"(?:\buse|\bin favou?r of|\brenamed to|\breplaced (?:by|with)|\bswitch to"
+                r"|\bpass)\s*$",
+                before,
+                re.IGNORECASE,
+            ) or re.match(r"\s+instead\b", after, re.IGNORECASE):
+                continue  # the replacement, not what is deprecated
+            found.add(p)
+            break
+    return found
+
+
+def _calls_under(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> Iterator[tuple[ast.Call, list[_Condition], bool]]:
+    """Each call in the body of ``fn`` (not in a function or class it defines), with the
+    conditions it is under, outermost first, and whether a ``return`` at the top level of the
+    body comes before it (then it is issued on some paths only). An ``if <test>: ...;
+    return`` at the top level puts what follows under ``not <test>``. In an expression, the
+    right of ``and``/``or`` is under the left, and ``x if c else y`` under ``c``. A ``raise``
+    before a call does not count: the call that goes on is the one that warns."""
+    returned = False
+    guards: list[_Condition] = []  # the early returns' tests, for what follows them
+
+    def calls(
+        node: ast.AST, conditions: list[_Condition]
+    ) -> Iterator[tuple[ast.Call, list[_Condition]]]:
+        stack: list[tuple[ast.AST, list[_Condition]]] = [(node, conditions)]
+        while stack:
+            current, under = stack.pop()
+            if isinstance(current, (*_FUNCTIONS, ast.ClassDef, ast.Lambda)):
+                continue
+            if isinstance(current, ast.Call):
+                yield current, under
+            children: list[tuple[ast.AST, list[_Condition]]]
+            if isinstance(current, ast.BoolOp):
+                children, before = [], cast(list[_Condition], [])
+                for value in current.values:
+                    children.append((value, [*under, *before]))
+                    before.append((value, isinstance(current.op, ast.And)))
+            elif isinstance(current, ast.IfExp):
+                children = [
+                    (current.test, under),
+                    (current.body, [*under, (current.test, True)]),
+                    (current.orelse, [*under, (current.test, False)]),
+                ]
+            elif isinstance(current, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                children = [(c, [*under, (None, True)]) for c in ast.iter_child_nodes(current)]
+            else:
+                children = [(c, under) for c in ast.iter_child_nodes(current)]
+            stack.extend(reversed(children))
+
+    def walk(
+        stmts: list[ast.stmt], conditions: list[_Condition], top: bool
+    ) -> Iterator[tuple[ast.Call, list[_Condition], bool]]:
+        nonlocal returned
+        for stmt in stmts:
+            here = [*conditions, *guards] if top else conditions
+            if isinstance(stmt, (*_FUNCTIONS, ast.ClassDef)):
+                continue
+            if isinstance(stmt, ast.If):
+                yield from walk(stmt.body, [*here, (stmt.test, True)], False)
+                yield from walk(stmt.orelse, [*here, (stmt.test, False)], False)
+                ends = _returns(stmt.body), bool(stmt.orelse) and _returns(stmt.orelse)
+                if top and ends[0] != ends[1]:
+                    guards.append(_Guard((stmt.test, ends[1])))  # what follows runs in the other
+                    continue
+            elif isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+                yield from walk([*stmt.body, *stmt.orelse], [*here, (None, True)], False)
+            elif _is_try(stmt):
+                block: Any = stmt  # a try, or a try with except* (3.11)
+                yield from walk(block.body, here if not top else conditions, top)
+                for handler in block.handlers:
+                    yield from walk(handler.body, [*here, (None, True)], False)
+                yield from walk([*block.orelse, *block.finalbody], conditions, top)
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                yield from walk(stmt.body, conditions, top)
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    yield from walk(case.body, [*here, (None, True)], False)
+            else:
+                for call, under in calls(stmt, here):
+                    yield call, under, returned
+            if top and any(isinstance(n, ast.Return) for n in calls_and_returns(stmt)):
+                returned = True
+
+    def calls_and_returns(node: ast.AST) -> Iterator[ast.AST]:
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, (*_FUNCTIONS, ast.ClassDef, ast.Lambda)):
+                continue
+            yield current
+            stack.extend(ast.iter_child_nodes(current))
+
+    yield from walk(fn.body, [], True)
+
+
+def _returns(body: list[ast.stmt]) -> bool:
+    """Does a block return (a ``return`` among its own statements)?"""
+    return any(isinstance(s, ast.Return) for s in body)
+
+
+def _signature_defaults(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[dict[str, str | None], str | None]:
+    """The parameters of ``fn`` (``self`` and ``cls`` left out), each with its default as
+    code (None without one), and the name of its ``**kwargs``."""
+    args = fn.args
+    positional = [*args.posonlyargs, *args.args]
+    defaults: dict[str, str | None] = {a.arg: None for a in positional}
+    for a, d in zip(positional[len(positional) - len(args.defaults) :], args.defaults, strict=True):
+        defaults[a.arg] = ast.unparse(d)
+    for a, kd in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+        defaults[a.arg] = ast.unparse(kd) if kd is not None else None
+    for name in ("self", "cls"):
+        defaults.pop(name, None)
+    return defaults, args.kwarg.arg if args.kwarg else None
+
+
+# ------------------------------------------- when a warning is issued (_classify)
+@dataclass(frozen=True)
+class _Lit:
+    """A value :func:`_evaluate` knows: a literal."""
+
+    value: Any
+
+
+@dataclass(frozen=True)
+class _Sentinel:
+    """A default that is no literal (``lib.no_default``): equal to itself only."""
+
+    code: str
+
+
+@dataclass
+class _Fact:
+    """What one test a warning is under says (:func:`_fact`): "passed" (it holds only when
+    the caller passes ``read``; ``exact`` when whenever it is passed), "value" (only for some
+    values passed), "default" (only when ``read`` is left at its default), "kwargs" (``if
+    kwargs:``) or "other"; and the test as it holds (``atom``)."""
+
+    kind: str
+    read: _Read | None
+    atom: ast.expr | None
+    exact: bool = False
+    equals: Any = None  # a value fact ``p == "epoch"``: the value
+    types: tuple[type, ...] | None = None  # a value fact ``isinstance(p, str)``: the types
+    guard: bool = False  # from an ``if <test>: return`` before the warning (_Guard)
+
+
+def _classify(
+    conditions: list[_Condition],
+    returned: bool,
+    r: _Reading,
+    message: str,
+    passes: _Passes | None,
+    behavior: bool,
+) -> tuple[str, str | None, str | None, bool, bool, bool, bool] | None:
+    """When a warning under ``conditions`` is issued: ``(when, parameter, condition,
+    from_kwargs, conditional, readable, on_init)``; None for one the caller asks for itself
+    (a flag named so, ``deprecated=False``, set: opt-in).
+
+    Every test counts, the outer ones too, each conjunct of an ``and`` on its own. WARNS_ALWAYS
+    under none (and no ``return`` before it). WARNS_PARAMETER when one holds only when the
+    caller passes a parameter (:func:`_fact`: ``if p is not <default>:``, ``"p" in kwargs``,
+    ``p = kwargs.pop("p", None)`` then ``if p is not None:``, ``self.p != "deprecated"`` for a
+    constructor's), or only for some of its values (``errors != "raise"``, ``if axis:``:
+    conditional, the test kept); WARNS_DEFAULT when one holds only while the caller leaves it
+    out (``if n_init == "warn":``, the default). When several parameters qualify, the one the
+    message names (:func:`_named_parameters`) is it, or none (WARNS_CONDITION); so is one the
+    message does not name when it names another. For a default that a message about behaviour
+    names, that one first. The other tests are the condition (those the parameter's own value
+    makes true left out: ``date_format == "epoch"`` implies ``not (date_format is None and
+    ...)``, ``isinstance(verify, str)`` implies ``verify is not False``); a ``return`` on
+    another path does not make a parameter's warning conditional. Else WARNS_CONDITION, with
+    all the tests."""
+    facts: list[_Fact] = []
+    marker = False
+    for condition in conditions:
+        test, branch = condition
+        if test is None:
+            marker = True
+            continue
+        for t, b in _atoms(test, branch):
+            fact = _fact(t, b, r)
+            fact.guard = isinstance(condition, _Guard)
+            facts.append(fact)
+    if passes is not None:
+        facts.append(_Fact("passed", _Read(passes.name, passes.from_kwargs, None), None, True))
+    for f in facts:
+        if (
+            f.kind == "value"
+            and f.read is not None
+            and f.read.default in ("False", "0")
+            and _HELPER_NAME.search(f.read.name)
+            and not _mentions_word(message, f.read.name)
+        ):
+            return None
+    required = [f for f in facts if f.kind in ("passed", "value") and f.read is not None]
+    defaulted = [f for f in facts if f.kind == "default" and f.read is not None]
+    named = _named_parameters(
+        message, {f.read.name for f in [*required, *defaulted] if f.read} | set(r.defaults)
+    )
+
+    def pick(group: list[_Fact]) -> _Read | None:
+        reads = list(dict.fromkeys(f.read for f in group if f.read is not None))
+        keys = list(dict.fromkeys((rd.name, rd.on_init) for rd in reads))
+        if len(keys) == 1:
+            chosen = keys[0]
+            if named and chosen[0] not in named:
+                return None  # the message is about another parameter
+        else:
+            hits = [k for k in keys if k[0] in named]
+            if len(hits) != 1:
+                return None
+            chosen = hits[0]
+        return next(rd for rd in reads if (rd.name, rd.on_init) == chosen)
+
+    chosen: _Read | None = None
+    when = WARNS_CONDITION
+    if behavior and defaulted and any(f.read and f.read.name in named for f in defaulted):
+        chosen = pick(defaulted)
+        when = WARNS_DEFAULT
+    if chosen is None and required:
+        chosen = pick(required)
+        when = WARNS_PARAMETER if chosen is not None else WARNS_CONDITION
+    elif chosen is None and defaulted:
+        chosen = pick(defaulted)
+        when = WARNS_DEFAULT if chosen is not None else WARNS_CONDITION
+    if chosen is not None:
+        key = (chosen.name, chosen.on_init)
+        mine = [f for f in facts if f.read is not None and (f.read.name, f.read.on_init) == key]
+        own = {id(f) for f in mine}
+        exact_kind = "passed" if when == WARNS_PARAMETER else "default"
+        rest = [
+            f
+            for f in facts
+            if not (id(f) in own and f.kind == exact_kind and f.exact)
+            and not (f.kind == "kwargs" and chosen.from_kwargs)
+            and f.atom is not None
+        ]
+        value = next((f.equals for f in mine if f.equals is not None), None)
+        if when == WARNS_DEFAULT and chosen.default is not None:
+            value = _default_value(chosen.default)
+        if value is not None:  # what the parameter's own value makes true says nothing more
+            rest = [
+                f
+                for f in rest
+                if id(f) in own or f.atom is None or not _implied(f.atom, chosen, value, r)
+            ]
+        # A return before the warning on another path (a fast path that does not read the
+        # parameter) does not make it conditional, as a return in a block does not.
+        rest = [f for f in rest if id(f) in own or not f.guard]
+        types = next((f.types for f in mine if f.types is not None), None)
+        if types is not None:  # isinstance(verify, str) implies verify is not False
+            rest = [f for f in rest if id(f) in own or not _type_implied(f.atom, chosen, types, r)]
+        # An early return on another path does not make it conditional: it is about the
+        # parameter (httpx's create_ssl_context returns for a string verify before cert).
+        conditional = bool(rest) or marker
+        text, readable = (None, False)
+        if rest and not marker:
+            text, readable = _condition_text([f.atom for f in rest if f.atom is not None], r)
+        from_kwargs = chosen.from_kwargs
+        return when, chosen.name, text, from_kwargs, conditional, readable, chosen.on_init
+    if not conditions and not returned and passes is None:
+        return WARNS_ALWAYS, None, None, False, False, False, False
+    atoms = [f.atom for f in facts if f.atom is not None]
+    text, readable = (None, False)
+    if atoms and not marker:
+        text, readable = _condition_text(atoms, r)
+    return WARNS_CONDITION, None, text, False, True, readable, False
+
+
+def _mentions_word(text: str, word: str) -> bool:
+    return re.search(rf"(?<![\w]){re.escape(word)}(?!\w)", text or "") is not None
+
+
+def _atoms(test: ast.expr, branch: bool) -> list[tuple[ast.expr, bool]]:
+    """``test`` under ``branch`` as tests that all hold: the conjuncts of an ``and`` that
+    holds, of an ``or`` that does not, through ``not``."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _atoms(test.operand, not branch)
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And if branch else ast.Or):
+        return [a for v in test.values for a in _atoms(v, branch)]
+    return [(test, branch)]
+
+
+_NEGATED_OPS: dict[type, type] = {
+    ast.Is: ast.IsNot,
+    ast.IsNot: ast.Is,
+    ast.Eq: ast.NotEq,
+    ast.NotEq: ast.Eq,
+    ast.In: ast.NotIn,
+    ast.NotIn: ast.In,
+}
+
+
+def _negated(test: ast.expr) -> ast.expr:
+    """``not test``, as code would say it: ``x is not None`` for ``x is None``."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return test.operand
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and type(test.ops[0]) in _NEGATED_OPS:
+        return ast.Compare(test.left, [_NEGATED_OPS[type(test.ops[0])]()], test.comparators)
+    return ast.UnaryOp(ast.Not(), test)
+
+
+def _fact(test: ast.expr, branch: bool, r: _Reading) -> _Fact:
+    """What one test (an atom of :func:`_atoms`) under ``branch`` says of the parameters
+    (:class:`_Fact`), worked out by evaluating it with its one parameter at its default."""
+    atom = test if branch else _negated(test)
+    if r.var_keyword and _is_name(test, r.var_keyword):
+        return _Fact("kwargs", None, atom)
+    key = _kwargs_key(test, branch, r.var_keyword)
+    if key is not None:
+        read = _Read(key[0], True, None)
+        return _Fact("passed" if key[1] else "default", read, atom, True)
+    reads = _reads_of(test, r)
+    if not reads or len(set(reads)) != 1 or reads[0].default is None:
+        return _Fact("other", None, atom)
+    read = reads[0]
+    value = _default_value(read.default or "None")
+    at_default = _truth(_evaluate(test, read, value, r))
+    if at_default is None:
+        return _Fact("other", None, atom)
+    if at_default != branch:  # does not hold at the default: the caller passes it
+        exact = _exact_passed(test, branch, read, r)
+        equals = _equality(test, branch, read, r)
+        types = _instance_of(test, branch, read, r)
+        return _Fact("passed" if exact else "value", read, atom, exact, equals, types)
+    if _exact_default(test, branch, read, r):
+        return _Fact("default", read, atom, True)
+    return _Fact("other", None, atom)
+
+
+def _parameter_read(node: ast.AST, r: _Reading, depth: int = 0) -> _Read | None:
+    """The parameter ``node`` reads: a parameter by its name, a local that holds one there
+    (:func:`_alias`: ``p = kwargs.pop("p", None)``, ``q = self.q``), ``kwargs.get("p")`` /
+    ``kwargs.pop("p", d)`` (whose default is None, or the one given), or in a method
+    ``self.p`` for a parameter of the class's constructor; None for anything else."""
+    if isinstance(node, ast.Name):
+        if node.id in r.defaults:
+            return _Read(node.id, False, r.defaults[node.id])
+        if depth < 3 and node.id not in r.names:
+            alias = _alias(r, node.id, getattr(node, "lineno", None))
+            return _parameter_read(alias, r, depth + 1) if alias is not None else None
+        return None
+    if isinstance(node, ast.Attribute) and r.me is not None and _is_name(node.value, r.me):
+        alias = _alias(r, f"{r.me}.{node.attr}", getattr(node, "lineno", None))
+        if alias is not None and depth < 3:  # set from a parameter in this very method
+            return _parameter_read(alias, r, depth + 1)
+        if node.attr in r.init:
+            return _Read(node.attr, False, r.init[node.attr], True)
+        return None
+    if (
+        r.var_keyword
+        and isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in ("get", "pop")
+        and _is_name(node.func.value, r.var_keyword)
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.isidentifier()
+    ):
+        default = ast.unparse(node.args[1]) if len(node.args) > 1 else "None"
+        return _Read(node.args[0].value, True, default)
+    return None
+
+
+def _reads_of(test: ast.expr, r: _Reading) -> list[_Read] | None:
+    """The one parameter ``test`` reads (:func:`_parameter_read`), as often as it reads it;
+    None when it reads anything else but constants, builtins and that parameter's default
+    (``lib.no_default``): another parameter, a local, an attribute of another object."""
+    reads: list[_Read] = []
+    foreign: list[str] = []
+    stack: list[ast.AST] = [test]
+    while stack:
+        node = stack.pop()
+        read = (
+            _parameter_read(node, r)
+            if isinstance(node, (ast.Name, ast.Attribute, ast.Call))
+            else None
+        )
+        if read is not None:
+            reads.append(read)
+            continue
+        if isinstance(node, ast.Name) and node.id in _BUILTIN_NAMES:
+            continue
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+            dotted = _dotted(node)
+            head = dotted.split(".")[0] if dotted else None
+            if dotted is not None and head not in r.defaults and head not in r.aliases:
+                foreign.append(dotted)  # a module's name, or another object's: unless a default
+                continue
+        stack.extend(ast.iter_child_nodes(node))
+    if not reads or len(set(reads)) != 1:
+        return None
+    default = reads[0].default or ""
+    if any(not _same_code(f, default) for f in foreign):
+        return None
+    return reads
+
+
+def _default_value(code: str) -> _Lit | _Sentinel:
+    """A default (as code) as :func:`_evaluate` takes it."""
+    try:
+        return _Lit(ast.literal_eval(code))
+    except Exception:
+        return _Sentinel(code)
+
+
+def _evaluate(node: ast.AST, read: _Read, value: Any, r: _Reading) -> Any:
+    """``node`` with the parameter ``read`` being ``value``: a :class:`_Lit`, the
+    :class:`_Sentinel`, or None when it cannot tell. The test reads nothing else (_reads_of)."""
+    if _parameter_read(node, r) == read:
+        return value
+    if isinstance(value, _Sentinel) and _same_code(ast.unparse(node), value.code):
+        return value
+    if isinstance(node, ast.Constant):
+        return _Lit(node.value)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        items = [_evaluate(e, read, value, r) for e in node.elts]
+        if all(isinstance(i, _Lit) for i in items):
+            return _Lit(tuple(i.value for i in items))
+        return None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        truth = _truth(_evaluate(node.operand, read, value, r))
+        return None if truth is None else _Lit(not truth)
+    if isinstance(node, ast.BoolOp):
+        truths = [_truth(_evaluate(v, read, value, r)) for v in node.values]
+        stop = isinstance(node.op, ast.Or)  # True ends an or, False an and
+        if stop in truths:
+            return _Lit(stop)
+        return _Lit(not stop) if all(t is (not stop) for t in truths) else None
+    if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        left = _evaluate(node.left, read, value, r)
+        right = _evaluate(node.comparators[0], read, value, r)
+        return _compare(node.ops[0], left, right)
+    if isinstance(node, ast.Call) and _is_name(node.func, "isinstance") and len(node.args) == 2:
+        item = _evaluate(node.args[0], read, value, r)
+        types = _builtin_types(node.args[1])
+        if item is None or types is None:
+            return None
+        if isinstance(item, _Sentinel):
+            return _Lit(object in types)
+        return _Lit(isinstance(item.value, types))
+    return None
+
+
+def _same_code(a: str, b: str) -> bool:
+    """Do two sentinels' code name one object (``lib.no_default``, ``no_default``)?"""
+    if a == b:
+        return True
+    dotted = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+    if not (dotted.fullmatch(a) and dotted.fullmatch(b)):
+        return False
+    return a.rsplit(".", 1)[-1] == b.rsplit(".", 1)[-1]
+
+
+def _compare(op: ast.cmpop, left: Any, right: Any) -> Any:
+    if left is None or right is None:
+        return None
+    if isinstance(op, (ast.Is, ast.IsNot, ast.Eq, ast.NotEq)):
+        if isinstance(left, _Sentinel) and isinstance(right, _Sentinel):
+            same = _same_code(left.code, right.code)
+        elif isinstance(left, _Sentinel) or isinstance(right, _Sentinel):
+            same = False
+        else:
+            try:
+                same = bool(left.value == right.value)
+            except Exception:
+                return None
+        return _Lit(same if isinstance(op, (ast.Is, ast.Eq)) else not same)
+    if isinstance(op, (ast.In, ast.NotIn)) and isinstance(right, _Lit):
+        if isinstance(left, _Sentinel):
+            inside = False
+        else:
+            try:
+                inside = left.value in right.value
+            except Exception:
+                return None
+        return _Lit(inside if isinstance(op, ast.In) else not inside)
+    if isinstance(left, _Lit) and isinstance(right, _Lit):
+        try:
+            if isinstance(op, ast.Lt):
+                return _Lit(left.value < right.value)
+            if isinstance(op, ast.LtE):
+                return _Lit(left.value <= right.value)
+            if isinstance(op, ast.Gt):
+                return _Lit(left.value > right.value)
+            if isinstance(op, ast.GtE):
+                return _Lit(left.value >= right.value)
+        except Exception:
+            return None
+    return None
+
+
+def _truth(value: Any) -> bool | None:
+    if isinstance(value, _Lit):
+        try:
+            return bool(value.value)
+        except Exception:
+            return None
+    return None
+
+
+def _builtin_types(node: ast.expr) -> tuple[type, ...] | None:
+    """The builtin types an ``isinstance`` test names, or None for any other."""
+    names = node.elts if isinstance(node, ast.Tuple) else [node]
+    found = [_TYPES.get(n.id) if isinstance(n, ast.Name) else None for n in names]
+    return tuple(t for t in found if t is not None) if all(found) else None
+
+
+def _is_sentinel(code: str | None) -> bool:
+    """A default that stands for "not passed": None, no literal (``lib.no_default``), or a
+    string that says so (``"deprecated"``, ``"warn"``)."""
+    if code is None:
+        return False
+    value = _default_value(code)
+    if isinstance(value, _Sentinel) or value.value is None:
+        return True
+    return isinstance(value.value, str) and _SENTINEL_STRING.fullmatch(value.value) is not None
+
+
+def _compared(test: ast.expr, read: _Read, r: _Reading) -> tuple[ast.cmpop, ast.expr] | None:
+    """For ``p <op> x`` (or ``x <op> p``) on the parameter ``read``: the operator and ``x``."""
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    left, right = test.left, test.comparators[0]
+    if _parameter_read(left, r) == read:
+        return test.ops[0], right
+    if _parameter_read(right, r) == read:
+        return test.ops[0], left
+    return None
+
+
+def _is_default(node: ast.expr, read: _Read) -> bool:
+    code = ast.unparse(node)
+    if read.default is None:
+        return False
+    if _same_code(code, read.default):
+        return True
+    try:
+        return bool(ast.literal_eval(code) == ast.literal_eval(read.default))
+    except Exception:
+        return False
+
+
+def _exact_passed(test: ast.expr, branch: bool, read: _Read, r: _Reading) -> bool:
+    """Does ``test`` under ``branch`` hold whenever the caller passes ``read``: ``p is not
+    <default>``, ``p != <sentinel>``, ``kwargs.get("p") is not None``, ``if p:`` for a
+    None default, or ``not (isinstance(p, str) and p == "deprecated")``?"""
+    while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test, branch = test.operand, not branch
+    compared = _compared(test, read, r)
+    if compared is not None:
+        op, other = compared
+        if not _is_default(other, read):
+            return False
+        if isinstance(op, ast.IsNot) == branch and isinstance(op, (ast.Is, ast.IsNot)):
+            return True
+        return (
+            isinstance(op, ast.NotEq) == branch
+            and isinstance(op, (ast.Eq, ast.NotEq))
+            and _is_sentinel(read.default)
+        )
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And) and not branch:
+        return any(_exact_passed(v, False, read, r) for v in test.values)
+    return branch and _parameter_read(test, r) == read and read.default == "None"
+
+
+def _exact_default(test: ast.expr, branch: bool, read: _Read, r: _Reading) -> bool:
+    """Does ``test`` under ``branch`` hold whenever the caller leaves ``read`` at its default
+    and only then: ``p is <default>``, ``p == <sentinel>``, ``if not p:`` for a None default?"""
+    while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test, branch = test.operand, not branch
+    compared = _compared(test, read, r)
+    if compared is not None:
+        op, other = compared
+        if not _is_default(other, read):
+            return False
+        if isinstance(op, ast.Is) == branch and isinstance(op, (ast.Is, ast.IsNot)):
+            return True
+        return (
+            isinstance(op, ast.Eq) == branch
+            and isinstance(op, (ast.Eq, ast.NotEq))
+            and _is_sentinel(read.default)
+        )
+    return not branch and _parameter_read(test, r) == read and read.default == "None"
+
+
+def _equality(test: ast.expr, branch: bool, read: _Read, r: _Reading) -> _Lit | None:
+    """For ``p == <literal>`` (or ``is``) that holds: the literal."""
+    while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test, branch = test.operand, not branch
+    compared = _compared(test, read, r)
+    if compared is None or not isinstance(compared[0], (ast.Eq, ast.Is)) or not branch:
+        return None
+    try:
+        return _Lit(ast.literal_eval(compared[1]))
+    except Exception:
+        return None
+
+
+def _instance_of(test: ast.expr, branch: bool, read: _Read, r: _Reading) -> tuple[type, ...] | None:
+    """For ``isinstance(p, T)`` that holds, on the parameter ``read``: the builtin types."""
+    while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        test, branch = test.operand, not branch
+    if (
+        branch
+        and isinstance(test, ast.Call)
+        and _is_name(test.func, "isinstance")
+        and len(test.args) == 2
+        and _parameter_read(test.args[0], r) == read
+    ):
+        return _builtin_types(test.args[1])
+    return None
+
+
+def _type_implied(atom: ast.expr | None, read: _Read, types: tuple[type, ...], r: _Reading) -> bool:
+    """Does ``atom`` hold whenever the parameter ``read`` is one of ``types``: ``p is not
+    False`` (or ``p != None``) for a constant that is none of them?"""
+    if atom is None:
+        return False
+    compared = _compared(atom, read, r)
+    if compared is None or not isinstance(compared[0], (ast.IsNot, ast.NotEq)):
+        return False
+    other = compared[1]
+    return isinstance(other, ast.Constant) and not isinstance(other.value, types)
+
+
+def _implied(atom: ast.expr, read: _Read, value: Any, r: _Reading) -> bool:
+    """Does ``atom`` hold whenever the parameter ``read`` is ``value`` (``not (date_format is
+    None and ...)`` when ``date_format == "epoch"``)? Unknown parts are unknown."""
+    return _truth(_partial(atom, read, value, r)) is True
+
+
+def _partial(node: ast.AST, read: _Read, value: Any, r: _Reading) -> Any:
+    """:func:`_evaluate` for a test that may read other things too (unknown, None)."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        truth = _truth(_partial(node.operand, read, value, r))
+        return None if truth is None else _Lit(not truth)
+    if isinstance(node, ast.BoolOp):
+        truths = [_truth(_partial(v, read, value, r)) for v in node.values]
+        stop = isinstance(node.op, ast.Or)
+        if stop in truths:
+            return _Lit(stop)
+        return _Lit(not stop) if all(t is (not stop) for t in truths) else None
+    reads = _reads_of(node, r) if isinstance(node, ast.expr) else None
+    if reads and set(reads) == {read}:
+        return _evaluate(node, read, value, r)
+    return None
+
+
+def _condition_text(atoms: list[ast.expr], r: _Reading) -> tuple[str | None, bool]:
+    """The tests a warning is under, joined with ``and``, as code (None when longer than
+    _CONDITION_LIMIT), and whether they read nothing but the function's parameters (and
+    builtins)."""
+    if not atoms:
+        return None, False
+    expr = atoms[0] if len(atoms) == 1 else ast.BoolOp(ast.And(), list(atoms))
+    try:
+        code = " ".join(ast.unparse(expr).split())
+    except Exception:
+        return None, False
+    if len(code) > _CONDITION_LIMIT:
+        return None, False
+    allowed = set(r.defaults) | ({r.var_keyword} if r.var_keyword else set()) | _BUILTIN_NAMES
+    readable = all(n.id in allowed for n in ast.walk(expr) if isinstance(n, ast.Name))
+    return code, readable
+
+
+# ------------------------------------------- what the release at the cutoff warned of
+@dataclass
+class _Candidate:
+    """A warning of the pinned release that :meth:`_Differ._warned` reports: under ``path``
+    (the public path of ``target``, the object the change is to), with the release at the
+    cutoff's ``old_target``, and ``fn``, the function whose parameters it is about."""
+
+    path: str
+    target: Any
+    old_target: Any
+    fn: Any
+    warned: _Warned
+
+
+@dataclass
+class _ServedName:
+    """A name a module's ``__getattr__`` serves (:meth:`_Differ._getattr_warned`), as a change
+    is made of it: an attribute of the module, which no static reading sees."""
+
+    name: str
+    parent: Any
+    is_attribute: bool = True
+    annotation: Any = None
+    docstring: Any = None
+
+    @property
+    def path(self) -> str:
+        return f"{self.parent.path}.{self.name}"
+
+    @property
+    def module(self) -> Any:
+        return self.parent
+
+
+@dataclass
+class _Issuance:
+    """What the release at the cutoff warned of in a function (:meth:`_Differ._warned`): the
+    keys of its warnings (of a deprecation category, or of another whose text says it
+    deprecates something: scikit-learn 1.6's UserWarning for ``cv='prefit'``), their texts by
+    parameter (any category), the parameters its decorators deprecate, and the texts every
+    warning of its module gives."""
+
+    keys: set[tuple[Any, ...]]
+    texts: dict[str | None, list[str]]
+    decorated: set[str]
+    module: set[str]
+
+    @classmethod
+    def of(cls, before: list[_Warned], old_fn: Any, reader: _WarnReader) -> _Issuance:
+        keys = {w.key for w in before if w.deprecation or _DEPRECATION_TEXT.search(w.message)}
+        texts: dict[str | None, list[str]] = {}
+        for w in before:
+            if comparable := _comparable(w.message):
+                texts.setdefault(w.parameter, []).append(comparable)
+        decorated: set[str] = set()
+        module: set[str] = set()
+        if old_fn is not None:
+            try:
+                decorated = {p for p, _text, _by in decorator_deprecations(old_fn) if p}
+            except Exception:
+                decorated = set()
+            try:
+                module = reader.module_texts(old_fn.module)
+            except Exception:
+                module = set()
+        return cls(keys, texts, decorated, module)
+
+    def covers(self, w: _Warned, name: str) -> bool:
+        """Did the release at the cutoff issue ``w`` (a warning of the function ``name``)
+        already: one with its key; for a parameter one of its decorators deprecates; one
+        about the same parameter (or none) with its text once versions are left out, or whose
+        text it goes on from (statsmodels 0.15's "Argument ... not used by MixedLM.fit. Future
+        versions will raise ..."); or the same text, which names the parameter (or the
+        function) and holds no value, anywhere in the function's module (a helper of another
+        name, a function it delegates to)?"""
+        if w.key in self.keys:
+            return True
+        if w.parameter is not None and w.parameter in self.decorated:
+            return True
+        mine = _comparable(w.message)
+        if not mine:
+            return False
+        for text in self.texts.get(w.parameter, ()):
+            grown = len(text) >= 20 and text.count(" ") >= 3 and f" {text} " in f" {mine} "
+            if text == mine or grown:
+                return True
+        subject = w.parameter or name
+        return (
+            _VALUE not in w.message
+            and mine in self.module
+            and bool(subject)
+            and _mentions_word(w.message, subject)
+        )
+
+
+def _as_access(w: _Warned, access: str) -> _Warned:
+    """A warning of a property's getter or setter (or a module's ``__getattr__``) as one
+    issued when the name is read or set (WARNS_ACCESS)."""
+    if w.when == WARNS_ALWAYS:
+        return replace(w, when=WARNS_ACCESS, access=access)
+    keep = w.parameter is None
+    return replace(
+        w,
+        when=WARNS_ACCESS,
+        access=access,
+        parameter=None,
+        from_kwargs=False,
+        on_init=False,
+        conditional=True,
+        condition=w.condition if keep else None,
+        readable=w.readable and keep,
+    )
+
+
+def _warned_order(w: _Warned) -> tuple[int, bool]:
+    """The order the warnings of one change are told in: at every call (or access) first,
+    then a parameter, a default, a condition; each unconditional before conditional."""
+    rank = {WARNS_ALWAYS: 0, WARNS_ACCESS: 0, WARNS_PARAMETER: 1, WARNS_DEFAULT: 2}
+    return rank.get(w.when, 3), w.conditional
+
+
+def _dict_tables(tree: ast.Module | None) -> dict[str, set[str]]:
+    """A module's dicts of string keys, by name (``_DEPRECATED = {"Old": "New"}``)."""
+    tables: dict[str, set[str]] = {}
+    for stmt in tree.body if tree is not None else ():
+        target, value = None, None
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target, value = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AnnAssign):
+            target, value = stmt.target, stmt.value
+        if isinstance(target, ast.Name) and isinstance(value, ast.Dict):
+            tables[target.id] = {
+                k.value
+                for k in value.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+    return tables
+
+
+def _selected_names(
+    test: ast.expr, branch: bool, param: str, tables: dict[str, set[str]]
+) -> set[str] | None:
+    """The names a ``__getattr__``'s test picks when it holds: ``name == "Old"``, ``name in
+    ("A", "B")``, ``name in _DEPRECATED`` (a table of the module), or several joined with
+    ``or``; None for any other test."""
+    if not branch:
+        return None
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
+        parts = [_selected_names(v, True, param, tables) for v in test.values]
+        if any(p is None for p in parts):
+            return None
+        return set().union(*(p for p in parts if p is not None))
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    op, left, right = test.ops[0], test.left, test.comparators[0]
+    if isinstance(op, ast.Eq):
+        for a, b in ((left, right), (right, left)):
+            if _is_name(a, param) and isinstance(b, ast.Constant) and isinstance(b.value, str):
+                return {b.value}
+        return None
+    if isinstance(op, ast.In) and _is_name(left, param):
+        if isinstance(right, (ast.Tuple, ast.List, ast.Set)):
+            found = {e.value for e in right.elts if isinstance(e, ast.Constant)}
+            return {f for f in found if isinstance(f, str)} or None
+        if isinstance(right, ast.Name) and right.id in tables:
+            return set(tables[right.id])
+    return None
+
+
+def _getattr_names(hook: Any, tree: ast.Module | None) -> set[str]:
+    """The names a module's ``__getattr__`` serves: those its tests pick
+    (:func:`_selected_names`), and the keys of the tables it looks the name up in."""
+    node = _function_def(hook)
+    args = [a.arg for a in (*node.args.posonlyargs, *node.args.args)] if node else []
+    if node is None or not args:
+        return set()
+    param, tables = args[0], _dict_tables(tree)
+    names: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.If):
+            names |= _selected_names(n.test, True, param, tables) or set()
+        elif (
+            isinstance(n, ast.Subscript)
+            and _is_name(n.slice, param)
+            and isinstance(n.value, ast.Name)
+            and n.value.id in tables
+        ):
+            names |= tables[n.value.id]
+    return names
+
+
+def _getattr_warnings(
+    reader: _WarnReader, hook: Any, tree: ast.Module | None, *, every: bool = False
+) -> dict[str, list[_Warned]]:
+    """The deprecation warnings a module's ``__getattr__`` issues, by the name it issues them
+    for (the tests that pick it: :func:`_selected_names`); WARNS_ALWAYS when nothing else
+    decides, else WARNS_CONDITION. ``every``: of any category."""
+    node = _function_def(hook)
+    args = [a.arg for a in (*node.args.posonlyargs, *node.args.args)] if node else []
+    if node is None or not args:
+        return {}
+    param, tables = args[0], _dict_tables(tree)
+    r = reader.reading(hook, node)
+    file = _file_of(hook)
+    found: dict[str, list[_Warned]] = {}
+    for call, conditions, exited in _calls_under(node):
+        names: set[str] | None = None
+        others = 0
+        for test, branch in conditions:
+            picked = _selected_names(test, branch, param, tables) if test is not None else None
+            if picked is None:
+                others += 1
+            else:
+                names = picked if names is None else names & picked
+        if not names:
+            continue
+        got = reader.warning_of(call, r, every=every)
+        if got is None or not (got.deprecation or every):
+            continue
+        line = int(getattr(hook, "lineno", 1) or 1) + call.lineno - 1
+        conditional = bool(others) or exited
+        for name in sorted(names):
+            message = got.message
+            if got.message_node is not None:
+                filled = reader._render(got.message_node, r, call.lineno, {param: name}, 0)
+                message = " ".join((filled or message).split())
+            found.setdefault(name, []).append(
+                _Warned(
+                    WARNS_CONDITION if conditional else WARNS_ALWAYS,
+                    got.category or "UserWarning",
+                    message,
+                    f"{file}:{line}" if file else None,
+                    conditional=conditional,
+                    behavior=_behavior(message, got.category),
+                    deprecation=got.deprecation,
+                )
+            )
+    return found
 
 
 def pep702_message(obj: Any) -> str | None:

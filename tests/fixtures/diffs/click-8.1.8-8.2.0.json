@@ -1,5 +1,5 @@
 {
- "schema": 21,
+ "schema": 22,
  "package": "click",
  "from_version": "8.1.8",
  "to_version": "8.2.0",
@@ -47,7 +47,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -89,7 +90,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -130,7 +132,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -172,7 +175,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -213,7 +217,8 @@
    "renamed": false,
    "request_extras": [],
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -255,7 +260,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -306,7 +312,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -347,7 +354,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -389,7 +397,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -431,7 +440,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -473,7 +483,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -539,7 +550,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -607,7 +619,8 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": null
   },
   {
    "package": "click",
@@ -651,7 +664,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/__init__.py:77",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -695,7 +714,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/__init__.py:88",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -737,7 +762,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/__init__.py:99",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -781,7 +812,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/core.py:3116",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -825,7 +862,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/core.py:3125",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -866,7 +909,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:505",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -907,7 +956,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:505",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -949,7 +1004,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:505",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -990,7 +1051,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:505",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -1031,7 +1098,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:505",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -1072,7 +1145,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "public"
+   "tier": "public",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:521",
+    "access": "read"
+   }
   },
   {
    "package": "click",
@@ -1113,7 +1192,13 @@
    "renamed": false,
    "request_extras": null,
    "dependency": null,
-   "tier": "internal"
+   "tier": "internal",
+   "warning": {
+    "when": "access",
+    "category": "DeprecationWarning",
+    "at": "click/parser.py:505",
+    "access": "read"
+   }
   }
  ]
 }
