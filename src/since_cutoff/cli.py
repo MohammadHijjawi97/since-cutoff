@@ -68,6 +68,11 @@ FAIL_ON = ("changes", "used", "old-form")
 # ``sync --per-package``'s default: since_cutoff.notes.IMPORTED_APIS, copied so that building
 # the parser (--help) does not import notes and the API diff; test_startup.py keeps them equal.
 IMPORTED_APIS = 5
+# ``--cutoff-margin``'s default and environment variable: since_cutoff.models'
+# DEFAULT_CUTOFF_MARGIN and CUTOFF_MARGIN_VAR, copied so that building the parser does not
+# import models (and the network code with it); test_startup.py keeps them equal.
+DEFAULT_CUTOFF_MARGIN = 30
+CUTOFF_MARGIN_VAR = "SINCE_CUTOFF_CUTOFF_MARGIN"
 EXAMPLES = """examples:
   since-cutoff                          probe your coding agent's model on this project
   since-cutoff scan                     the changed APIs your code uses, with a note for each
@@ -264,6 +269,17 @@ def _at_least_one(value: str) -> int:
     return n
 
 
+def _margin_flag(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--cutoff-margin",
+        type=_positive,
+        metavar="DAYS",
+        help="compare from the latest release published this many days before the cutoff "
+        f"(default: {DEFAULT_CUTOFF_MARGIN}, or {CUTOFF_MARGIN_VAR}; models know the weeks "
+        "before their cutoff least; 0 compares from the latest release at the cutoff itself)",
+    )
+
+
 def _common(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "path", nargs="?", default=".", help="project directory (default: current directory)"
@@ -281,6 +297,7 @@ def _common(p: argparse.ArgumentParser) -> None:
         "--base-url", help="API base URL (for openai-compatible, or to override a provider's)"
     )
     p.add_argument("--cutoff", help="override the model's training cutoff (YYYY-MM or YYYY-MM-DD)")
+    _margin_flag(p)
     p.add_argument(
         "--all-deps",
         action="store_true",
@@ -435,6 +452,13 @@ def build_parser() -> argparse.ArgumentParser:
         "summary, the dependency table and the top --limit changes of each changed dependency",
     )
     scan.add_argument(
+        "--internal",
+        action="store_true",
+        help="list the changes to internal APIs too (not reached from the package's top "
+        "level, named in an __all__ or documented), which every count gives apart; implies "
+        "--all",
+    )
+    scan.add_argument(
         "--fail-on",
         choices=FAIL_ON,
         action="append",
@@ -481,6 +505,7 @@ def build_parser() -> argparse.ArgumentParser:
         "(default without a block: the model your coding agent is set up with, as for run)",
     )
     sync.add_argument("--cutoff", help="override the training cutoff (YYYY-MM or YYYY-MM-DD)")
+    _margin_flag(sync)
     sync.add_argument(
         "--target",
         help="file to write notes into (default: AGENTS.md and CLAUDE.md where they already have "
@@ -561,6 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
         "out of date, nothing otherwise; always exit with code 0",
     )
     status.add_argument("--json", action="store_true", help="print the status as JSON")
+    _margin_flag(status)
     status.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
 
     models = sub.add_parser("models", help="list known models and their training cutoffs")
@@ -739,6 +765,23 @@ def _cache_problem(args: argparse.Namespace) -> str | None:
     return f"cache {args.action} takes no {', '.join(flags)}: the kinds go with clear"
 
 
+def _cutoff_margin(args: argparse.Namespace) -> int:
+    """``--cutoff-margin``, else ``SINCE_CUTOFF_CUTOFF_MARGIN``, else the default: how many days
+    before the cutoff the comparison release must have been published."""
+    from since_cutoff.models import parse_margin
+
+    given = getattr(args, "cutoff_margin", None)
+    if given is not None:
+        return int(given)
+    value = os.environ.get(CUTOFF_MARGIN_VAR)
+    if value is None or not value.strip():
+        return DEFAULT_CUTOFF_MARGIN
+    try:
+        return parse_margin(value)
+    except ValueError as exc:
+        raise SinceCutoffError(f"{CUTOFF_MARGIN_VAR}: {exc}") from exc
+
+
 def _settings(args: argparse.Namespace) -> Settings:
     from datetime import date
 
@@ -753,6 +796,7 @@ def _settings(args: argparse.Namespace) -> Settings:
     s = Settings(
         model=args.model or "claude-code",
         cutoff=cutoff,
+        cutoff_margin=_cutoff_margin(args),
         all_deps=args.all_deps,
         include=args.only,
         exclude=args.exclude,
@@ -831,7 +875,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
 
     if args.command == "scan" and args.model is None and settings.cutoff is not None:
         # A date alone: there is no model to look up, name or guess (and no CLI to ask).
-        target = ModelTarget.cutoff_only(settings.cutoff)
+        target = ModelTarget.cutoff_only(settings.cutoff, margin=settings.cutoff_margin)
         ui.print(_model_line(target, "--cutoff; no model given"))
     else:
         target = _resolve_target(engine, allow_calls=args.command == "run")
@@ -856,7 +900,13 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         shown = reporter.warned
         if args.command == "scan":
             render_scan(
-                ui, scan, show_all=args.all, verbose=args.verbose, limit=args.limit, shown=shown
+                ui,
+                scan,
+                show_all=args.all or args.internal,
+                verbose=args.verbose,
+                limit=args.limit,
+                shown=shown,
+                internal=args.internal,
             )
         else:
             render_console(ui, scan, run, verbose=args.verbose, shown=shown)
@@ -991,21 +1041,31 @@ def _use_detected_model(
 
 
 def _model_line(target: ModelTarget, source: str | None = None) -> str:
-    """``• Model claude-sonnet-4-5, training cutoff 2025-07-31 (from models.dev)``, as rich
-    markup; a cutoff alone; several models (``sync --model a,b``) with their earliest cutoff."""
+    """``• Model claude-sonnet-4-5, training cutoff 2025-07-31, comparing from releases up to
+    2025-07-01 (from models.dev)``, as rich markup; a cutoff alone; several models (``sync
+    --model a,b``) with their earliest cutoff. With ``--cutoff-margin 0`` the comparison day is
+    the cutoff, and the line does not repeat it."""
     from since_cutoff.notes import model_names
 
     day = target.cutoff.isoformat()
+    from_day = (
+        f", comparing from releases up to [bold]{target.compare_date.isoformat()}[/bold]"
+        if target.margin > 0
+        else ""
+    )
     where = f"[dim](from {_escape(source or target.cutoff_source)})[/dim]"
     if not target.model_id:
-        return f"[dim]•[/dim] Custom cutoff [bold]{day}[/bold] {where}"
+        return f"[dim]•[/dim] Custom cutoff [bold]{day}[/bold]{from_day} {where}"
     names = model_names(target.model_id)
     if len(names) > 1:
         shown = ", ".join(f"[bold]{_escape(n)}[/bold]" for n in names)
-        return f"[dim]•[/dim] Models {shown}, earliest training cutoff [bold]{day}[/bold] {where}"
+        return (
+            f"[dim]•[/dim] Models {shown}, earliest training cutoff [bold]{day}[/bold]"
+            f"{from_day} {where}"
+        )
     return (
         f"[dim]•[/dim] Model [bold]{_escape(target.model_id)}[/bold], training cutoff "
-        f"[bold]{day}[/bold] {where}"
+        f"[bold]{day}[/bold]{from_day} {where}"
     )
 
 
@@ -1072,6 +1132,7 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         cutoff = parse_cutoff(args.cutoff) if args.cutoff else None
     except ValueError as exc:
         raise SinceCutoffError(str(exc)) from exc
+    margin = _cutoff_margin(args)
     project = load_project(Path(args.path))
     targets = [read_target(project.root, p) for p in block_targets(project.root, args.target)]
     store = DiskCache()
@@ -1080,9 +1141,9 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
     given: ModelTarget | None = None
     for t in targets:
         # The model and cutoff the block was written for, unless --model or --cutoff is given.
-        basis = None if args.model or cutoff else sticky_target(t)
+        basis = None if args.model or cutoff else sticky_target(t, margin)
         if basis is None:
-            given = given or _sync_model(args.model, cutoff, project.root, store, reporter)
+            given = given or _sync_model(args.model, cutoff, project.root, store, reporter, margin)
             basis = given
         scope = args.scope or t.scope or SCOPE_USED
         suggestions = t.meta.get("suggestions") is True
@@ -1225,7 +1286,12 @@ def _sync_scans(
 
 
 def _sync_model(
-    models: list[str], cutoff: date | None, root: Path, store: DiskCache, reporter: Reporter
+    models: list[str],
+    cutoff: date | None,
+    root: Path,
+    store: DiskCache,
+    reporter: Reporter,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> ModelTarget:
     """The model(s) and cutoff given on the command line, else the model the coding agent is
     set up with, as for ``scan``; several models: the earliest of their cutoffs."""
@@ -1234,11 +1300,13 @@ def _sync_model(
     from since_cutoff.engine import ModelTarget, Settings
 
     if not models and cutoff is not None:
-        return ModelTarget.cutoff_only(cutoff, "--cutoff; no model given")
+        return ModelTarget.cutoff_only(cutoff, "--cutoff; no model given", margin=margin)
     found: list[ModelTarget] = []
     specs: list[str | None] = [*dict.fromkeys(models)] or [None]
     for spec in specs:
-        settings = Settings(model=spec or "claude-code", cutoff=cutoff, today=date.today())
+        settings = Settings(
+            model=spec or "claude-code", cutoff=cutoff, cutoff_margin=margin, today=date.today()
+        )
         if spec is None:
             _use_detected_model(settings, root, reporter, probes=False)
         engine = Engine(settings, store=store, llm_cache=store, reporter=reporter)
@@ -1252,6 +1320,7 @@ def _sync_model(
         ", ".join(dict.fromkeys(t.model_id for t in found)),
         earliest,
         f"the earliest of {each}",
+        margin=margin,
     )
 
 
@@ -1316,7 +1385,10 @@ def _status(args: argparse.Namespace, out: Console | None) -> int:
     targets = [read_target(project.root, p) for p in block_targets(project.root, args.target)]
     detected = _detected_offline(project.root)
     deps = current_deps_hash(project)
-    statuses = [target_status(project, t, deps=deps, detected=detected) for t in targets]
+    margin = _cutoff_margin(args)
+    statuses = [
+        target_status(project, t, deps=deps, detected=detected, margin=margin) for t in targets
+    ]
     code = exit_code(statuses)
     if args.hook:
         line = hook_line(statuses)

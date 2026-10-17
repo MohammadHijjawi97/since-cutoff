@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from since_cutoff import cli, notes
+from since_cutoff import cli, models, notes
 
 # What --help, --version and cache must not import: see the import-time profile in the
 # changelog of 0.6 (engine 160 ms, baselines 90, apidiff 85, rich.console 60, ...).
@@ -149,6 +149,18 @@ def test_the_per_package_default_in_the_help_is_the_one_sync_uses() -> None:
     parser = cli.build_parser()
     [sub] = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
     assert f"(default: {notes.IMPORTED_APIS}," in sub.choices["sync"].format_help()
+
+
+def test_the_cutoff_margin_default_in_the_help_is_the_one_the_engine_uses() -> None:
+    """``cli.DEFAULT_CUTOFF_MARGIN`` and ``cli.CUTOFF_MARGIN_VAR`` are copies of the ones in
+    ``models``, so that --help does not import models."""
+    assert cli.DEFAULT_CUTOFF_MARGIN == models.DEFAULT_CUTOFF_MARGIN
+    assert cli.CUTOFF_MARGIN_VAR == models.CUTOFF_MARGIN_VAR
+    parser = cli.build_parser()
+    [sub] = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
+    for command in ("scan", "run", "sync", "status"):
+        text = " ".join(sub.choices[command].format_help().split())
+        assert f"(default: {models.DEFAULT_CUTOFF_MARGIN}, or {models.CUTOFF_MARGIN_VAR};" in text
 
 
 def test_the_lazy_names_are_the_real_ones_once_called() -> None:

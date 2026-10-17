@@ -170,8 +170,8 @@ def test_a_sync_with_nothing_to_change_leaves_the_file_alone(sc, tmp_path) -> No
     code, out = sc("sync", root)
     assert code == EXIT_OK, out
     assert (
-        "• Model claude-sonnet-4-5, training cutoff 2025-07-31 (from the notes in AGENTS.md; "
-        "--model to change)" in out
+        "• Model claude-sonnet-4-5, training cutoff 2025-07-31, comparing from releases up to "
+        "2025-07-01 (from the notes in AGENTS.md; --model to change)" in out
     )
     assert (
         "AGENTS.md is up to date: 2 notes for claude-sonnet-4-5 (cutoff 2025-07-31), versions "
@@ -230,7 +230,7 @@ def test_a_bumped_package_is_checked_again(sc, tmp_path) -> None:
         "• pyproject.toml changed since the notes in AGENTS.md were written: toylib 2.0 -> 2.1"
         in out
     )
-    assert "-**toylib 2.0** (1.0 at the cutoff)\n+**toylib 2.1** (1.0 at the cutoff)" in out
+    assert "-**toylib 2.0** (compared from 1.0)\n+**toylib 2.1** (compared from 1.0)" in out
     assert (
         "AGENTS.md is out of date: toylib 2.0 in the notes, 2.1 in pyproject.toml. Run "
         "`since-cutoff sync`." in out
@@ -241,7 +241,7 @@ def test_a_bumped_package_is_checked_again(sc, tmp_path) -> None:
     assert code == EXIT_OK
     assert "✓ Updated AGENTS.md: toylib checked again for 2.1 (2 notes, text unchanged)." in out
     assert agents(root).startswith(MINE + "\n" + BLOCK_START)
-    assert "**toylib 2.1** (1.0 at the cutoff)" in agents(root)
+    assert "**toylib 2.1** (compared from 1.0)" in agents(root)
 
 
 def test_a_package_no_longer_a_dependency_is_dropped(sc, tmp_path) -> None:
@@ -269,19 +269,27 @@ def test_a_package_at_or_below_the_cutoff_release_is_dropped(sc, tmp_path) -> No
     set_pins(root, ("toylib==1.0", "otherlib==1.0"))
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OUT_OF_DATE
+    # The release the scan compares from is the latest one 30 days before the cutoff (the
+    # margin), not at it.
     assert (
-        "AGENTS.md is out of date: toylib 1.0 in pyproject.toml is the latest release at the "
-        "cutoff." in out
+        "AGENTS.md is out of date: toylib 1.0 in pyproject.toml is the latest release 30 days "
+        "before the cutoff." in out
     )
     code, out = sc("sync", root, "--yes")
-    assert "toylib dropped (1.0 is the latest release at the cutoff)" in out
+    assert "toylib dropped (1.0 is the latest release 30 days before the cutoff)" in out
     assert parse_block(agents(root)) is None
     # Older than the release at the cutoff: said so (it said "0.9 is not newer than 1.0").
     set_pins(root, ("toylib==2.0", "otherlib==1.0"))
     first_sync(sc, root)
     set_pins(root, ("toylib==0.9", "otherlib==1.0"))
+    # With no margin, the release the scan compares from is the one at the cutoff itself.
+    code, out = sc("sync", root, "--check", "--cutoff-margin", "0")
+    assert "toylib 0.9 in pyproject.toml is older than 1.0, the latest release at the cutoff" in out
     code, out = sc("sync", root, "--yes")
-    assert "toylib dropped (0.9 is older than 1.0, the latest release at the cutoff)" in out
+    assert (
+        "toylib dropped (0.9 is older than 1.0, the latest release 30 days before the cutoff)"
+        in out
+    )
 
 
 def test_an_api_the_code_no_longer_uses_loses_its_note(sc, tmp_path) -> None:
@@ -345,7 +353,8 @@ def test_several_models_use_the_earliest_cutoff(sc, tmp_path) -> None:
     assert block.meta["cutoff"] == "2025-02-28"  # claude-haiku-4-5's; gpt-5.4's is 2025-08-31
     assert (
         "Changed after the earliest training cutoff of `gpt-5.4` and `claude-haiku-4-5` "
-        "(2025-02-28) and used by this project" in agents(root)
+        "(2025-02-28, comparing from releases up to 2025-01-29) and used by this project"
+        in agents(root)
     )
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OK and "• Models gpt-5.4, claude-haiku-4-5, earliest" in out
@@ -359,7 +368,10 @@ def test_a_cutoff_alone_is_sticky_too(sc, tmp_path) -> None:
     assert block is not None and block.meta["model"] is None
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OK
-    assert "• Custom cutoff 2025-07-31 (from the notes in AGENTS.md; --cutoff to change)" in out
+    assert (
+        "• Custom cutoff 2025-07-31, comparing from releases up to 2025-07-01 (from the notes in "
+        "AGENTS.md; --cutoff to change)" in out
+    )
     assert "2 notes for the cutoff 2025-07-31" in out
 
 
@@ -1107,3 +1119,30 @@ def test_per_package_sets_the_imported_budget_and_the_block_keeps_it(sc, tmp_pat
     block = parse_block(agents(root))
     assert block is not None and "per_package" not in block.meta  # the default is not recorded
     assert len(block.packages["toylib"].bullets) == 5
+
+
+def test_sync_rewrites_a_block_compared_from_another_day(sc, tmp_path) -> None:
+    """The margin is the scan's setting, not the block's: a block written with
+    ``--cutoff-margin 0`` is out of date for ``sync --check`` and rewritten by ``sync``, which
+    says why; the header and the meta line then say the new day."""
+    root = make_app(tmp_path)
+    assert sc("sync", root, *SONNET, "--yes", "--cutoff-margin", "0")[0] == EXIT_OK
+    assert "(2025-07-31) and used by this project" in agents(root)
+    code, out = sc("sync", root, "--check")
+    assert code == EXIT_OUT_OF_DATE
+    assert (
+        "AGENTS.md is out of date: the notes compare from the cutoff itself, not 30 days before "
+        "the cutoff (--cutoff-margin). Run `since-cutoff sync`."
+    ) in out
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK
+    assert (
+        "Updated AGENTS.md: now comparing from 30 days before the cutoff (it was the cutoff "
+        "itself; --cutoff-margin)."
+    ) in out
+    block = parse_block(agents(root))
+    assert block is not None and block.meta["margin"] == 30
+    assert "(2025-07-31, comparing from releases up to 2025-07-01) and used by this project" in (
+        agents(root)
+    )
+    assert sc("sync", root, "--check")[0] == EXIT_OK

@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+- The comparison release is the latest release published at least 30 days before the model's
+  training cutoff, not at the cutoff itself. A model's training data lags its stated cutoff, so
+  it knows the last weeks before the cutoff least: llama-index-core 0.13.0, which removed
+  `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on 2025-07-30, the day before
+  claude-sonnet-4-5's cutoff, and a scan of a project pinning 0.14.25 said the code used none
+  of the APIs that changed; it now reports both removals. `--cutoff-margin DAYS`,
+  `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and the action's `cutoff-margin`
+  input set the margin; 0 compares from the cutoff itself, as before. The model line says both
+  days ("training cutoff 2025-07-31, comparing from releases up to 2025-07-01"), and so do the
+  reports, `results.json` (`compare_from`, `settings.cutoff_margin`, also in `sync --json` and
+  `status --json`) and the notes block's header and meta line, so `status` and `sync --check`
+  report a block compared from another day as out of date. A block written by an earlier
+  since-cutoff compared from the cutoff itself and is reported out of date until `since-cutoff
+  sync` rewrites it (`--cutoff-margin 0` keeps the old comparison). The block's package line
+  says which release the notes compare from, `**anthropic 1.8.0** (compared from 0.56.0)`; it
+  said "0.56.0 at the cutoff", which the margin made false, and both forms are read. A
+  dependency first released within the margin counts as new to the model, and the scan, the
+  MCP tools and `sync` say it was "first released 2025-07-15, within 30 days of the cutoff", not
+  "after the cutoff"; one the model knows is "the latest release 30 days before the cutoff".
+- A module that takes its names from another distribution with `from x import *` is compared
+  with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
+  mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under
+  `mcp.types` while mcp-types had renamed every field to snake_case, so
+  `types.Tool(name=..., inputSchema=...)` broke unreported. The sibling distribution is
+  downloaded at the version the project locks (or the newest its requirement allows on the
+  comparison date, for the release at the cutoff), under the usual download limit and cache, and
+  its names are compared under the paths that re-export them (`mcp.types.Tool.inputSchema`
+  removed). Only a star import that runs counts: not one in a docstring, a function or an `if
+  TYPE_CHECKING:` block. An object a release only re-exports from elsewhere is now compared too,
+  where griffe stops at the alias: a class's members (inherited ones included), a function's
+  parameters and a change of kind, reported under the re-exporting path. When the sibling cannot be downloaded,
+  the scan, the report and the MCP tools warn that changes to those modules are not reported.
+  Cached diffs are keyed on the siblings read, and on the source schema, with the diff schema;
+  which distributions each release star-imports is kept in the cache, so a cached diff is still
+  served from the pinned release alone, with nothing else to download.
+- README: a newcomer now sees, in order, what it is, how to install it (uvx, pipx, pip), a
+  Quick start on the sample project with the real `scan` output and the block `sync` writes,
+  when to use it and what it does not do, then the existing sections. New FAQ: the training
+  cutoff against the release date, what is sent where, why some notes name no replacement,
+  AGENTS.md and CLAUDE.md, the notes' cost in tokens, offline use. The counts come from 0.5.0's
+  scan (307 breaking changes and 23 new deprecations in the sample project). The Chinese,
+  Spanish and French READMEs follow the same structure, and now also describe the Gemini CLI
+  model detection and `sync --json`, which only the English README had.
+- Docs site: index.md and ai-stack.md describe 0.5.0 (scan, sync, status, pre-commit, the Action
+  and the MCP server) and ai-stack.md's counts come from a re-run with 0.5.0; a nav bar links
+  the pages and the GitHub docs (#67); the link-preview text no longer says "verified AGENTS.md
+  notes" (#51); benchmark.md says it is the study as run with 0.4.1's notes.
+- README (all four languages) and how-it-works.md: the intro, the Quick start, "The problem",
+  the MCP and `[diff]` tables, the `sync` and block descriptions describe the comparison release
+  as the latest release published at least 30 days before the model's training cutoff by
+  default; they still said "on or before the cutoff".
+- `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
+  default in all four READMEs (the Spanish and French pins and the translated action tables
+  were not checked).
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
@@ -66,8 +120,10 @@
   stub), is no longer reported as removed, nor is what it defines or a name a readable
   module still imports from it (#52). Since only sources are extracted, the diff could not
   tell it from a removal. A name a readable module stopped importing from it is still
-  removed, and a package whose `__init__` is compiled hides only its own names, not its
-  readable submodules. The source tree now records the compiled modules (extension modules
+  removed. A top-level package whose `__init__` is compiled hides only the names it defines; a
+  compiled subpackage `__init__` hides that subpackage, since griffe cannot enter a directory
+  without an `__init__.py` inside a regular package, and the scan warns. The source tree now
+  records the compiled modules (extension modules
   in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
   and the scan, the report and the MCP tools warn that changes to such a module, private
   ones included, and to the names taken from it are not reported. After upgrading, cached
@@ -102,6 +158,55 @@
   PyPI, after a diff schema bump for example; `--check` only says which would change. Two new
   golden pairs, httpx 0.27.2 -> 0.28.1 and click 8.1.8 -> 8.2.0, pin what their changelogs
   document and the notes an agent gets for them (`tests/test_golden_diffs.py`).
+- A parameter removed behind `**kwargs: Unpack[SomeTypedDict]` (PEP 692) is reported (#60).
+  pandas 3.0's `read_csv` and `read_table` take their keywords through `**kwds:
+  Unpack[_read_shared]`, and griffe takes a `**kwargs` for any keyword, so the loss of
+  `delim_whitespace`, `date_parser`, `infer_datetime_format`, `keep_date_col` and `verbose`
+  was not reported. The TypedDict's keys (its bases' included) are now compared like the
+  signature's names, in both directions: a key of the old TypedDict the new signature does
+  not name is a removed parameter too. A bare `**kwargs` still takes anything, and so does a
+  TypedDict that allows other keys (PEP 728's `extra_items=` or `closed=False`); `self` and
+  `cls` are no keywords, so a method made static or a class method is not a change (diff
+  schema 21).
+- A change to a method is matched under the public classes that inherit it without overriding
+  it. pandas 2.3.1 -> 3.0.6's `NDFrame.fillna` lost `method`, and the change carried only
+  `pandas.core.generic.NDFrame.fillna`, a path no code calls, so `df.fillna(method="ffill")`
+  on a `DataFrame` was not a use and the change never reached the report. The change now lists
+  the inheriting classes' paths (`pandas.DataFrame.fillna`) in `import_paths` and `also`, and
+  the scan matches calls on them. A change to a method of a private class (`pkg._base._Base
+  .fillna`) that a public class inherits, never reported before, is reported under the
+  shortest public inheritor (`pkg.DataFrame.fillna`), as a folded removal is.
+- An attribute a class set in a method at the cutoff and may get from a base in another
+  package in the pinned release is unknown, not removed. fastapi 0.143.0's `Param(pydantic
+  .fields.FieldInfo)` no longer assigns `self.deprecated`; it puts `kwargs["deprecated"]` and
+  calls `super().__init__(**use_kwargs)`, so pydantic may set it, and the scan reported it as
+  removed. since-cutoff does not read other distributions, so when the new constructor hands
+  the name to the base's (by name, in position, through a `**kwargs`, or by having no
+  constructor of its own) the scan, report.md and the MCP tools warn once per package that
+  the class's attributes were not compared, next to the compiled-module warning. A field or
+  constant of the class body (a pydantic model's `usage: int`), an attribute the constructor
+  neither sets nor hands on (0.143.0's `APIRoute.secure_cloned_response_field`), a method the
+  class dropped and a key dropped from a `TypedDict` are still removed. An attribute the new
+  class sets where griffe does not look, in a tuple target (`self.dependant, _ = ...`) or in a
+  function of its module given `self` (0.143.0's `_populate_api_route_state(self, path,
+  ...)`, which sets `route.path`, `endpoint`, `name` and `methods`), is not removed.
+- The counts tell public APIs from internal ones. fastapi 0.116.1 -> 0.143.0 scanned as "35
+  breaking changes", 9 of them helpers such as `dependencies.utils.get_flat_dependant` and 34
+  paths to `BaseModelWithConfig.Config`; uvicorn's were `loops.*`, `config.LOOP_SETUPS` and
+  `main.HTTP_CHOICES`. Each change now has a `tier`: public when the package's top level
+  exports the API (a `from .m import *` there that copies it from a module re-exporting it
+  on purpose counts: `anthropic.AnthropicBedrock`), a module names it in `__all__` or
+  re-exports it as `from .m import X as X` (`anthropic.types.CompletionCreateParams`), or it
+  is documented (a value made of a function, `convert = deprecated(...)(_convert)`, with the
+  function's docstring; a member with its class; a method a public class inherits is public),
+  else internal. The headline counts, `scan --all`, the Action summary and the MCP tools'
+  totals count the public changes and give the internal ones once as "+N internal"; the
+  dependency table's breaking column gives them as "19 (+3)"; `scan --internal` (which
+  implies `--all`) and `include_internal` (MCP) list them; report.md lists them after the
+  public ones; results.json and `scan --json` keep every change (`internal_changes` next to
+  `breaking_changes`). `api_changes(symbol=...)` matches the symbol against every change and
+  lists the internal ones when they are all that match: a question about an API asks for its
+  changes. The notes are not affected: they cover the APIs the code uses.
 
 ## 0.5.0 - 2026-09-28
 
