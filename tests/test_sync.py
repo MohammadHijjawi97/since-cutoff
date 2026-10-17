@@ -170,8 +170,8 @@ def test_a_sync_with_nothing_to_change_leaves_the_file_alone(sc, tmp_path) -> No
     code, out = sc("sync", root)
     assert code == EXIT_OK, out
     assert (
-        "• Model claude-sonnet-4-5, training cutoff 2025-07-31 (from the notes in AGENTS.md; "
-        "--model to change)" in out
+        "• Model claude-sonnet-4-5, training cutoff 2025-07-31, comparing from releases up to "
+        "2025-07-01 (from the notes in AGENTS.md; --model to change)" in out
     )
     assert (
         "AGENTS.md is up to date: 2 notes for claude-sonnet-4-5 (cutoff 2025-07-31), versions "
@@ -230,7 +230,7 @@ def test_a_bumped_package_is_checked_again(sc, tmp_path) -> None:
         "• pyproject.toml changed since the notes in AGENTS.md were written: toylib 2.0 -> 2.1"
         in out
     )
-    assert "-**toylib 2.0** (1.0 at the cutoff)\n+**toylib 2.1** (1.0 at the cutoff)" in out
+    assert "-**toylib 2.0** (compared from 1.0)\n+**toylib 2.1** (compared from 1.0)" in out
     assert (
         "AGENTS.md is out of date: toylib 2.0 in the notes, 2.1 in pyproject.toml. Run "
         "`since-cutoff sync`." in out
@@ -241,7 +241,7 @@ def test_a_bumped_package_is_checked_again(sc, tmp_path) -> None:
     assert code == EXIT_OK
     assert "✓ Updated AGENTS.md: toylib checked again for 2.1 (2 notes, text unchanged)." in out
     assert agents(root).startswith(MINE + "\n" + BLOCK_START)
-    assert "**toylib 2.1** (1.0 at the cutoff)" in agents(root)
+    assert "**toylib 2.1** (compared from 1.0)" in agents(root)
 
 
 def test_a_package_no_longer_a_dependency_is_dropped(sc, tmp_path) -> None:
@@ -269,19 +269,27 @@ def test_a_package_at_or_below_the_cutoff_release_is_dropped(sc, tmp_path) -> No
     set_pins(root, ("toylib==1.0", "otherlib==1.0"))
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OUT_OF_DATE
+    # The release the scan compares from is the latest one 30 days before the cutoff (the
+    # margin), not at it.
     assert (
-        "AGENTS.md is out of date: toylib 1.0 in pyproject.toml is the latest release at the "
-        "cutoff." in out
+        "AGENTS.md is out of date: toylib 1.0 in pyproject.toml is the latest release 30 days "
+        "before the cutoff." in out
     )
     code, out = sc("sync", root, "--yes")
-    assert "toylib dropped (1.0 is the latest release at the cutoff)" in out
+    assert "toylib dropped (1.0 is the latest release 30 days before the cutoff)" in out
     assert parse_block(agents(root)) is None
     # Older than the release at the cutoff: said so (it said "0.9 is not newer than 1.0").
     set_pins(root, ("toylib==2.0", "otherlib==1.0"))
     first_sync(sc, root)
     set_pins(root, ("toylib==0.9", "otherlib==1.0"))
+    # With no margin, the release the scan compares from is the one at the cutoff itself.
+    code, out = sc("sync", root, "--check", "--cutoff-margin", "0")
+    assert "toylib 0.9 in pyproject.toml is older than 1.0, the latest release at the cutoff" in out
     code, out = sc("sync", root, "--yes")
-    assert "toylib dropped (0.9 is older than 1.0, the latest release at the cutoff)" in out
+    assert (
+        "toylib dropped (0.9 is older than 1.0, the latest release 30 days before the cutoff)"
+        in out
+    )
 
 
 def test_an_api_the_code_no_longer_uses_loses_its_note(sc, tmp_path) -> None:
@@ -345,7 +353,8 @@ def test_several_models_use_the_earliest_cutoff(sc, tmp_path) -> None:
     assert block.meta["cutoff"] == "2025-02-28"  # claude-haiku-4-5's; gpt-5.4's is 2025-08-31
     assert (
         "Changed after the earliest training cutoff of `gpt-5.4` and `claude-haiku-4-5` "
-        "(2025-02-28) and used by this project" in agents(root)
+        "(2025-02-28, comparing from releases up to 2025-01-29) and used by this project"
+        in agents(root)
     )
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OK and "• Models gpt-5.4, claude-haiku-4-5, earliest" in out
@@ -359,7 +368,10 @@ def test_a_cutoff_alone_is_sticky_too(sc, tmp_path) -> None:
     assert block is not None and block.meta["model"] is None
     code, out = sc("sync", root, "--check")
     assert code == EXIT_OK
-    assert "• Custom cutoff 2025-07-31 (from the notes in AGENTS.md; --cutoff to change)" in out
+    assert (
+        "• Custom cutoff 2025-07-31, comparing from releases up to 2025-07-01 (from the notes in "
+        "AGENTS.md; --cutoff to change)" in out
+    )
     assert "2 notes for the cutoff 2025-07-31" in out
 
 
@@ -403,13 +415,28 @@ def test_why_a_section_goes(sc, tmp_path) -> None:
     code, out = sc("sync", root, "--check")
     assert "AGENTS.md is out of date: toylib's API did not change from 1.0 to 1.1." in out
     set_pins(root, ("toylib==2.0", "otherlib==1.0"))
-    # No toylib release on or before the cutoff: its whole API is newer.
+    # No toylib release on or before the cutoff: its whole API is newer, and the code imports
+    # it, so its section holds the one note that says so (tagged [metadata]), in place of the
+    # two notes from the diff: both changed, none dropped.
     code, out = sc("sync", root, "--cutoff", "2024-01-01", "--yes")
     assert code == EXIT_OK
     assert (
-        "✓ Removed the notes block from AGENTS.md: written for the cutoff 2024-01-01 (it was for "
-        "claude-sonnet-4-5 (cutoff 2025-07-31)); toylib dropped (first released after the "
-        "cutoff)." in out
+        "✓ Updated AGENTS.md: written for the cutoff 2024-01-01 (it was for "
+        "claude-sonnet-4-5 (cutoff 2025-07-31)); toylib 2.0: 2 changed." in out
+    )
+    assert (
+        "**toylib 2.0**\n- toylib first appeared on PyPI on 2024-06-01, after the cutoff; the "
+        "model has no training data on it. The project pins 2.0 (released 2025-10-01). "
+        "[metadata]\n" in agents(root)
+    )
+    # Once the code no longer imports it, its section goes.
+    (root / "main.py").write_text("import json\n", encoding="utf-8")
+    (root / "sub" / "other.py").write_text("import json\n", encoding="utf-8")
+    code, out = sc("sync", root, "--cutoff", "2024-01-01", "--yes")
+    assert code == EXIT_OK
+    assert (
+        "✓ Removed the notes block from AGENTS.md: toylib dropped (first released after the "
+        "cutoff, and your code no longer imports it)." in out
     )
 
 
@@ -544,6 +571,78 @@ def test_dry_run_and_check_write_nothing(sc, tmp_path) -> None:
         "AGENTS.md is out of date: it has no since-cutoff notes; 2 notes to write. Run "
         "`since-cutoff sync`." in out
     )
+
+
+def test_sync_json_written_then_current(sc, tmp_path) -> None:
+    root = make_app(tmp_path)
+    code, out = sc("sync", root, *SONNET, "--json", "--yes")
+    result = json.loads(out)
+    assert result["exit_code"] == code == EXIT_OK
+    [target] = result["targets"]
+    assert target["target"] == "AGENTS.md"
+    assert target["action"] == "created"
+    assert target["changed"] and target["written"] and not target["edited"]
+    assert target["model"] == "claude-sonnet-4-5"
+    assert target["cutoff"] == "2025-07-31" and target["scope"] == "used"
+    assert target["notes"] == 2 and target["retest"] == {}
+    assert target["diff_lines"][0] == "--- /dev/null"
+    assert all(set(c) == {"package", "done", "state"} for c in target["changes"])
+    before = agents(root)
+    code, out = sc("sync", root, "--json", "--check")
+    result = json.loads(out)
+    assert result["exit_code"] == code == EXIT_OK
+    [target] = result["targets"]
+    assert target["action"] is None
+    assert not target["changed"] and not target["written"] and target["diff_lines"] == []
+    assert agents(root) == before
+
+
+@pytest.mark.parametrize(
+    "flags, expected", [(("--check",), 3), (("--dry-run",), 0), (("--check", "--dry-run"), 3)]
+)
+def test_sync_json_preview_preserves_exit_codes(sc, tmp_path, flags, expected) -> None:
+    root = make_app(tmp_path)
+    code, out = sc("sync", root, *SONNET, "--json", *flags)
+    result = json.loads(out)
+    assert result["exit_code"] == code == expected
+    [target] = result["targets"]
+    assert target["changed"] and not target["written"]
+    assert target["diff_lines"] and not (root / "AGENTS.md").exists()
+
+
+def test_sync_json_edited_block_and_force(sc, tmp_path) -> None:
+    root = make_app(tmp_path)
+    assert sc("sync", root, *SONNET, "--yes")[0] == EXIT_OK
+    text = agents(root).replace("Client", "EditedClient")
+    write(root / "AGENTS.md", text)
+    code, out = sc("sync", root, "--json", "--yes")
+    result = json.loads(out)
+    assert result["exit_code"] == code == EXIT_EDITED
+    [target] = result["targets"]
+    assert target["edited"] and target["changed"] and not target["written"]
+    assert agents(root) == text
+    code, out = sc("sync", root, "--json", "--yes", "--force")
+    assert json.loads(out)["targets"][0]["written"] and code == EXIT_OK
+
+
+def test_sync_json_requires_noninteractive_mode(sc, tmp_path, capsys, monkeypatch) -> None:
+    def no_prompt(*args):
+        pytest.fail("JSON mode prompted")
+
+    monkeypatch.setattr(cli, "_confirm", no_prompt)
+    # The guard must reject even before reading a nonexistent project.
+    code = cli.main(["sync", str(tmp_path / "missing"), "--json"])
+    captured = capsys.readouterr()
+    assert code == 2 and captured.out == ""
+    assert "--yes" in captured.err and "--check" in captured.err and "--dry-run" in captured.err
+    # Any other failure (exit code 1) leaves stdout empty too, as the README says.
+    code = cli.main(["sync", str(tmp_path / "missing"), "--json", "--yes"])
+    captured = capsys.readouterr()
+    assert code == 1 and captured.out == "" and captured.err
+    # And the help says what --json needs.
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["sync", "--help"])
+    assert "JSON (needs --yes, --check or --dry-run)" in " ".join(capsys.readouterr().out.split())
 
 
 def test_sync_asks_before_writing(sc, tmp_path, monkeypatch) -> None:
@@ -816,8 +915,8 @@ def test_targets_are_the_files_that_have_a_block_else_the_first_choice(tmp_path)
     write(root / "CLAUDE.md", "mine\n")
     assert block_targets(root) == [root / "CLAUDE.md"]  # only CLAUDE.md
     write(root / "AGENTS.md", "mine\n")
-    # Both, and no block yet: AGENTS.md, as 0.3 chose (issue #13 is this case).
-    assert block_targets(root) == [root / "AGENTS.md"]
+    # Both, no block yet, and CLAUDE.md does not import AGENTS.md: both (issue #13).
+    assert block_targets(root) == [root / "AGENTS.md", root / "CLAUDE.md"]
     write(root / "CLAUDE.md", f"mine\n{BLOCK_START}\nx\n{BLOCK_END}\n")
     assert block_targets(root) == [root / "CLAUDE.md"]  # where the block is
     write(root / "AGENTS.md", f"{BLOCK_START}\nbroken\n")  # its reader reports it
@@ -844,13 +943,6 @@ def test_sync_updates_the_block_where_it_is(sc, tmp_path) -> None:
     assert "Updated AGENTS.md" in out and "Updated CLAUDE.md" in out
 
 
-ISSUE_13 = pytest.mark.xfail(
-    strict=True,
-    reason="issue #13 (good first issue): both AGENTS.md and CLAUDE.md, and no block yet",
-)
-
-
-@ISSUE_13
 def test_13_with_an_agents_import_only_agents_md_gets_the_block(tmp_path) -> None:
     write(tmp_path / "AGENTS.md", "mine\n")
     write(tmp_path / "CLAUDE.md", "@AGENTS.md\n")
@@ -859,7 +951,6 @@ def test_13_with_an_agents_import_only_agents_md_gets_the_block(tmp_path) -> Non
     assert block_targets(tmp_path) == [tmp_path / "AGENTS.md", tmp_path / "CLAUDE.md"]
 
 
-@ISSUE_13
 def test_13_an_import_inside_code_does_not_count(tmp_path) -> None:
     write(tmp_path / "AGENTS.md", "mine\n")
     write(tmp_path / "CLAUDE.md", "Write `@AGENTS.md` to import it.\n")
@@ -932,6 +1023,24 @@ def test_run_apply_updates_the_block_where_it_is(tmp_path, scripted_cli) -> None
     assert agents(root) == MINE  # no second block
     claude = (root / "CLAUDE.md").read_bytes().decode("utf-8")
     assert claude.startswith("# Claude\n\n" + BLOCK_START) and "old notes" not in claude
+
+
+@pytest.mark.pyright
+def test_run_apply_says_how_to_keep_one_copy(tmp_path, scripted_cli, capsys) -> None:
+    """Issue #13: with AGENTS.md and a CLAUDE.md that does not import it, run --apply writes
+    the block to both, and says what sync says about it."""
+    from since_cutoff.notes import TWO_COPIES_TIP
+    from tests.conftest import ScriptedModel
+
+    root = make_app(tmp_path, pins=("toylib==2.0",))
+    write(root / "AGENTS.md", MINE)
+    write(root / "CLAUDE.md", "# Claude\n\nUse tabs.\n")
+    argv = ["run", str(root), *SONNET, "--max-probes", "1", "--heldout", "1"]
+    scripted_cli.append(ScriptedModel())
+    assert cli.main([*argv, "--regression", "0", "--apply"]) == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert BLOCK_START in agents(root) and BLOCK_START in (root / "CLAUDE.md").read_text()
+    assert f"! {TWO_COPIES_TIP}." in out
 
 
 # ------------------------------------------------------------ reading the file
@@ -1043,3 +1152,30 @@ def test_per_package_sets_the_imported_budget_and_the_block_keeps_it(sc, tmp_pat
     block = parse_block(agents(root))
     assert block is not None and "per_package" not in block.meta  # the default is not recorded
     assert len(block.packages["toylib"].bullets) == 5
+
+
+def test_sync_rewrites_a_block_compared_from_another_day(sc, tmp_path) -> None:
+    """The margin is the scan's setting, not the block's: a block written with
+    ``--cutoff-margin 0`` is out of date for ``sync --check`` and rewritten by ``sync``, which
+    says why; the header and the meta line then say the new day."""
+    root = make_app(tmp_path)
+    assert sc("sync", root, *SONNET, "--yes", "--cutoff-margin", "0")[0] == EXIT_OK
+    assert "(2025-07-31) and used by this project" in agents(root)
+    code, out = sc("sync", root, "--check")
+    assert code == EXIT_OUT_OF_DATE
+    assert (
+        "AGENTS.md is out of date: the notes compare from the cutoff itself, not 30 days before "
+        "the cutoff (--cutoff-margin). Run `since-cutoff sync`."
+    ) in out
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK
+    assert (
+        "Updated AGENTS.md: now comparing from 30 days before the cutoff (it was the cutoff "
+        "itself; --cutoff-margin)."
+    ) in out
+    block = parse_block(agents(root))
+    assert block is not None and block.meta["margin"] == 30
+    assert "(2025-07-31, comparing from releases up to 2025-07-01) and used by this project" in (
+        agents(root)
+    )
+    assert sc("sync", root, "--check")[0] == EXIT_OK

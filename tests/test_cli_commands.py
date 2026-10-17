@@ -9,9 +9,11 @@ import io
 import json
 import os
 import runpy
+import shutil
 import sys
 import textwrap
 import threading
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +115,79 @@ def test_cache_clear_says_what_it_removed(tmp_path, monkeypatch, capsys) -> None
     assert capsys.readouterr().out == f"cleared nothing in {root}\n"
 
 
+def test_cache_clear_can_remove_one_kind_and_keep_the_model_output(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "c"
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(root))
+    for namespace in ("pypi", "sources", "sources-meta", "diffs", "answers", "tasks"):
+        (root / namespace / "entry").mkdir(parents=True)
+    assert cli.main(["cache", "clear", "--sources"]) == 0
+    assert capsys.readouterr().out == f"cleared sources, sources-meta in {root}\n"
+    assert sorted(p.name for p in root.iterdir()) == ["answers", "diffs", "pypi", "tasks"]
+    assert cli.main(["cache", "clear", "--pypi", "--diffs"]) == 0
+    assert capsys.readouterr().out == f"cleared pypi, diffs in {root}\n"
+    assert sorted(p.name for p in root.iterdir()) == ["answers", "tasks"]  # what run paid for
+    assert cli.main(["cache", "clear", "--sources"]) == 0
+    assert capsys.readouterr().out == f"cleared nothing in {root}\n"
+
+
+def test_cache_kind_flags_go_with_clear_only(capsys) -> None:
+    assert cli.main(["cache", "info", "--sources", "--pypi"]) == 2
+    err = capsys.readouterr().err
+    assert "cache info takes no --sources, --pypi: the kinds go with clear" in err
+
+
+def test_cache_info_lists_each_kind_with_its_size(tmp_path, monkeypatch, capsys) -> None:
+    root = tmp_path / "c"
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(root))
+    monkeypatch.delenv("SINCE_CUTOFF_CACHE_MAX_MB", raising=False)
+    (root / "pypi").mkdir(parents=True)
+    (root / "pypi" / "toy.json").write_bytes(b"x" * (3 * 1024 * 1024 // 2))
+    (root / "answers").mkdir()
+    (root / "answers" / "k.json").write_text("{}")
+    tree = root / "sources" / "toy-1.0"
+    (tree / "toy").mkdir(parents=True)
+    (tree / "toy" / "__init__.py").write_bytes(b"y" * 1024)
+    (tree / ".since-cutoff.json").write_text("{}")
+    assert cli.main(["cache", "info"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == str(root)
+    assert lines[1].split() == ["kind", "size", "entries", "files", "oldest"]
+    rows = {line.split()[0]: line.split() for line in lines[2:-1]}
+    assert list(rows) == [*cli_cache_kinds(), "total"]
+    assert rows["pypi"][1:6] == ["1.5", "MB", "1", "1", date.today().isoformat()]
+    assert rows["sources"][1:6] == ["0.0", "MB", "1", "2", date.today().isoformat()]
+    assert rows["diffs"][1:5] == ["0.0", "MB", "0", "0"] and len(rows["diffs"]) == 5
+    assert rows["answers"][-7:] == ["model", "output:", "costs", "money", "to", "make", "again"]
+    assert rows["total"][1:6] == ["1.5", "MB", "3", "4", date.today().isoformat()]
+    assert lines[-1].startswith("sources cap: 2,048 MB (SINCE_CUTOFF_CACHE_MAX_MB)")
+    for off in ("0", "-5"):  # the value as it is set, not a 0 nobody wrote
+        monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", off)
+        assert cli.main(["cache", "info"]) == 0
+        assert (
+            capsys.readouterr().out.splitlines()[-1]
+            == f"sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB={off})"
+        )
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "inf")  # was an OverflowError
+    assert cli.main(["cache", "info"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1].startswith("sources cap: 2,048 MB")
+
+
+def cli_cache_kinds() -> list[str]:
+    from since_cutoff.cache import NAMESPACES
+
+    return list(NAMESPACES)
+
+
+def test_cache_info_works_on_a_cache_that_does_not_exist(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE", str(tmp_path / "none"))
+    assert cli.main(["cache", "info"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == str(tmp_path / "none")
+    assert lines[-2].split() == ["total", "0.0", "MB", "0", "0"]
+
+
 # ------------------------------------------------------------------ models
 MODELS = {
     "zeta": {"models": {"z-1": {"knowledge": "2024-01", "release_date": "2024-05-01"}}},
@@ -164,6 +239,51 @@ def test_models_prints_one_line_per_model_for_scripts(models_cache, capsys) -> N
     ]
 
 
+def test_models_json_lists_the_same_models_in_the_same_order(
+    models_cache, capsys, monkeypatch
+) -> None:
+    """Issue #25: for scripts, the cutoff as models.dev writes it and as the date since-cutoff
+    uses, the name, the family and where the data came from; the same in a terminal."""
+    assert cli.main(["models", "--json", "--offline"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["source"] == "models.dev (cached)"
+    assert [(m["provider"], m["id"]) for m in listed["models"]] == [
+        ("anthropic", "claude-old"),
+        ("anthropic", "claude-new"),
+        ("openai", "gpt-x"),
+        ("llama", "llama-3.3-70b-versatile"),
+        ("groq", "llama-3.3-70b-versatile"),
+        ("zeta", "z-1"),
+    ]
+    assert listed["models"][0] == {
+        "provider": "anthropic",
+        "id": "claude-old",
+        "name": "claude-old",
+        "family": None,
+        "training_cutoff": "2024-04",
+        "cutoff_date": "2024-04-30",
+        "released": "2024-06-20",
+    }
+    assert cli.main(["models", "GPT", "--json", "--offline"]) == 0
+    assert [m["id"] for m in json.loads(capsys.readouterr().out)["models"]] == ["gpt-x"]
+    terminal = Console(file=io.StringIO(), force_terminal=True, color_system=None, width=100)
+    monkeypatch.setattr(cli, "_console", lambda output: terminal)
+    assert cli.main(["models", "--json", "--offline"]) == 0
+    assert json.loads(capsys.readouterr().out) == listed
+
+
+def test_models_makers_leaves_out_gateways_and_resellers(models_cache, capsys) -> None:
+    assert cli.main(["models", "--makers", "--offline"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "anthropic\tclaude-old\t2024-04\t2024-06-20",
+        "anthropic\tclaude-new\t2025-07-31\t2025-09-29",
+        "openai\tgpt-x\t2024-10\t2025-01-01",
+        "llama\tllama-3.3-70b-versatile\t2024-12\t2024-12-06",
+    ]
+    assert cli.main(["models", "llama", "--makers", "--json", "--offline"]) == 0
+    assert [m["provider"] for m in json.loads(capsys.readouterr().out)["models"]] == ["llama"]
+
+
 def test_models_prints_a_table_in_a_terminal(models_cache, monkeypatch) -> None:
     screen = io.StringIO()
     terminal = Console(file=screen, force_terminal=True, color_system=None, width=100)
@@ -175,6 +295,18 @@ def test_models_prints_a_table_in_a_terminal(models_cache, monkeypatch) -> None:
     assert rows[0] == ["provider", "model", "training", "cutoff", "released"]
     assert ["anthropic", "claude-new", "2025-07-31", "2025-09-29"] in rows
     assert " ".join(rows[-1]) == "2 models (source: models.dev (cached))"
+
+
+def test_models_says_whose_listing_a_model_id_takes(models_cache, monkeypatch) -> None:
+    """Issue #87: of the listings shown, the one ``--model <query>`` takes the cutoff of."""
+    screen = io.StringIO()
+    terminal = Console(file=screen, force_terminal=True, color_system=None, width=200)
+    monkeypatch.setattr(cli, "_console", lambda output: terminal)
+    assert cli.main(["models", "llama-3.3-70b-versatile", "--offline"]) == 0
+    assert screen.getvalue().splitlines()[-1] == (
+        "--model llama-3.3-70b-versatile takes the training cutoff of llama's listing "
+        "llama-3.3-70b-versatile, 2024-12"
+    )
 
 
 # ----------------------------------------------------------------- unapply
@@ -273,6 +405,25 @@ class _SolverDown(ScriptedModel):
         if system.startswith("You write evaluation tasks"):
             return super().complete(system, user)
         raise ProviderError("claude call failed: rate limited")
+
+
+def test_run_without_basedpyright_stops_before_the_scan_and_names_the_extra(
+    tmp_path, capsys, scripted_cli, monkeypatch
+) -> None:
+    """basedpyright is the ``since-cutoff[run]`` extra: without it, ``run`` says so at once,
+    before PyPI or the model is asked anything; ``scan`` does not need it."""
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setitem(sys.modules, "basedpyright", None)  # makes the import fail
+    root = make_project(tmp_path)
+    scripted_cli.append(ScriptedModel())
+    assert cli.main(run_argv(root, "--no-fix")) == 1
+    err = capsys.readouterr().err
+    assert "run checks the model's answers with the basedpyright type checker" in err
+    assert 'pip install "since-cutoff[run]"' in err
+    assert "uvx --with basedpyright since-cutoff run" in err
+    assert len(scripted_cli) == 1  # no engine was built, so no model was taken
+    assert not (root / ".since-cutoff").exists()  # and nothing was scanned
+    assert cli.main(["scan", str(root), *CUTOFF]) == 0
 
 
 def test_a_run_where_every_model_call_failed_is_an_error(tmp_path, capsys, scripted_cli) -> None:
@@ -384,3 +535,41 @@ def test_python_m_since_cutoff_is_the_cli(monkeypatch, capsys) -> None:
         runpy.run_module("since_cutoff", run_name="__main__")
     assert exit_info.value.code == 0
     assert capsys.readouterr().out == f"since-cutoff {__version__}\n"
+
+
+def test_cutoff_margin_flag_variable_and_default(
+    tmp_path, capsys, scripted_cli, monkeypatch
+) -> None:
+    """The comparison release is the latest published ``--cutoff-margin`` days before the cutoff:
+    30 by default, ``SINCE_CUTOFF_CUTOFF_MARGIN`` otherwise, the flag over both. The model line
+    says the day, and results.json records the day and the margin."""
+    root = make_project(tmp_path)
+
+    def scan(*extra: str) -> tuple[int, str, Any]:
+        scripted_cli.append(ScriptedModel())
+        code = cli.main(["scan", str(root), *CUTOFF, *extra])
+        out = capsys.readouterr().out
+        result = json.loads((root / ".since-cutoff" / "results.json").read_text(encoding="utf-8"))
+        return code, out, result
+
+    code, out, result = scan()
+    assert code == 0
+    assert (
+        "Custom cutoff 2025-07-31, comparing from releases up to 2025-07-01 "
+        "(from --cutoff; no model given)" in out
+    )
+    assert (result["compare_from"], result["settings"]["cutoff_margin"]) == ("2025-07-01", 30)
+    code, out, result = scan("--cutoff-margin", "0")
+    assert code == 0 and "Custom cutoff 2025-07-31 (from --cutoff; no model given)" in out
+    assert (result["compare_from"], result["settings"]["cutoff_margin"]) == ("2025-07-31", 0)
+    monkeypatch.setenv("SINCE_CUTOFF_CUTOFF_MARGIN", "7")
+    code, out, result = scan()
+    assert "comparing from releases up to 2025-07-24" in out
+    assert (result["compare_from"], result["settings"]["cutoff_margin"]) == ("2025-07-24", 7)
+    code, out, result = scan("--cutoff-margin", "0")  # the flag wins over the variable
+    assert result["settings"]["cutoff_margin"] == 0
+    monkeypatch.setenv("SINCE_CUTOFF_CUTOFF_MARGIN", "soon")
+    scripted_cli.append(ScriptedModel())
+    assert cli.main(["scan", str(root), *CUTOFF]) == 1
+    err = capsys.readouterr().err
+    assert "SINCE_CUTOFF_CUTOFF_MARGIN: not a number of days: 'soon'" in err

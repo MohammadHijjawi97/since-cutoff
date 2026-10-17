@@ -6,24 +6,37 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import tracemalloc
+import urllib.error
+import urllib.request
 import zipfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from since_cutoff import pypi as pypi_module
-from since_cutoff.cache import DiskCache
+from since_cutoff.cache import MB, DiskCache
+from since_cutoff.engine import NEW, Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
-from since_cutoff.pypi import METADATA_TTL, PyPI, SourceTree, _safe_target, is_placeholder
-from tests.conftest import LocalServer, Reply, write_tree
+from since_cutoff.project import load_project
+from since_cutoff.pypi import (
+    METADATA_TTL,
+    SOURCE_SCHEMA,
+    PyPI,
+    SourceTree,
+    _safe_target,
+    is_placeholder,
+)
+from tests.conftest import LocalServer, Reply, ScriptedModel, write_tree
 
 METADATA = "Metadata-Version: 2.1\nName: toy\nVersion: 1.0\n"
 
@@ -130,11 +143,181 @@ def test_metadata_is_fetched_once_kept_slim_and_refreshed_after_its_ttl(index, c
         "name": "toy-lib",
         "version": "1.0",
         "summary": "Toy",
+        "project_urls": None,
+        "home_page": None,
     }
     old = time.time() - METADATA_TTL - 60
     os.utime(cache.path("pypi", "toy-lib"), (old, old))
     PyPI(cache).project("toy-lib")
     assert index.server.paths() == ["/pypi/toy-lib/json"] * 2
+
+
+# Issue #54: when PyPI cannot be reached, a release list cached days ago beats none at all.
+FETCHED = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+UNREACHABLE = {
+    "503": Reply(503, "Service Unavailable"),
+    "429": Reply(429, "Too Many Requests"),
+    "cut-off": Reply(body={"info": {}, "releases": {}}, cut=5),  # no status: a network error
+}
+
+
+def _cached_then(index: Index, cache: DiskCache, reply: Reply) -> None:
+    """toy 1.0's release list in the cache, fetched on FETCHED, and PyPI answering ``reply``."""
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    PyPI(cache).project("toy")
+    os.utime(cache.path("pypi", "toy"), (FETCHED.timestamp(), FETCHED.timestamp()))
+    index.server.routes["/pypi/toy/json"] = [reply]
+
+
+@pytest.mark.parametrize("reply", UNREACHABLE.values(), ids=UNREACHABLE.keys())
+def test_an_older_cached_release_list_is_used_when_pypi_cannot_be_reached(
+    index, cache, slept, reply
+) -> None:
+    _cached_then(index, cache, reply)
+    pypi = PyPI(cache)
+    assert [r.version for r in pypi.releases("toy")] == ["1.0"]
+    assert pypi.stale == {"toy": date(2026, 9, 20)}
+    assert len(slept) == 2  # it tried as hard as for any other request first
+    # The rest of the run uses that copy without asking PyPI again.
+    asked = len(index.server.paths("/pypi/"))
+    assert pypi.release("Toy", "1.0").version == "1.0"
+    assert pypi.version_at("toy", date(2026, 1, 1)).version == "1.0"
+    assert len(index.server.paths("/pypi/")) == asked
+    # A version the copy does not list may be newer than the copy, not missing from PyPI.
+    with pytest.raises(PackageIndexError) as err:
+        pypi.release("toy", "2.0")
+    assert str(err.value) == (
+        "toy==2.0 is not in the cached PyPI metadata from 2026-09-20; PyPI could not be reached"
+    )
+
+
+def test_a_long_running_process_asks_pypi_again(index, cache, slept, monkeypatch) -> None:
+    """The MCP server keeps one PyPI for its whole life: an older copy is reused for
+    STALE_REUSE seconds, then PyPI is asked again, and its answer replaces the copy."""
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    pypi = PyPI(cache)
+    pypi.project("toy")
+    asked = len(index.server.paths("/pypi/"))
+    pypi.project("toy")
+    assert len(index.server.paths("/pypi/")) == asked  # within STALE_REUSE: the copy
+    monkeypatch.setattr(pypi_module, "STALE_REUSE", 0)
+    index.add("toy", "2.0", "toy-2.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    assert pypi.release("toy", "2.0").version == "2.0"
+    assert len(index.server.paths("/pypi/")) == asked + 1
+    assert pypi.stale == {}
+
+
+def test_a_copy_another_process_refreshed_is_no_longer_stale(index, cache, slept) -> None:
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    pypi = PyPI(cache)
+    pypi.project("toy")
+    assert pypi.stale == {"toy": date(2026, 9, 20)}
+    os.utime(cache.path("pypi", "toy"))  # written just now, by another since-cutoff
+    pypi.project("toy")
+    assert pypi.stale == {}
+
+
+def test_without_a_cached_release_list_an_unreachable_pypi_is_an_error(index, cache, slept):
+    index.server.routes["/pypi/toy/json"] = [Reply(503, "Service Unavailable")]
+    pypi = PyPI(cache)
+    with pytest.raises(PackageIndexError, match="could not reach PyPI for 'toy': HTTP 503"):
+        pypi.project("toy")
+    assert pypi.stale == {}
+
+
+@pytest.mark.parametrize(
+    ("reply", "message"),
+    [
+        (Reply(404, "Not Found"), "'toy' is not on PyPI"),
+        # A proxy that refuses the request is an answer, not a network that went away.
+        (Reply(403, "Forbidden"), "could not reach PyPI for 'toy': HTTP 403: Forbidden"),
+    ],
+    ids=["404", "403"],
+)
+def test_an_answer_from_pypi_is_not_covered_by_an_older_copy(
+    index, cache, slept, reply, message
+) -> None:
+    _cached_then(index, cache, reply)
+    pypi = PyPI(cache)
+    with pytest.raises(PackageIndexError) as err:
+        pypi.project("toy")
+    assert str(err.value) == message
+    assert pypi.stale == {}
+
+
+def test_a_scan_says_which_release_lists_are_older_copies(index, cache, slept, tmp_path):
+    _cached_then(index, cache, Reply(503, "Service Unavailable"))
+    app = write_tree(
+        tmp_path / "app", {"requirements.txt": "toy==1.0\n", "main.py": "import toy\n"}
+    )
+    settings = Settings(model="scripted:scripted-1", cutoff=date(2025, 7, 31), jobs=2)
+    engine = Engine(
+        settings,
+        store=cache,
+        llm_cache=cache,
+        pypi=PyPI(cache),
+        provider_factory=lambda spec: ScriptedModel(),
+    )
+    scan = engine.scan(load_project(app), engine.resolve_target())
+    assert scan.package("toy").locked == "1.0"
+    assert scan.warnings == [
+        "PyPI could not be reached: the release list of toy (cached 2026-09-20) is an older "
+        "copy from the cache, so releases published after that day are unknown to this scan"
+    ]
+    # The same PyPI (as in the MCP server) scanning a project without toy says nothing of it.
+    index.add("other", "1.0", "other-1.0-py3-none-any.whl", wheel({"other/__init__.py": ""}))
+    other = write_tree(tmp_path / "other-app", {"requirements.txt": "other==1.0\n"})
+    assert engine.scan(load_project(other), engine.resolve_target()).warnings == []
+
+
+def test_offline_a_copy_cached_by_0_5_is_asked_for_once_per_scan(
+    cache, slept, tmp_path, monkeypatch
+) -> None:
+    """A copy within METADATA_TTL from before the metadata kept the URLs, PyPI unreachable:
+    each read of the scan (release, project_urls, version_at, releases, summary) asked PyPI
+    again, 3 attempts each, 15 for one package. The copy is kept for STALE_REUSE as an older
+    one is, and since it is fresh by date the scan does not call it stale."""
+    attempts: list[str] = []
+
+    def refused(req: urllib.request.Request, *args: Any, **kwargs: Any) -> Any:
+        attempts.append(req.full_url)
+        raise urllib.error.URLError(ConnectionRefusedError("connection refused"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
+    wheel_file = {
+        "filename": "toy-1.0-py3-none-any.whl",
+        "url": "https://files.example/toy-1.0-py3-none-any.whl",
+        "size": 1,
+        "upload_time_iso_8601": "2025-01-10T12:00:00.000000Z",
+        "yanked": False,
+    }
+    old_shape = {"info": {"name": "toy", "version": "1.0", "summary": "Toy"}}
+    cache.set("pypi", "toy", {**old_shape, "releases": {"1.0": [wheel_file]}})
+    app = write_tree(
+        tmp_path / "app", {"requirements.txt": "toy==1.0\n", "main.py": "import toy\n"}
+    )
+    settings = Settings(model="scripted:scripted-1", cutoff=date(2024, 12, 31), jobs=2)
+    pypi = PyPI(cache)
+    engine = Engine(
+        settings,
+        store=cache,
+        llm_cache=cache,
+        pypi=pypi,
+        provider_factory=lambda spec: ScriptedModel(),
+    )
+    scan = engine.scan(load_project(app), engine.resolve_target())
+    toy = scan.package("toy")
+    assert (toy.status, toy.summary, toy.changelog) == (NEW, "Toy", None)
+    assert len(attempts) <= 3
+    assert scan.warnings == [] and scan.stale == {} and pypi.stale == {}
+
+
+def test_the_warning_names_every_older_copy() -> None:
+    assert stale_warning({"anthropic": date(2026, 9, 20), "openai": date(2026, 9, 21)}) == (
+        "PyPI could not be reached: the release lists of anthropic (cached 2026-09-20) and "
+        "openai (cached 2026-09-21) are older copies from the cache, so releases published "
+        "after those days are unknown to this scan"
+    )
 
 
 @pytest.mark.parametrize(
@@ -251,8 +434,9 @@ def test_a_wheel_is_downloaded_once_and_only_its_sources_kept(index, cache) -> N
     }
     # Another process (a new PyPI) finds the tree without asking PyPI anything.
     requests = len(index.server.seen)
+    assert tree.compiled == ("toy._speedups",)  # no _speedups.py or .pyi next to it
     assert PyPI(cache).source("Toy", "1.0") == SourceTree(
-        "Toy", "1.0", tree.root, ("toy",), tree.requires
+        "Toy", "1.0", tree.root, ("toy",), tree.requires, ("toy._speedups",)
     )
     assert len(index.server.seen) == requests
     assert index.downloads == ["/files/toy-1.0-py3-none-any.whl"] and leftovers(cache) == []
@@ -292,6 +476,75 @@ def test_a_flat_sdist_names_its_modules_but_not_its_build_scripts(index, cache) 
     index.add("toy", "1.0", "toy-1.0.tar.gz", make_tar(sdist))
     tree = PyPI(cache).source("toy", "1.0")
     assert (tree.import_names, tree.requires) == (("toy_mod", "toy_stubs"), ())
+
+
+def test_a_wheel_records_its_compiled_modules_and_still_extracts_only_sources(index, cache) -> None:
+    """Issue #52: a module that became an extension module, or lost its stub, looked
+    removed. The tree names the compiled modules a static reading cannot see."""
+    elf, pe = b"\x7fELF", b"MZ\x90\x00"
+    blob = wheel(
+        {
+            "toy/__init__.py": "",
+            "toy/fast.cpython-312-x86_64-linux-gnu.so": elf,
+            "toy/limited.abi3.so": elf,
+            "toy/win.cp313-win_amd64.pyd": pe,
+            "toy/plain.pyd": pe,
+            "toy/sub/__init__.py": "",
+            "toy/sub/inner.cpython-312-darwin.so": elf,
+            "toy/compiled_pkg/__init__.cpython-312-x86_64-linux-gnu.so": elf,
+            # Readable: a stub, or the Python source next to a compiled copy (mypyc, black).
+            "toy/stubbed.cpython-312-x86_64-linux-gnu.so": elf,
+            "toy/stubbed.pyi": "def f() -> None: ...\n",
+            "toy/both.py": "def f() -> None: ...\n",
+            "toy/both.cpython-312-x86_64-linux-gnu.so": elf,
+            # Not modules: a vendored shared library, mypyc's hashed helper (its hash may start
+            # with a letter or a digit).
+            "toy.libs/libgfortran-040039e1.so.5.0.0": elf,
+            "toy.libs/libz.so": elf,
+            "a3f2b9e1d0c4__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+            "30fcd23745efe32ce681__mypyc.cpython-312-x86_64-linux-gnu.so": elf,
+        }
+    )
+    index.add("toy", "1.0", "toy-1.0-cp312-cp312-manylinux_2_17_x86_64.whl", blob)
+    tree = PyPI(cache).source("toy", "1.0")
+    assert tree.compiled == (
+        "toy.compiled_pkg.__init__",  # its submodules have files of their own
+        "toy.fast",
+        "toy.limited",
+        "toy.plain",
+        "toy.sub.inner",
+        "toy.win",
+    )
+    assert files_in(tree.root) == {
+        ".since-cutoff.json",
+        "toy/__init__.py",
+        "toy/both.py",
+        "toy/stubbed.pyi",
+        "toy/sub/__init__.py",
+    }
+    assert PyPI(cache).source("toy", "1.0").compiled == tree.compiled  # from the marker
+
+
+@pytest.mark.parametrize(
+    ("filename", "archive"),
+    [("toy-1.0.tar.gz", make_tar), ("toy-1.0.zip", make_zip)],
+    ids=["tar.gz", "zip"],
+)
+def test_an_sdist_records_cython_modules_without_a_python_source(
+    index, cache, filename, archive
+) -> None:
+    sdist = {
+        **SDIST,
+        "toy-1.0/src/toy/fast.pyx": "def speedy(int x): return x\n",
+        "toy-1.0/src/toy/fast.pxd": "cdef int helper(int x)\n",
+        "toy-1.0/src/toy/fallback.pyx": "def f(): pass\n",
+        "toy-1.0/src/toy/fallback.py": "def f() -> None: ...\n",
+        "toy-1.0/benchmarks/bench.pyx": "",  # outside the package root
+    }
+    index.add("toy", "1.0", filename, archive(sdist))
+    tree = PyPI(cache).source("toy", "1.0")
+    assert tree.compiled == ("toy.fast",)
+    assert "toy/fast.pyx" not in files_in(tree.root)
 
 
 TOKEN = "sc7f3a"  # in the name of every file a hostile archive tries to write
@@ -527,8 +780,8 @@ def test_a_release_without_modules_is_no_code_or_a_metapackage(index, cache) -> 
         PyPI(cache).source("meta", "1.0")
     assert not isinstance(info.value, NoCodeError)
     assert str(info.value) == (
-        "meta 1.0 is a metapackage without code of its own: it installs a>=1, b, d<2, ...; "
-        "check those packages instead"
+        "meta 1.0 is a metapackage with no API of its own; its parts are dependencies of their "
+        "own, checked like any other: a>=1, b, d<2, ..."
     )
 
 
@@ -559,10 +812,12 @@ def test_a_broken_tree_in_the_cache_is_replaced(index, cache) -> None:
     "marker",
     [
         {"schema": 1, "import_names": ["toy"], "requires": []},
-        {"schema": 2, "import_names": ["win32\\lib\\toy"], "requires": []},
+        # Before SOURCE_SCHEMA 3 the compiled modules were not recorded (issue #52).
+        {"schema": 2, "import_names": ["toy"], "requires": []},
+        {"schema": SOURCE_SCHEMA, "import_names": ["win32\\lib\\toy"], "requires": []},
         "not json",
     ],
-    ids=["old-schema", "backslash-names", "unreadable"],
+    ids=["schema-1", "schema-2", "backslash-names", "unreadable"],
 )
 def test_a_tree_from_an_earlier_version_is_extracted_again(index, cache, marker) -> None:
     old = cache.root / "sources" / "toy-1.0"
@@ -576,7 +831,11 @@ def test_a_tree_from_an_earlier_version_is_extracted_again(index, cache, marker)
 
 def _publish_as_another_process(root: Path) -> None:
     write_tree(root, {"toy/__init__.py": ""})
-    marker = {"schema": 2, "import_names": ["toy"], "requires": ["from-the-other-process"]}
+    marker = {
+        "schema": SOURCE_SCHEMA,
+        "import_names": ["toy"],
+        "requires": ["from-the-other-process"],
+    }
     (root / ".since-cutoff.json").write_text(json.dumps(marker), encoding="utf-8")
 
 
@@ -674,3 +933,150 @@ def test_a_release_with_many_files_is_not_a_placeholder(tmp_path) -> None:
     tree = SourceTree("zen", "0.0.0", write_tree(tmp_path, files), ("zen",))
     assert is_placeholder(tree, max_files=4) is True
     assert is_placeholder(tree, max_files=3) is False
+
+
+# ------------------------------------------------------------ the sources cap
+def earlier_tree(cache: DiskCache, key: str, *, megabytes: float, used_ago: float) -> Path:
+    """A tree an earlier run extracted, as its marker records it: ``megabytes`` in size, last
+    used ``used_ago`` seconds ago."""
+    root = cache.root / "sources" / key
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("x = 1\n")
+    marker = root / ".since-cutoff.json"
+    data = {"schema": 2, "import_names": ["pkg"], "requires": [], "bytes": int(megabytes * MB)}
+    marker.write_text(json.dumps(data), encoding="utf-8")
+    stamp = time.time() - used_ago
+    os.utime(marker, (stamp, stamp))
+    return root
+
+
+def test_a_new_extraction_evicts_the_least_recently_used_trees_over_the_cap(
+    index, cache, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "2.5")
+    oldest = earlier_tree(cache, "oldest-1.0", megabytes=1, used_ago=3 * 86400)
+    older = earlier_tree(cache, "older-1.0", megabytes=1, used_ago=2 * 86400)
+    recent = earlier_tree(cache, "recent-1.0", megabytes=1, used_ago=600)  # may be in use
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": "x = 1\n"}))
+    with caplog.at_level(logging.INFO, logger="since_cutoff.pypi"):
+        tree = PyPI(cache).source("toy", "1.0")
+    # 3 MB and the new tree, 2.5 allowed: the least recently used tree goes, and that is
+    # enough. The recent one would be next, but a tree used in the last hour never goes.
+    assert not oldest.exists() and older.exists() and recent.exists() and tree.root.exists()
+    assert "evicted the sources oldest-1.0 (1.0 MB)" in caplog.text
+    assert leftovers(cache) == []
+    # The new tree's marker records its size, for the next time: the files, not the marker.
+    marker = json.loads((tree.root / ".since-cutoff.json").read_text(encoding="utf-8"))
+    assert marker["bytes"] == sum(
+        p.stat().st_size for p in tree.root.rglob("*") if p.is_file() and not p.name.startswith(".")
+    )
+
+
+def age(tree: SourceTree, *, used_ago: float, megabytes: float) -> None:
+    """Make a served tree look like one last used ``used_ago`` seconds ago, of ``megabytes``:
+    out of the grace period, so that only having been served can keep it."""
+    marker = tree.root / ".since-cutoff.json"
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    marker.write_text(json.dumps({**data, "bytes": int(megabytes * MB)}), encoding="utf-8")
+    stamp = time.time() - used_ago
+    os.utime(marker, (stamp, stamp))
+
+
+def toy_versions(index, *versions: str) -> None:
+    for version in versions:
+        blob = wheel({"toy/__init__.py": f"x = {version}\n"})
+        index.add("toy", version, f"toy-{version}-py3-none-any.whl", blob)
+
+
+def test_the_trees_this_process_served_are_never_evicted(index, cache, monkeypatch) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "1.5")
+    toy_versions(index, "1.0", "2.0")
+    pypi = PyPI(cache)
+    one = pypi.source("toy", "1.0")
+    # toy-1.0 is what this scan reads. Make it the least recently used tree, and the one whose
+    # eviction alone would meet the cap.
+    age(one, used_ago=3 * 86400, megabytes=2)
+    stale = earlier_tree(cache, "stale-1.0", megabytes=1, used_ago=2 * 86400)
+    two = pypi.source("toy", "2.0")  # a new extraction: 3 MB, 1.5 allowed
+    assert one.root.exists() and two.root.exists()
+    # Left out of the plan, not merely skipped: the next tree went in its place.
+    assert not stale.exists()
+    assert pypi.source("toy", "1.0").root == one.root
+
+
+def test_a_tree_another_thread_starts_reading_meanwhile_is_not_evicted(
+    index, cache, monkeypatch
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "1")
+    toy_versions(index, "1.0", "2.0")
+    one = PyPI(cache).source("toy", "1.0")  # an earlier run
+    age(one, used_ago=3 * 86400, megabytes=2)
+    pypi = PyPI(cache)
+    plan = pypi_module.sources_over_cap
+
+    def plan_then_read(*args: Any, **kwargs: Any) -> Any:
+        planned = plan(*args, **kwargs)
+        assert [e.key for e in planned] == ["toy-1.0"]
+        reader = threading.Thread(target=pypi.source, args=("toy", "1.0"))
+        reader.start()  # another worker of this scan, between the plan and the eviction
+        reader.join()
+        return planned
+
+    monkeypatch.setattr(pypi_module, "sources_over_cap", plan_then_read)
+    pypi.source("toy", "2.0")
+    assert one.root.exists()
+
+
+def test_the_first_eviction_of_a_process_is_one_line_on_the_terminal(
+    index, cache, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "2")
+    for key in ("a-1.0", "b-1.0", "c-1.0"):  # what the cache held before the cap: 3 MB
+        earlier_tree(cache, key, megabytes=1, used_ago=3 * 86400)
+    toy_versions(index, "1.0", "2.0")
+    pypi = PyPI(cache)
+    with caplog.at_level(logging.INFO, logger="since_cutoff.pypi"):
+        pypi.source("toy", "1.0")
+        earlier_tree(cache, "d-1.0", megabytes=1, used_ago=3 * 86400)
+        pypi.source("toy", "2.0")
+    # A warning is what Python prints when nothing set logging up, as the CLI does.
+    shown = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert shown == [
+        "removed 2 least recently used source trees (2.0 MB) from the cache: the extracted "
+        "sources are over the 2 MB cap (SINCE_CUTOFF_CACHE_MAX_MB)"
+    ]
+    later = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert "removed 1 least recently used source tree (1.0 MB) from the cache" in "\n".join(later)
+    assert logging.lastResort is not None and logging.lastResort.level == logging.WARNING
+
+
+def test_a_tree_an_interrupted_eviction_left_is_deleted_and_blocks_nothing(
+    index, cache, monkeypatch
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "1")
+    # 0.6.0 renamed every tree it evicted to <key>.tmp-evicted; one is left (the process
+    # stopped mid-delete) and old-1.0 was extracted again since.
+    left = earlier_tree(cache, "old-1.0.tmp-evicted", megabytes=1, used_ago=60)
+    old = earlier_tree(cache, "old-1.0", megabytes=2, used_ago=3 * 86400)
+    toy_versions(index, "1.0")
+    tree = PyPI(cache).source("toy", "1.0")
+    assert not left.exists() and not old.exists() and tree.root.exists()
+    assert leftovers(cache) == []
+
+
+def test_a_cache_hit_marks_the_tree_as_used(index, cache) -> None:
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    tree = PyPI(cache).source("toy", "1.0")
+    marker = tree.root / ".since-cutoff.json"
+    long_ago = time.time() - 3 * 86400
+    os.utime(marker, (long_ago, long_ago))
+    assert PyPI(cache).source("toy", "1.0") == tree  # another process, from the cache
+    assert marker.stat().st_mtime > time.time() - 60
+
+
+def test_no_cap_when_the_variable_is_zero(index, cache, monkeypatch) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "0")
+    stale = earlier_tree(cache, "stale-1.0", megabytes=4096, used_ago=30 * 86400)
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    PyPI(cache).source("toy", "1.0")
+    assert stale.exists()

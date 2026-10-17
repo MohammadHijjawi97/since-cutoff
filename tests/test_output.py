@@ -95,7 +95,11 @@ def driver(tmp_path: Path) -> list[str]:
 
 
 def _env(tmp_path: Path, **extra: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PYTHONIOENCODING", "PYTHONUTF8", "PYTHONUNBUFFERED")
+    }
     env.update(SINCE_CUTOFF_CACHE=str(tmp_path / "cli-cache"), **extra)
     env.pop("COLUMNS", None)
     return env
@@ -149,20 +153,32 @@ def test_output_to_nul_does_not_crash(tmp_path, driver) -> None:
         assert done.returncode == expected
 
 
+@pytest.mark.parametrize("unbuffered", [False, True], ids=["buffered", "unbuffered"])
 @pytest.mark.parametrize(
     "args",
-    [["scan", "APP", *CUTOFF], ["scan", "APP", *CUTOFF, "--json"], ["--help"]],
-    ids=["scan", "json", "help"],
+    [
+        ["scan", "APP", *CUTOFF],
+        ["scan", "APP", *CUTOFF, "--json"],
+        ["--help"],
+        ["scan", "--help"],
+        ["--version"],
+    ],
+    ids=["scan", "json", "help", "scan-help", "version"],
 )
-def test_a_closed_pipe_ends_the_run_quietly(tmp_path, driver, args) -> None:
+def test_a_closed_pipe_ends_the_run_quietly(tmp_path, driver, args, unbuffered) -> None:
     """``since-cutoff scan | head``: the reader goes away. No traceback and no exit code 120
-    from Python's last flush; the shell's code for a writer stopped by SIGPIPE instead."""
+    from Python's last flush; the shell's code for a writer stopped by SIGPIPE instead.
+
+    With PYTHONUNBUFFERED (set in many containers) argparse's own write of the help or the
+    version hit the closed pipe: Python 3.11 and later ignored it and exited with 0, 3.10
+    printed a BrokenPipeError traceback and exited with 1."""
     app = make_app(tmp_path)
+    env = _env(tmp_path, **({"PYTHONUNBUFFERED": "1"} if unbuffered else {}))
     proc = subprocess.Popen(
         [*driver, *(str(app) if a == "APP" else a for a in args)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=_env(tmp_path),
+        env=env,
     )
     assert proc.stdout is not None and proc.stderr is not None
     proc.stdout.close()  # before the child writes anything
@@ -390,6 +406,25 @@ def test_one_unchecked_dependency_is_not_an_example(tmp_path, cache, fake_pypi) 
     assert "1 of 1 dependency could not be checked: installed from git, not from PyPI" in lines
 
 
+def test_a_metapackage_is_information_not_a_dependency_that_could_not_be_checked(
+    tmp_path, cache, fake_pypi
+) -> None:
+    """``llama-index 0.14.25 is a metapackage ...`` read as an error after "1 of 3 dependencies
+    could not be checked": its parts are dependencies of their own, checked like any other."""
+    from since_cutoff.report import scan_lines
+
+    meta = (
+        "llama-index 0.14.25 is a metapackage with no API of its own; its parts are dependencies "
+        "of their own, checked like any other: llama-index-core<0.15,>=0.14.25"
+    )
+    scan = scan_app(make_app(tmp_path), cache, fake_pypi, date(2025, 7, 31))
+    scan.packages[0].status, scan.packages[0].reason = SKIPPED, meta
+    for lines in (headline(scan, None), scan_lines(scan, width=200)):
+        assert meta in [t.plain for t in lines]
+        assert [t.style for t in lines if t.plain == meta] == ["dim"]
+        assert not any("could not be checked" in t.plain for t in lines)
+
+
 def test_a_git_reference_is_named_in_the_skip_reason(tmp_path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "app"\nversion = "0"\ndependencies = [\n'
@@ -407,7 +442,9 @@ def test_a_git_reference_is_named_in_the_skip_reason(tmp_path) -> None:
         deps["local-lib"].non_pypi_reason == "installed from file:///srv/local-lib, not from PyPI"
     )
     engine = Engine(Settings(), store=DiskCache(tmp_path / "c"), llm_cache=DiskCache(tmp_path))
-    scan = engine._scan_versions(deps["dacvae"], date(2025, 1, 1), load_project(tmp_path))
+    scan = engine._scan_versions(
+        deps["dacvae"], ModelTarget.cutoff_only(date(2025, 1, 1), margin=0), load_project(tmp_path)
+    )
     assert scan.status == SKIPPED and "secret" not in (scan.reason or "")
 
 
@@ -554,6 +591,7 @@ def test_the_download_limit_is_shown_as_given(tmp_path, limit, shown) -> None:
 
 
 def test_a_metapackage_says_where_its_code_is(tmp_path, monkeypatch) -> None:
+    """Information, not a failure: the report shows it after "could not be checked"."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(
@@ -568,8 +606,8 @@ def test_a_metapackage_says_where_its_code_is(tmp_path, monkeypatch) -> None:
     with pytest.raises(PackageIndexError) as info:
         _OneFile(DiskCache(tmp_path), "2.129.0", wheel).source("docling", "2.129.0")
     assert str(info.value) == (
-        "docling 2.129.0 is a metapackage without code of its own: it installs "
-        "docling-slim==2.129.0; check that package instead"
+        "docling 2.129.0 is a metapackage with no API of its own; its part is a dependency of "
+        "its own, checked like any other: docling-slim==2.129.0"
     )
 
 
@@ -614,6 +652,8 @@ def test_modules_a_pth_file_puts_on_the_path_get_their_import_names(
     tree = _OneFile(DiskCache(tmp_path), "311", wheel).source("pywin32", "311")
     assert tree.import_names == ("adodbapi", "pywin", "pywintypes", "win32con")
     assert (tree.root / "pywin" / "scintilla" / "scintillacon.py").is_file()
+    # Compiled modules are named from the .pth directories too: win32/win32api.pyd is win32api.
+    assert tree.compiled == ("win32api",)
     # The diff finds the modules where they are imported from.
     old = write_tree(tmp_path / "old", {"win32con.py": "WM_USER = 1024\nWM_OLD = 1\n"})
     changes = _diff_trees(old, tree.root, ["win32con"])
@@ -687,9 +727,10 @@ def test_a_package_with_only_prereleases_existed_at_the_cutoff(cache) -> None:
     project = load_project(root)
     deps = {d.name: d for d in project.dependencies}
     engine = Engine(Settings(), store=cache, llm_cache=cache, pypi=pypi)
-    parser = engine._scan_versions(deps["sqlgpt-parser"], cutoff, project)
+    at_cutoff = ModelTarget.cutoff_only(cutoff, margin=0)
+    parser = engine._scan_versions(deps["sqlgpt-parser"], at_cutoff, project)
     assert parser.status == KNOWN  # not "first released after the cutoff"
-    beta = engine._scan_versions(deps["beta-only"], cutoff, project)  # not "no final releases"
+    beta = engine._scan_versions(deps["beta-only"], at_cutoff, project)  # not "no final releases"
     assert (beta.locked, beta.cutoff_version, beta.status) == ("0.62b1", "0.51b0", CHANGED)
 
 

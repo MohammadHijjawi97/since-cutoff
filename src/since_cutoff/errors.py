@@ -20,6 +20,11 @@ class NoCodeError(PackageIndexError):
     placeholder that reserves the name (a metapackage raises PackageIndexError)."""
 
 
+# The words of a metapackage's PackageIndexError (pypi._metapackage), by which the report
+# shows that skip as information, not among the dependencies that could not be checked.
+METAPACKAGE = "is a metapackage with no API of its own"
+
+
 class ModelLookupError(SinceCutoffError):
     """The model name could not be resolved to a knowledge cutoff."""
 

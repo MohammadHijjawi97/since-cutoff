@@ -1,5 +1,5 @@
 {
- "schema": 19,
+ "schema": 21,
  "package": "openai",
  "from_version": "2.44.0",
  "to_version": "3.19.2",
@@ -34,6 +34,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "openai",
     "openai.APIConnectionError",
@@ -643,7 +644,8 @@
      "openai/_httpx2.py:27"
     ],
     "still_named_count": 1
-   }
+   },
+   "tier": "public"
   }
  ]
 }

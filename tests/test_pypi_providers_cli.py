@@ -156,7 +156,6 @@ def test_openai_compatible_provider_protocol(http_server, monkeypatch):
 def test_openrouter_requests_carry_app_attribution(http_server, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     reply = {"model": "qwen", "choices": [{"message": {"content": "ok"}}]}
     http_server.routes["/chat/completions"] = [Reply(body=reply)]
 
@@ -175,7 +174,6 @@ def test_openrouter_requests_carry_app_attribution(http_server, monkeypatch):
 
 def test_http_errors_become_provider_errors(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     p = make_provider("openai:gpt-x", base_url="http://127.0.0.1:9")
     monkeypatch.setattr(
         net, "request", lambda *a, **k: (_ for _ in ()).throw(net.HTTPError("u", 401, "bad key"))
@@ -263,10 +261,12 @@ def test_cli_unapply(tmp_path, capsys):
 
 
 def test_target_file_choice(tmp_path):
-    # As 0.3 chose the file for a first block (both files: AGENTS.md, until issue #13).
+    # The file for a first block; both files when CLAUDE.md does not import AGENTS.md (#13).
     assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md"]
     (tmp_path / "CLAUDE.md").write_text("x")
     assert [p.name for p in block_targets(tmp_path)] == ["CLAUDE.md"]
     (tmp_path / "AGENTS.md").write_text("y")
+    assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md", "CLAUDE.md"]
+    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n")
     assert [p.name for p in block_targets(tmp_path)] == ["AGENTS.md"]
     assert block_targets(tmp_path, "docs/RULES.md") == [tmp_path / "docs/RULES.md"]

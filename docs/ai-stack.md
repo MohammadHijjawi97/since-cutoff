@@ -3,17 +3,23 @@ title: What your model hasn't seen
 description: For 21 coding models from 8 vendors, how many of 36 widely used Python AI libraries changed their public API after the model's training cutoff.
 ---
 
-*The Python AI stack after each model's training cutoff · September 2026 ·
-[since-cutoff on GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
+*The Python AI stack after each model's training cutoff · September 2026, re-run with since-cutoff
+0.5.0 in October 2026 · [since-cutoff on GitHub](https://github.com/MohammadHijjawi97/since-cutoff)*
 
 A coding model's training data ends at some date; the libraries it writes against keep changing
 after it. To see how far, I pinned **36 widely used Python AI and LLM libraries** at their releases
 of 26 September 2026
 ([the list](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/examples/ai-stack/requirements.txt))
-and ran `since-cutoff scan` (version 0.2.0) against the training cutoff of **21 models from 8
-vendors**: OpenAI, Anthropic, Google, xAI, DeepSeek, Qwen, Moonshot and Mistral. For each
-library, the scan takes the release that was current at the model's cutoff and diffs its public
-API against the pinned release, statically. No model was called for this page.
+and ran `since-cutoff scan` against the training cutoff of **21 models from 8 vendors**: OpenAI,
+Anthropic, Google, xAI, DeepSeek, Qwen, Moonshot and Mistral. For each library, the scan takes
+the release that was current at the model's cutoff and diffs its public API against the pinned
+release, statically. No model was called for this page. The scan was first run with since-cutoff
+0.2.0 in September 2026 and again with 0.5.0 on 10 October 2026, on the same pins; the table and
+the chart are from the 0.5.0 run. The two runs agree on every count below except two cells:
+gpt-4o now has 7 libraries with new deprecations (6 before) and gpt-5 has 29 with a public API
+break (30 before). 0.5.0's diff reports more kinds of change (dependency switches such as `httpx`
+to `httpx2`) and corrects some change counts, which rarely alters whether a library has at least
+one break.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/ai-stack-dark.svg">
@@ -40,10 +46,10 @@ API against the pinned release, statically. No model was called for this page.
 
 | model | vendor | training cutoff | new release since (of 36) | did not exist yet | new major version | public API breaks | new deprecations |
 |---|---|---|---|---|---|---|---|
-| gpt-4o | OpenAI | 2023-09-30 | 36 | 13 | 15 | 21 | 6 |
+| gpt-4o | OpenAI | 2023-09-30 | 36 | 13 | 15 | 21 | 7 |
 | gpt-4.1 | OpenAI | 2024-04-30 | 36 | 6 | 19 | 28 | 11 |
 | o3 | OpenAI | 2024-05-31 | 36 | 5 | 20 | 29 | 12 |
-| gpt-5 | OpenAI | 2024-09-30 | 36 | 4 | 18 | 30 | 12 |
+| gpt-5 | OpenAI | 2024-09-30 | 36 | 4 | 18 | 29 | 12 |
 | kimi-k2 | Moonshot | 2024-10-31 | 36 | 4 | 18 | 30 | 12 |
 | mistral-large-latest | Mistral | 2024-11-30 | 36 | 2 | 20 | 31 | 13 |
 | gemini-2.5-pro | Google | 2025-01-31 | 35 | 0 | 21 | 33 | 13 |
