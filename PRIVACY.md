@@ -42,7 +42,9 @@ to what it receives.
 - `.since-cutoff/` in your project: reports and `results.json` (it adds a `.gitignore` that
   ignores itself).
 - A local cache of PyPI data, package sources, API diffs and model answers. `since-cutoff cache
-  path` shows where it is; `since-cutoff cache clear` removes it.
+  info` shows where it is and how big each part is; `since-cutoff cache clear` removes it, or
+  with `--sources`, `--diffs` or `--pypi` only that part. The package sources are capped at
+  2 GB (`SINCE_CUTOFF_CACHE_MAX_MB`): the least recently used go first.
 - With `sync` (after it shows you the diff and you agree, or with `--yes`) or `run --apply`
   only: one marked block in `AGENTS.md` or `CLAUDE.md`. Text outside it is left as it is, and
   `since-cutoff unapply` removes the block.

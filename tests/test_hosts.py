@@ -410,6 +410,8 @@ def test_an_unknown_provider_suggests_an_openai_compatible_server(root: Path, ho
         ("opencode", "grok-code", "xai:grok-code"),
         ("mistral", "devstral-medium-2507", "mistral:devstral-medium-2507"),
         ("groq", "llama-3.3-70b-versatile", "llama:llama-3.3-70b-versatile"),
+        # No maker in the id: the provider's own listing, which the registry knows.
+        ("amazon-bedrock", "amazon.nova-pro-v1:0", "amazon-bedrock:amazon.nova-pro-v1:0"),
         (None, "sonnet", "anthropic:sonnet"),
         (None, "my-local-model", "my-local-model"),
     ],
@@ -514,8 +516,8 @@ def test_scan_tests_the_model_in_the_project_settings(app, capsys, offline_cli) 
     assert cli.main(["scan", str(app)]) == 0
     out = capsys.readouterr().out
     assert (
-        "Model claude-sonnet-4-5, training cutoff 2025-07-31 "
-        "(from models.dev, model from .claude/settings.json)" in out
+        "Model claude-sonnet-4-5, training cutoff 2025-07-31, comparing from releases up to "
+        "2025-07-01 (from models.dev, model from .claude/settings.json)" in out
     )
     assert "No model setting found" not in out
     report = (app / ".since-cutoff" / "report.md").read_text(encoding="utf-8")
@@ -568,7 +570,10 @@ def test_an_explicit_claude_code_model_ignores_the_detection(
     assert cli.main(["scan", str(app), "--model", "claude-code"]) == 0
     out = capsys.readouterr().out
     # As before detection: the user's settings, never the project's, and no source named.
-    assert "Model claude-haiku-4-5, training cutoff 2025-02-28 (from models.dev)" in out
+    assert (
+        "Model claude-haiku-4-5, training cutoff 2025-02-28, comparing from releases up to "
+        "2025-01-29 (from models.dev)" in out
+    )
     assert "No model setting found" not in out
 
 
@@ -576,8 +581,8 @@ def test_a_model_since_cutoff_cannot_call_is_scanned_but_not_run(app, capsys, of
     write(app / "opencode.json", '{"model": "google/gemini-2.5-pro"}')
     assert cli.main(["scan", str(app)]) == 0
     assert (
-        "Model gemini-2.5-pro, training cutoff 2025-01-31 (from models.dev, model from opencode.json)"
-        in (capsys.readouterr().out)
+        "Model gemini-2.5-pro, training cutoff 2025-01-31, comparing from releases up to "
+        "2025-01-01 (from models.dev, model from opencode.json)" in (capsys.readouterr().out)
     )
     assert cli.main(["run", str(app)]) == 1
     err = " ".join(capsys.readouterr().err.split())

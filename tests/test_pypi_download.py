@@ -6,10 +6,12 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import tracemalloc
 import urllib.error
@@ -22,7 +24,7 @@ from typing import Any
 import pytest
 
 from since_cutoff import pypi as pypi_module
-from since_cutoff.cache import DiskCache
+from since_cutoff.cache import MB, DiskCache
 from since_cutoff.engine import NEW, Engine, Settings, stale_warning
 from since_cutoff.errors import NoCodeError, PackageIndexError
 from since_cutoff.project import load_project
@@ -778,8 +780,8 @@ def test_a_release_without_modules_is_no_code_or_a_metapackage(index, cache) -> 
         PyPI(cache).source("meta", "1.0")
     assert not isinstance(info.value, NoCodeError)
     assert str(info.value) == (
-        "meta 1.0 is a metapackage without code of its own: it installs a>=1, b, d<2, ...; "
-        "check those packages instead"
+        "meta 1.0 is a metapackage with no API of its own; its parts are dependencies of their "
+        "own, checked like any other: a>=1, b, d<2, ..."
     )
 
 
@@ -931,3 +933,150 @@ def test_a_release_with_many_files_is_not_a_placeholder(tmp_path) -> None:
     tree = SourceTree("zen", "0.0.0", write_tree(tmp_path, files), ("zen",))
     assert is_placeholder(tree, max_files=4) is True
     assert is_placeholder(tree, max_files=3) is False
+
+
+# ------------------------------------------------------------ the sources cap
+def earlier_tree(cache: DiskCache, key: str, *, megabytes: float, used_ago: float) -> Path:
+    """A tree an earlier run extracted, as its marker records it: ``megabytes`` in size, last
+    used ``used_ago`` seconds ago."""
+    root = cache.root / "sources" / key
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("x = 1\n")
+    marker = root / ".since-cutoff.json"
+    data = {"schema": 2, "import_names": ["pkg"], "requires": [], "bytes": int(megabytes * MB)}
+    marker.write_text(json.dumps(data), encoding="utf-8")
+    stamp = time.time() - used_ago
+    os.utime(marker, (stamp, stamp))
+    return root
+
+
+def test_a_new_extraction_evicts_the_least_recently_used_trees_over_the_cap(
+    index, cache, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "2.5")
+    oldest = earlier_tree(cache, "oldest-1.0", megabytes=1, used_ago=3 * 86400)
+    older = earlier_tree(cache, "older-1.0", megabytes=1, used_ago=2 * 86400)
+    recent = earlier_tree(cache, "recent-1.0", megabytes=1, used_ago=600)  # may be in use
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": "x = 1\n"}))
+    with caplog.at_level(logging.INFO, logger="since_cutoff.pypi"):
+        tree = PyPI(cache).source("toy", "1.0")
+    # 3 MB and the new tree, 2.5 allowed: the least recently used tree goes, and that is
+    # enough. The recent one would be next, but a tree used in the last hour never goes.
+    assert not oldest.exists() and older.exists() and recent.exists() and tree.root.exists()
+    assert "evicted the sources oldest-1.0 (1.0 MB)" in caplog.text
+    assert leftovers(cache) == []
+    # The new tree's marker records its size, for the next time: the files, not the marker.
+    marker = json.loads((tree.root / ".since-cutoff.json").read_text(encoding="utf-8"))
+    assert marker["bytes"] == sum(
+        p.stat().st_size for p in tree.root.rglob("*") if p.is_file() and not p.name.startswith(".")
+    )
+
+
+def age(tree: SourceTree, *, used_ago: float, megabytes: float) -> None:
+    """Make a served tree look like one last used ``used_ago`` seconds ago, of ``megabytes``:
+    out of the grace period, so that only having been served can keep it."""
+    marker = tree.root / ".since-cutoff.json"
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    marker.write_text(json.dumps({**data, "bytes": int(megabytes * MB)}), encoding="utf-8")
+    stamp = time.time() - used_ago
+    os.utime(marker, (stamp, stamp))
+
+
+def toy_versions(index, *versions: str) -> None:
+    for version in versions:
+        blob = wheel({"toy/__init__.py": f"x = {version}\n"})
+        index.add("toy", version, f"toy-{version}-py3-none-any.whl", blob)
+
+
+def test_the_trees_this_process_served_are_never_evicted(index, cache, monkeypatch) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "1.5")
+    toy_versions(index, "1.0", "2.0")
+    pypi = PyPI(cache)
+    one = pypi.source("toy", "1.0")
+    # toy-1.0 is what this scan reads. Make it the least recently used tree, and the one whose
+    # eviction alone would meet the cap.
+    age(one, used_ago=3 * 86400, megabytes=2)
+    stale = earlier_tree(cache, "stale-1.0", megabytes=1, used_ago=2 * 86400)
+    two = pypi.source("toy", "2.0")  # a new extraction: 3 MB, 1.5 allowed
+    assert one.root.exists() and two.root.exists()
+    # Left out of the plan, not merely skipped: the next tree went in its place.
+    assert not stale.exists()
+    assert pypi.source("toy", "1.0").root == one.root
+
+
+def test_a_tree_another_thread_starts_reading_meanwhile_is_not_evicted(
+    index, cache, monkeypatch
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "1")
+    toy_versions(index, "1.0", "2.0")
+    one = PyPI(cache).source("toy", "1.0")  # an earlier run
+    age(one, used_ago=3 * 86400, megabytes=2)
+    pypi = PyPI(cache)
+    plan = pypi_module.sources_over_cap
+
+    def plan_then_read(*args: Any, **kwargs: Any) -> Any:
+        planned = plan(*args, **kwargs)
+        assert [e.key for e in planned] == ["toy-1.0"]
+        reader = threading.Thread(target=pypi.source, args=("toy", "1.0"))
+        reader.start()  # another worker of this scan, between the plan and the eviction
+        reader.join()
+        return planned
+
+    monkeypatch.setattr(pypi_module, "sources_over_cap", plan_then_read)
+    pypi.source("toy", "2.0")
+    assert one.root.exists()
+
+
+def test_the_first_eviction_of_a_process_is_one_line_on_the_terminal(
+    index, cache, monkeypatch, caplog
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "2")
+    for key in ("a-1.0", "b-1.0", "c-1.0"):  # what the cache held before the cap: 3 MB
+        earlier_tree(cache, key, megabytes=1, used_ago=3 * 86400)
+    toy_versions(index, "1.0", "2.0")
+    pypi = PyPI(cache)
+    with caplog.at_level(logging.INFO, logger="since_cutoff.pypi"):
+        pypi.source("toy", "1.0")
+        earlier_tree(cache, "d-1.0", megabytes=1, used_ago=3 * 86400)
+        pypi.source("toy", "2.0")
+    # A warning is what Python prints when nothing set logging up, as the CLI does.
+    shown = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert shown == [
+        "removed 2 least recently used source trees (2.0 MB) from the cache: the extracted "
+        "sources are over the 2 MB cap (SINCE_CUTOFF_CACHE_MAX_MB)"
+    ]
+    later = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert "removed 1 least recently used source tree (1.0 MB) from the cache" in "\n".join(later)
+    assert logging.lastResort is not None and logging.lastResort.level == logging.WARNING
+
+
+def test_a_tree_an_interrupted_eviction_left_is_deleted_and_blocks_nothing(
+    index, cache, monkeypatch
+) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "1")
+    # 0.6.0 renamed every tree it evicted to <key>.tmp-evicted; one is left (the process
+    # stopped mid-delete) and old-1.0 was extracted again since.
+    left = earlier_tree(cache, "old-1.0.tmp-evicted", megabytes=1, used_ago=60)
+    old = earlier_tree(cache, "old-1.0", megabytes=2, used_ago=3 * 86400)
+    toy_versions(index, "1.0")
+    tree = PyPI(cache).source("toy", "1.0")
+    assert not left.exists() and not old.exists() and tree.root.exists()
+    assert leftovers(cache) == []
+
+
+def test_a_cache_hit_marks_the_tree_as_used(index, cache) -> None:
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    tree = PyPI(cache).source("toy", "1.0")
+    marker = tree.root / ".since-cutoff.json"
+    long_ago = time.time() - 3 * 86400
+    os.utime(marker, (long_ago, long_ago))
+    assert PyPI(cache).source("toy", "1.0") == tree  # another process, from the cache
+    assert marker.stat().st_mtime > time.time() - 60
+
+
+def test_no_cap_when_the_variable_is_zero(index, cache, monkeypatch) -> None:
+    monkeypatch.setenv("SINCE_CUTOFF_CACHE_MAX_MB", "0")
+    stale = earlier_tree(cache, "stale-1.0", megabytes=4096, used_ago=30 * 86400)
+    index.add("toy", "1.0", "toy-1.0-py3-none-any.whl", wheel({"toy/__init__.py": ""}))
+    PyPI(cache).source("toy", "1.0")
+    assert stale.exists()

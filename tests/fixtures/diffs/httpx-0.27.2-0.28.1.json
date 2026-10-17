@@ -50,7 +50,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -96,7 +97,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -136,7 +138,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -176,7 +179,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -216,7 +220,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -256,7 +261,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -296,7 +302,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -336,7 +343,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -376,7 +384,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -416,7 +425,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -456,7 +466,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -496,7 +507,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -536,7 +548,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -576,7 +589,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -616,7 +630,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -656,7 +671,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -696,7 +712,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -736,7 +753,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -776,7 +794,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -816,7 +835,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -856,7 +876,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   }
  ]
 }

@@ -73,6 +73,7 @@ from since_cutoff.apidiff import (
     signature_parameters,
 )
 from since_cutoff.errors import SinceCutoffError
+from since_cutoff.models import DEFAULT_CUTOFF_MARGIN, compare_date
 
 BLOCK_START = "<!-- since-cutoff:start -->"
 BLOCK_END = "<!-- since-cutoff:end -->"
@@ -1492,6 +1493,7 @@ def new_package_note(
     summary: str | None = None,
     changelog: str | None = None,
     released: str | None = None,
+    margin: int | None = None,
 ) -> Note:
     """The one bullet for a package first released after the cutoff that the project's code
     imports: no release existed at the cutoff to compare with, so there is no diff, and the
@@ -1499,19 +1501,22 @@ def new_package_note(
     release (``first_released``, ISO), the day the pinned ``version`` was released
     (``released``, ISO: the two differ, httpx2 0.0.0 came out months before 2.13.1), its
     one-line ``summary`` and where it documents its releases (``changelog``,
-    :func:`pypi.changelog_url`), each left out when unknown. Tagged ``[metadata]``; about 50
-    tokens.
+    :func:`pypi.changelog_url`), each left out when unknown. ``margin``: the package was first
+    released that many days before the cutoff or fewer (ModelTarget.released_within_margin),
+    after the day the scan compares from, which the bullet says instead of "after the cutoff".
+    Tagged ``[metadata]``; about 50 tokens.
 
     ``httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no training
     data on it. The project pins 2.13.1 (released 2026-09-23). Summary: The next generation
     HTTP client. Changelog: https://...``
     """
     when = f"on {first_released}, after the cutoff" if first_released else "after the cutoff"
+    known = "the model has no training data on it"
+    if margin is not None and first_released:
+        when = f"on {first_released}, within {margin} days before the cutoff"
+        known = "the model has little or no training data on it"
     pinned = f"{version} (released {released})" if released else version
-    text = (
-        f"{package} first appeared on PyPI {when}; the model has no training data on it. "
-        f"The project pins {pinned}."
-    )
+    text = f"{package} first appeared on PyPI {when}; {known}. The project pins {pinned}."
     if summary:
         text += f" Summary: {safe_text(summary, 120).rstrip('.')}."
     if changelog:
@@ -1656,11 +1661,15 @@ def render_block(
     tool: str = __version__,
     suggestions: bool = False,
     per_package: int | None = None,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     """The notes block (format 2) for AGENTS.md / CLAUDE.md.
 
     ``deps`` is :func:`deps_hash` of every dependency scanned (by default, of the packages and
-    versions the notes are about); ``scope`` what the notes cover (SCOPE_*). The first line is
+    versions the notes are about); ``scope`` what the notes cover (SCOPE_*); ``margin`` how many
+    days before the cutoff the comparison releases were published by (``--cutoff-margin``; the
+    header says the day, and the meta line keeps the number, so that ``status`` sees a block
+    compared from another day). The first line is
     0.3's marker, so 0.3's ``unapply`` still finds and removes a block written by 0.4.
     ``suggestions`` (``sync --suggestions``: the notes name similar names, ``[not confirmed]``)
     is recorded in the meta line, only when set, so that the next ``sync`` keeps it; so is
@@ -1678,12 +1687,14 @@ def render_block(
     for n in notes:
         by_pkg.setdefault((n.change.package, n.change.to_version), []).append(n)
     used_tags = {t for n in notes for t in n.tag_list}
-    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags)]
+    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags, margin)]
     checked: list[str] = []
     for (pkg, version), items in sorted(by_pkg.items()):
         olds = _unique(n.change.from_version for n in items if n.change.from_version)
-        at_cutoff = f" ({olds[0]} at the cutoff)" if len(olds) == 1 else ""
-        body += ["", f"**{pkg} {version}**{at_cutoff}"]
+        # The release the notes compare from: the latest published ``margin`` days before the
+        # cutoff, which the header says (a block from before the margin said "at the cutoff").
+        compared = f" (compared from {olds[0]})" if len(olds) == 1 else ""
+        body += ["", f"**{pkg} {version}**{compared}"]
         seen: set[str] = set()
         # A switched dependency first: it concerns every object of it the code hands over.
         for n in sorted(items, key=lambda n: (n.change.kind != DEPENDENCY_SWITCHED, n.api, n.line)):
@@ -1702,6 +1713,7 @@ def render_block(
         "tool": tool,
         "model": model or None,
         "cutoff": cutoff.isoformat(),
+        "margin": margin,
         "versions_from": version_source,
         "deps": deps,
         "body": body_hash(text),
@@ -1729,16 +1741,31 @@ def model_names(model: str | None) -> list[str]:
 
 
 def _header(
-    model: str, cutoff: date, version_source: str, scope: str, tool: str, tags: set[str]
+    model: str,
+    cutoff: date,
+    version_source: str,
+    scope: str,
+    tool: str,
+    tags: set[str],
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     # The model's name comes from the user or a settings file: it must not end the block either.
     name = _one_line(_code(model))
     names = model_names(name)
     day = cutoff.isoformat()
+    # As the model line of ``scan`` says it: "training cutoff 2025-07-31, comparing from
+    # releases up to 2025-07-01" (--cutoff-margin 30).
+    from_day = (
+        f", comparing from releases up to {compare_date(cutoff, margin).isoformat()}"
+        if margin > 0
+        else ""
+    )
     if len(names) > 1:
-        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day})"
+        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day}{from_day})"
+    elif name:
+        who = f"the training cutoff of `{name}` ({day}{from_day})"
     else:
-        who = f"the training cutoff of `{name}` ({day})" if name else f"{day}"
+        who = f"{day} ({from_day[2:]})" if from_day else day
     source = _one_line(_code(version_source))
     versions = (
         "the latest versions on PyPI"
@@ -1822,7 +1849,9 @@ class PackageNotes:
     """One package's section of a block."""
 
     version: str
-    cutoff_version: str | None  # format 2 only: "(0.60.0 at the cutoff)"
+    # Format 2 only: the release the notes compare from, "(compared from 0.56.0)" (a block
+    # written before there was a margin: "(0.60.0 at the cutoff)").
+    cutoff_version: str | None
     bullets: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)  # (text, tags)
 
 
@@ -1844,8 +1873,11 @@ _LEGACY_HEADER = re.compile(
     r"Generated by \[since-cutoff\]\([^)]*\) for `(?P<model>[^`]*)` \(training cutoff "
     r"(?P<cutoff>\d{4}-\d{2}-\d{2})\), checked against `(?P<source>[^`]*)`\."
 )
+# ``**anthropic 1.8.0** (compared from 0.56.0)``, or, from a block written before there was a
+# margin, ``**anthropic 1.8.0** (0.60.0 at the cutoff)``.
 _PACKAGE_LINE = re.compile(
-    r"^\*\*(?P<pkg>\S+) (?P<version>\S+)\*\*(?: \((?P<cutoff>\S+) at the cutoff\))?$"
+    r"^\*\*(?P<pkg>\S+) (?P<version>\S+)\*\*"
+    r"(?: \((?:compared from (?P<cutoff>\S+)|(?P<at_cutoff>\S+) at the cutoff)\))?$"
 )
 
 
@@ -1889,7 +1921,7 @@ def parse_block(text: str, name: str = "AGENTS.md") -> ParsedBlock | None:
     for line in inner:
         m = _PACKAGE_LINE.match(line.strip())
         if m is not None:
-            current = PackageNotes(m.group("version"), m.group("cutoff"))
+            current = PackageNotes(m.group("version"), m.group("cutoff") or m.group("at_cutoff"))
             packages[m.group("pkg")] = current
         elif current is not None and line.startswith("- "):
             current.bullets.append(split_tags(line[2:].strip()))
@@ -1903,11 +1935,8 @@ INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 
 def default_target(root: Path, explicit: str | None = None) -> Path:
     """The file for a first block: ``explicit`` (``--target``, relative to the project), else
-    AGENTS.md, or CLAUDE.md when only that one exists.
-
-    Claude Code reads only CLAUDE.md when both exist; writing to both, or to AGENTS.md only
-    when CLAUDE.md imports it with ``@AGENTS.md``, is issue #13 (not changed here; see
-    :func:`block_targets`).
+    AGENTS.md, or CLAUDE.md when only that one exists. With both files, :func:`block_targets`
+    adds CLAUDE.md unless it imports AGENTS.md (issue #13).
     """
     if explicit:
         p = Path(explicit)
@@ -1925,19 +1954,77 @@ def block_targets(root: Path, explicit: str | None = None) -> list[Path]:
     2. otherwise each of AGENTS.md and CLAUDE.md that already has a block (or since-cutoff
        markers that cannot be read, which reading it then reports), so that a block stays
        where it was written (``run --apply --target CLAUDE.md``) and none is left behind;
-    3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists.
+    3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists;
+       with both files, AGENTS.md and CLAUDE.md, unless CLAUDE.md imports AGENTS.md
+       (:func:`imports_agents`) or cannot be read, when AGENTS.md is the only one (issue #13).
 
-    Issue #13 (a good first issue) is the case of both files and no block yet. Claude Code
-    reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md imports it with
-    ``@AGENTS.md`` (outside code spans and fenced blocks). The plan for it: with that import,
-    AGENTS.md only (removing a block left in CLAUDE.md); without it, both files, with the tip
-    "add `@AGENTS.md` to CLAUDE.md to keep one copy". Until then that case keeps 0.3's
-    choice, AGENTS.md.
+    A CLAUDE.md that is a link to AGENTS.md is that file: AGENTS.md alone.
+
+    Claude Code reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md
+    imports it with ``@AGENTS.md``; the agents that read AGENTS.md (Codex, Cursor, Copilot)
+    do not read CLAUDE.md. A block already in one file stays the only one (2.): the tip
+    (:func:`agents_import_tip`) says what Claude Code needs.
     """
     if explicit:
         return [default_target(root, explicit)]
+    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
+    if _same_file(agents, claude):  # CLAUDE.md is a link to AGENTS.md: one file
+        return [agents]
     found = [root / name for name in INSTRUCTION_FILES if has_markers(root / name)]
-    return found or [default_target(root)]
+    if found:
+        return found
+    if agents.exists() and _misses_agents(agents, claude):
+        return [agents, claude]
+    return [default_target(root)]
+
+
+# ``@AGENTS.md`` (or ``@./AGENTS.md``) after a space or at the start of a line: Claude Code's
+# import, which it does not read inside a code span or a fenced block. Lines keep a ``\r``
+# (files are read as they are), which a closing fence may end with.
+_AGENTS_IMPORT = re.compile(r"(?<!\S)@(?:\./)?AGENTS\.md(?![\w/-])")
+# A fenced block closes at a fence of the same character at least as long as the opening one
+# (Markdown), or at the end of the file.
+_FENCED = re.compile(
+    r"(?ms)^[ \t]{0,3}((`)\2{2,}|(~)\3{2,}).*?(?:^[ \t]{0,3}\1(?:\2|\3)*[ \t]*\r?$|\Z)"
+)
+# A code span does not run past a blank line (the end of a paragraph): a stray backtick does
+# not pair with one in a later paragraph and hide what is between them.
+_CODE_SPAN = re.compile(r"(`+)(?!`)(?:(?!\n[ \t]*\r?\n).)+?(?<!`)\1(?!`)", re.S)
+
+
+def _imports(text: str) -> bool:
+    text = text.removeprefix("\ufeff")  # the byte order mark some editors put first
+    return bool(_AGENTS_IMPORT.search(_CODE_SPAN.sub("", _FENCED.sub("", text))))
+
+
+def imports_agents(claude: Path) -> bool:
+    """Whether CLAUDE.md imports AGENTS.md with ``@AGENTS.md``, outside code spans and fenced
+    blocks, as Claude Code reads imports. A file that cannot be read imports nothing."""
+    try:
+        return _imports(_read(claude))
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` are one file (a symbolic or hard link); False when one is not
+    there."""
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
+def _misses_agents(agents: Path, claude: Path) -> bool:
+    """Whether Claude Code does not read AGENTS.md: CLAUDE.md is a file of its own that does
+    not import it (:func:`imports_agents`). False when CLAUDE.md is AGENTS.md (a link) and when
+    it cannot tell: no CLAUDE.md, or one that cannot be read (not UTF-8), as before #13."""
+    if not claude.is_file() or _same_file(agents, claude):
+        return False
+    try:
+        return not _imports(_read(claude))
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 # What says to add: ``@AGENTS.md`` in CLAUDE.md is how Claude Code reads AGENTS.md too.
@@ -1945,25 +2032,34 @@ AGENTS_IMPORT_TIP = (
     "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md: "
     "add a line `@AGENTS.md` to CLAUDE.md"
 )
+# Both files have the block because CLAUDE.md does not import AGENTS.md (issue #13).
+TWO_COPIES_TIP = (
+    "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one copy, add "
+    "a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target CLAUDE.md`"
+)
+# Both files have the block, and CLAUDE.md imports AGENTS.md (added after the blocks were).
+SECOND_COPY_TIP = (
+    "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a second copy of the notes: run "
+    "`since-cutoff unapply --target CLAUDE.md` to keep one"
+)
 
 
 def agents_import_tip(root: Path, targets: Sequence[Path]) -> str | None:
-    """:data:`AGENTS_IMPORT_TIP` when the notes go to AGENTS.md (``targets``) and not to
-    CLAUDE.md, although a CLAUDE.md exists that does not mention ``@AGENTS.md``: Claude Code
-    then reads only CLAUDE.md. None otherwise.
-
-    A plain text search, so ``@AGENTS.md`` inside a code span counts too: choosing the files
-    for this case (both files, or AGENTS.md alone with the import) is issue #13, which will
-    also read the import as Claude Code does, outside code; this tip is only until then.
+    """What to do when the notes go to AGENTS.md (``targets``) and CLAUDE.md does not import
+    it (:func:`imports_agents`): :data:`TWO_COPIES_TIP` when they go to CLAUDE.md too,
+    :data:`AGENTS_IMPORT_TIP` when they do not (a block already in AGENTS.md alone), as Claude
+    Code then reads only CLAUDE.md. When they go to both files and CLAUDE.md does import
+    AGENTS.md (a block in each, then the import): :data:`SECOND_COPY_TIP`. None otherwise,
+    also when CLAUDE.md is a link to AGENTS.md or cannot be read.
     """
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents not in targets or claude in targets or not claude.is_file():
+    if agents not in targets:
         return None
-    try:
-        text = _read(claude)
-    except (OSError, UnicodeDecodeError):
-        return None
-    return None if re.search(r"@(?:\./)?AGENTS\.md", text) else AGENTS_IMPORT_TIP
+    if _misses_agents(agents, claude):
+        return TWO_COPIES_TIP if claude in targets else AGENTS_IMPORT_TIP
+    if claude in targets and not _same_file(agents, claude) and imports_agents(claude):
+        return SECOND_COPY_TIP
+    return None
 
 
 _MARKER_LINE = re.compile(

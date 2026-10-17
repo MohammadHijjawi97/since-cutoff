@@ -42,6 +42,7 @@ from since_cutoff.engine import (
     dependency_pairs,
     scanned_dependencies,
 )
+from since_cutoff.models import DEFAULT_CUTOFF_MARGIN
 from since_cutoff.notes import (
     BLOCK_END,
     BLOCK_VERSION,
@@ -53,6 +54,7 @@ from since_cutoff.notes import (
     TAG_TYPE_CHECKED,
     Note,
     ParsedBlock,
+    agents_import_tip,
     api_id,
     block_text,
     deps_hash,
@@ -97,6 +99,9 @@ STALE_VERSION = "stale"
 ORPHANED = "orphan"
 DEPENDENCIES_CHANGED = "dependencies_changed"
 VERSIONS_FROM_CHANGED = "versions_from_changed"
+# The block compared from another day than the scan does now (--cutoff-margin): a block
+# written before the margin existed compared from the cutoff itself.
+MARGIN_CHANGED = "margin_changed"
 OLD_FORMAT = "old_format"  # written by since-cutoff 0.3: sync upgrades it
 RUN_BLOCK = "run_block"  # written by `run --apply`: sync writes the notes for the used APIs
 # Not a reason the block is out of date (sync keeps the block's model): a coding agent set up
@@ -162,8 +167,10 @@ def read_target(root: Path, path: Path) -> TargetFile:
     return TargetFile(path, name, text, parse_block(text, path.name), block_text(text, path.name))
 
 
-def sticky_target(target: TargetFile) -> ModelTarget | None:
-    """The model and cutoff of the block in ``target``, as sync keeps them, or None."""
+def sticky_target(target: TargetFile, margin: int = DEFAULT_CUTOFF_MARGIN) -> ModelTarget | None:
+    """The model and cutoff of the block in ``target``, as sync keeps them, or None. The margin
+    is not the block's: it is the scan's setting (``--cutoff-margin``), the same for everyone,
+    and ``status`` says when a block was compared from another day."""
     basis = target.basis
     if basis is None:
         return None
@@ -171,8 +178,20 @@ def sticky_target(target: TargetFile) -> ModelTarget | None:
     how = "--model" if model else "--cutoff"
     source = f"the notes in {target.name}; {how} to change"
     if not model:
-        return ModelTarget.cutoff_only(cutoff, source)
-    return ModelTarget(model, model, cutoff, source)
+        return ModelTarget.cutoff_only(cutoff, source, margin=margin)
+    return ModelTarget(model, model, cutoff, source, margin=margin)
+
+
+def block_margin(meta: dict[str, Any]) -> int:
+    """How many days before the cutoff a block's comparison releases were published by (its
+    meta line's ``margin``); 0 for a block written before there was a margin."""
+    margin = meta.get("margin")
+    return margin if isinstance(margin, int) and margin >= 0 else 0
+
+
+def margin_text(margin: int) -> str:
+    """``30 days before the cutoff``, or ``the cutoff itself``."""
+    return f"{margin} days before the cutoff" if margin else "the cutoff itself"
 
 
 # ------------------------------------------------------------------ sync
@@ -199,6 +218,8 @@ class Proposal:
     new_text: str | None  # the file after sync; None: it still does not exist
     action: str | None  # "created", "appended to", "updated", "removed from"; None: nothing
     notes: int
+    # Days before the cutoff the comparison releases were published by (--cutoff-margin).
+    margin: int = DEFAULT_CUTOFF_MARGIN
     # SCOPE_IMPORTED: APIs noted per package (``--per-package``, or the block's own choice).
     per_package: int = IMPORTED_APIS
     changes: list[Change] = field(default_factory=list)
@@ -271,6 +292,7 @@ def propose(
             "scope": scope,
             "suggestions": suggestions,
             "per_package": per_package,
+            "margin": scan.target.margin,
         }
         block = render_block(notes, **options)
         tool = target.meta.get("tool")
@@ -286,6 +308,7 @@ def propose(
     proposal = Proposal(
         target, model, cutoff, scope, versions_from, block, new_text, action, len(notes)
     )
+    proposal.margin = scan.target.margin
     proposal.per_package = per_package
     proposal.retest = retest
     proposal.apis = {n.line: tuple(n.apis) for n in notes}
@@ -461,6 +484,15 @@ def _changes(scan: ScanResult, target: TargetFile, p: Proposal, *, same: bool) -
                 f"{old.meta.get('versions_from')}",
             )
         )
+    if block_margin(old.meta) != p.margin:
+        before, after = margin_text(block_margin(old.meta)), margin_text(p.margin)
+        out.append(
+            Change(
+                None,
+                f"now comparing from {after} (it was {before}; --cutoff-margin)",
+                f"the notes compare from {before}, not {after} (--cutoff-margin)",
+            )
+        )
     if bool(old.meta.get("suggestions")) != bool(new.meta.get("suggestions")):
         what = "with" if new.meta.get("suggestions") else "without"
         out.append(
@@ -498,16 +530,23 @@ def _dropped(scan: ScanResult, p: PackageScan | None, name: str, scope: str) -> 
         return f"no longer checked: {why}", f"{name} is no longer checked ({why})"
     where = scan.versions_from(p)
     if p.status == KNOWN:
+        latest = f"the latest release {scan.target.compare_when}"
         if p.locked and p.cutoff_version and not _same_version(p.locked, p.cutoff_version):
-            why = f"older than {p.cutoff_version}, the latest release at the cutoff"
+            why = f"older than {p.cutoff_version}, {latest}"
         else:
-            why = "the latest release at the cutoff"
+            why = latest
         return f"{p.locked} is {why}", f"{name} {p.locked} in {where} is {why}"
     if p.status == UNCHANGED:
         why = f"did not change from {p.cutoff_version} to {p.locked}"
         return f"its API {why}", f"{name}'s API {why}"
     if p.status == NEW:
-        why = "first released after the cutoff, and your code no longer imports it"
+        if scan.target.released_within_margin(p):
+            when = (
+                f"first released {p.first_released}, within {scan.target.margin} days of the cutoff"
+            )
+        else:
+            when = "first released after the cutoff"
+        why = f"{when}, and your code no longer imports it"
         return why, f"{name} was {why}"
     if p.status == SKIPPED:
         return f"could not be checked: {p.reason}", f"{name} could not be checked ({p.reason})"
@@ -662,6 +701,8 @@ class TargetStatus:
             "format": block.version if block is not None else None,
             "model": meta.get("model"),
             "cutoff": meta.get("cutoff"),
+            # As results.json and ``sync --json`` name it (the meta line keeps it as ``margin``).
+            "cutoff_margin": block_margin(meta) if block is not None else None,
             "tool": meta.get("tool"),
             "scope": meta.get("scope"),
             "versions_from": meta.get("versions_from"),
@@ -683,11 +724,14 @@ def target_status(
     *,
     deps: str | None = None,
     detected: DetectedModel | None = None,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> TargetStatus:
     """Whether the block in ``target`` is current for the project's dependencies as they are,
     without the network: the version of each package it has notes for, the hash of the
-    dependencies (``deps``: :func:`current_deps_hash`), where the versions come from, and, when
-    the coding agent's model is known (``detected``), its cutoff."""
+    dependencies (``deps``: :func:`current_deps_hash`), where the versions come from, how many
+    days before the cutoff the comparison releases were published by (``margin``, the scan's
+    ``--cutoff-margin``; the block says its own), and, when the coding agent's model is known
+    (``detected``), its cutoff."""
     status = TargetStatus(target)
     block = target.block
     if block is None:
@@ -743,6 +787,14 @@ def target_status(
                     f"{meta.get('versions_from')}",
                 )
             )
+        if block_margin(meta) != margin and not status.problems:
+            status.problems.append(
+                (
+                    MARGIN_CHANGED,
+                    f"the notes compare from {margin_text(block_margin(meta))}; the scan now "
+                    f"compares from {margin_text(margin)} (--cutoff-margin {margin})",
+                )
+            )
     changed = _model_change(target, detected)
     if changed:
         status.notes.append(changed)
@@ -777,6 +829,20 @@ def _model_change(target: TargetFile, detected: DetectedModel | None) -> str | N
         f"miss changes from before {cutoff.isoformat()}: `since-cutoff sync --model "
         f"{detected.spec}` writes the notes for it"
     )
+
+
+def note_import_tip(root: Path, statuses: Sequence[TargetStatus]) -> None:
+    """Say in ``status`` what ``scan`` and ``sync`` say (notes.agents_import_tip) when CLAUDE.md
+    does not import AGENTS.md: that both files have the block and how to keep one copy, or
+    that Claude Code does not read the block in AGENTS.md; and when it does import it and both
+    files have the block, that CLAUDE.md's is a second copy. Added to the AGENTS.md block's
+    notes, so the text and ``status --json`` both have it (#13)."""
+    tip = agents_import_tip(root, [s.target.path for s in statuses])
+    if tip is None:
+        return
+    for s in statuses:
+        if s.target.path == root / "AGENTS.md" and s.state != NEVER_RUN:
+            s.notes.append(tip)
 
 
 def exit_code(statuses: Sequence[TargetStatus]) -> int:
@@ -841,10 +907,14 @@ def hook_line(statuses: Sequence[TargetStatus]) -> str | None:
     )
 
 
-def sync_json(proposals: Sequence[Proposal], code: int, written: set[str]) -> dict[str, Any]:
-    """Describe proposals separately from writes, including check/dry-run refusals."""
+def sync_json(
+    proposals: Sequence[Proposal], code: int, written: set[str], *, tip: str | None = None
+) -> dict[str, Any]:
+    """Describe proposals separately from writes, including check/dry-run refusals; ``tip``
+    is what sync says about AGENTS.md and CLAUDE.md (notes.agents_import_tip), or None."""
     return {
         "exit_code": code,
+        "tip": tip,
         "targets": [
             {
                 "target": p.target.name,
@@ -854,6 +924,7 @@ def sync_json(proposals: Sequence[Proposal], code: int, written: set[str]) -> di
                 "written": p.target.name in written,
                 "model": p.model,
                 "cutoff": p.cutoff.isoformat(),
+                "cutoff_margin": p.margin,
                 "scope": p.scope,
                 "notes": p.notes,
                 "changes": [
