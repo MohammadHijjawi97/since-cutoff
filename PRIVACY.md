@@ -8,7 +8,16 @@ account, no server of its own and no telemetry, and it collects no personal data
 - Your project's dependency files (lockfiles, `requirements*.txt`, `pyproject.toml`, a conda
   `environment.yml`, `.venv` metadata) and its Python files, to see which dependencies you pin
   and which of their names your code uses. This stays on your machine.
-- The notes block in `AGENTS.md` or `CLAUDE.md`, for `sync`, `status` and `unapply`.
+- The notes block in `AGENTS.md` or `CLAUDE.md`, and the rule files since-cutoff wrote
+  (`.claude/rules/since-cutoff-*.md`, `.cursor/rules/since-cutoff-*.mdc`,
+  `.github/instructions/since-cutoff-*.instructions.md`), for `sync`, `status`, `explain` and
+  `unapply`.
+- Inside a git repository, for `sync` with rule files: which of the project's Python files git
+  ignores (`git check-ignore`, run locally), so that a rule file names none of them; and when a
+  plain `sync` would write a first notes block into AGENTS.md or CLAUDE.md, whether git's
+  history has a since-cutoff rule file that a commit removed, and that file's meta line (`git
+  log`, `git show`, run locally), to say where the notes were. git is the one on `PATH`, never
+  one in the current folder or the project.
 - Without `--model`, the model fields of your coding agent's settings (Claude Code, Codex,
   Gemini CLI, OpenCode, Aider) and the `SINCE_CUTOFF_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`
   and `AIDER_MODEL` variables,
@@ -25,14 +34,16 @@ account, no server of its own and no telemetry, and it collects no personal data
   and, for notes, the model's own answers. Never your source code. With `--model claude-code`
   the prompts go through your local `claude` CLI. Requests to OpenRouter carry headers that
   name since-cutoff (`HTTP-Referer`, `X-OpenRouter-Title`), not you or your project.
-- `scan`, `sync`, `status`, the MCP server, the GitHub Action and the pre-commit hooks call no
-  model and send no prompts. `status` sends nothing at all.
+- `scan`, `sync`, `status`, `explain`, the MCP server, the GitHub Action and the pre-commit
+  hooks call no model and send no prompts. `status` sends nothing at all.
 
-Locations and code snippets shown by `scan` stay on your machine; `run` prompts never contain
-your project's code. (For now `scan` shows file names, not lines or code.) They leave it only
-where you send them: `scan --markdown` and `--annotate github` write them for a CI job's summary
-and annotations, and the MCP tool `project_changes` returns them to the coding agent that called
-it, which passes tool results on to its model like any others.
+Locations and code snippets shown by `scan` and `explain` stay on your machine; `run` prompts
+never contain your project's code. (For now they show file names, not lines or code.) They
+leave it only where you send them: `scan --markdown` and `--annotate github` write them for a
+CI job's summary and annotations, and the MCP tools `project_changes` and `explain_api` return
+them to the coding agent that called them, which passes tool results on to its model like any
+others. A rule file that `sync --target` writes names in its front matter the folders (and the
+files at the project's root) that use a package, for the agent that loads it.
 
 Requests carry a `since-cutoff/<version>` user agent. Each service's own privacy policy applies
 to what it receives.
@@ -46,8 +57,10 @@ to what it receives.
   with `--sources`, `--diffs` or `--pypi` only that part. The package sources are capped at
   2 GB (`SINCE_CUTOFF_CACHE_MAX_MB`): the least recently used go first.
 - With `sync` (after it shows you the diff and you agree, or with `--yes`) or `run --apply`
-  only: one marked block in `AGENTS.md` or `CLAUDE.md`. Text outside it is left as it is, and
-  `since-cutoff unapply` removes the block.
+  only: one marked block in `AGENTS.md` or `CLAUDE.md`, or with `sync --target claude-rules`
+  (`cursor-rules`, `copilot-instructions`) one rule file per package in that agent's rules
+  folder. Text outside the block is left as it is, and `since-cutoff unapply` removes the block
+  and the rule files.
 
 ## Contact
 

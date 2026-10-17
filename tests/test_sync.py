@@ -1096,14 +1096,16 @@ def test_the_action_can_check_the_notes() -> None:
     assert check is not None and check.group(1) == "false"  # opt-in
     scan = action.split("\n    - name: Scan the dependencies\n", 1)[1].split("\n    - name:")[0]
     # Nothing written, a block keeps its model, and the input model serves a first one; so
-    # does the input cutoff, as for the scan, but only where there is no block yet.
+    # does the input cutoff, as for the scan, but only where there is no block yet (in
+    # AGENTS.md, CLAUDE.md or a rule file: test_ci.py runs the step).
     assert 'notes_args=(sync "$SC_WORKDIR" --check)' in scan
     assert 'SINCE_CUTOFF_MODEL="$SC_MODEL" uvx "${from[@]}" since-cutoff "${notes_args[@]}"' in scan
     assert (
         """if [ -n "$SC_CUTOFF" ] && ! grep -qs -- '<!-- since-cutoff:start -->' """
-        '"$SC_WORKDIR/AGENTS.md" "$SC_WORKDIR/CLAUDE.md"; then\n'
+        '"${notes_files[@]}"; then\n'
         '            notes_args+=(--model "$SC_MODEL" --cutoff "$SC_CUTOFF")' in scan
     )
+    assert '"") notes_files=("$SC_WORKDIR/AGENTS.md" "$SC_WORKDIR/CLAUDE.md" ' in scan
     assert 'echo "notes-exit-code=$notes_status" >> "$GITHUB_OUTPUT"' in scan
     for code, word in (("0", "up-to-date"), ("3", "out-of-date"), ("4", "edited-by-hand")):
         assert f"{code}) notes={word} ;;" in scan

@@ -1,6 +1,6 @@
 # since-cutoff for pre-commit (https://pre-commit.com). The hooks run when a lockfile,
 # requirements file, conda environment file or pyproject.toml changes (the notes hooks also when
-# AGENTS.md or CLAUDE.md does). None calls a model.
+# AGENTS.md, CLAUDE.md or a rule file sync wrote does). None calls a model.
 #
 # since-cutoff-scan lists API changes in your pinned dependencies since your coding model's
 # training cutoff. Pass the model in `args`, e.g. [--model=anthropic:claude-sonnet-4-5]; add
@@ -8,10 +8,14 @@
 # (--fail-on=used or --fail-on=old-form: when your code uses one).
 #
 # since-cutoff-sync writes and updates the notes for the changed APIs your code uses in
-# AGENTS.md / CLAUDE.md. It fails by changing the file, as pre-commit expects: add the file and
-# commit again. With args: [--check] it changes nothing and fails (exit code 3) while the notes
-# are out of date; exit code 4 means the block was edited by hand. It keeps the model the notes
-# were written for; for a first block, pass it: args: [--model=anthropic:claude-sonnet-4-5].
+# AGENTS.md / CLAUDE.md, or in the rule files `sync --target claude-rules` (cursor-rules,
+# copilot-instructions) wrote: .claude/rules/since-cutoff-*.md, .cursor/rules/since-cutoff-*.mdc,
+# .github/instructions/since-cutoff-*.instructions.md. It fails by changing the file, as
+# pre-commit expects: add the file and commit again. With args: [--check] it changes nothing and
+# fails (exit code 3) while the notes are out of date; exit code 4 means the block was edited by
+# hand. It keeps the model the notes were written for; for a first block, pass it:
+# args: [--model=anthropic:claude-sonnet-4-5]; to keep the notes in rule files whatever happens,
+# args: [--target, claude-rules].
 #
 # scan and sync need network access to PyPI, so skip them on pre-commit.ci. since-cutoff-status
 # needs none: it fails (exit code 3) when the notes do not match the lockfile, or when sync would
@@ -28,15 +32,15 @@
   verbose: true
 - id: since-cutoff-sync
   name: since-cutoff sync
-  description: Write or update the notes for the changed APIs your code uses in AGENTS.md / CLAUDE.md (no model calls); fails by changing the file. With args [--check], only checks.
+  description: Write or update the notes for the changed APIs your code uses in AGENTS.md / CLAUDE.md or the rule files sync wrote (no model calls); fails by changing the file. With args [--check], only checks.
   entry: since-cutoff sync --yes
   language: python
   pass_filenames: false
-  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|AGENTS\.md|CLAUDE\.md)$'
+  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|AGENTS\.md|CLAUDE\.md|\.claude/rules/since-cutoff-[^/]+\.md|\.cursor/rules/since-cutoff-[^/]+\.mdc|\.github/instructions/since-cutoff-[^/]+\.instructions\.md)$'
 - id: since-cutoff-status
   name: since-cutoff status
-  description: Check offline that the notes in AGENTS.md / CLAUDE.md match the lockfile (exit code 3 when they do not).
+  description: Check offline that the notes in AGENTS.md / CLAUDE.md and the rule files sync wrote match the lockfile (exit code 3 when they do not).
   entry: since-cutoff status
   language: python
   pass_filenames: false
-  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|AGENTS\.md|CLAUDE\.md)$'
+  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|AGENTS\.md|CLAUDE\.md|\.claude/rules/since-cutoff-[^/]+\.md|\.cursor/rules/since-cutoff-[^/]+\.mdc|\.github/instructions/since-cutoff-[^/]+\.instructions\.md)$'

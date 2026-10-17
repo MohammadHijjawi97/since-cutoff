@@ -1,6 +1,6 @@
 """MCP server: lets a coding agent ask what changed in a library since its training cutoff.
 
-``since-cutoff mcp`` serves three read-only tools over stdio. They reuse the ``scan``
+``since-cutoff mcp`` serves four read-only tools over stdio. They reuse the ``scan``
 machinery (PyPI release dates, the static griffe diff, the project's lockfile), never call a
 model and never import package code. stdout is the protocol channel, so nothing here prints:
 diagnostics go to stderr through logging.
@@ -59,6 +59,7 @@ from since_cutoff.engine import (
     unread_warning,
 )
 from since_cutoff.errors import ModelLookupError, PackageIndexError, SinceCutoffError
+from since_cutoff.explain import Given, blocks_of, lookup, lookup_lines, notices, version_scan
 from since_cutoff.models import (
     CUTOFF_MARGIN_VAR,
     DEFAULT_CUTOFF_MARGIN,
@@ -92,6 +93,7 @@ from since_cutoff.report import (
     use_text,
 )
 from since_cutoff.selection import FORM_LABELS, OLD_FORM, other_paths_text, uses_text
+from since_cutoff.sync import read_targets, sticky_target, target_files
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -114,6 +116,8 @@ library.
 know your training cutoff instead, pass it as `cutoff` ("YYYY-MM").
 - project_changes: every dependency of a project at once, at the versions it pins, starting with the changed APIs the project's code uses and a note for each. The first call on a large project can take several minutes; later calls are served from a cache.
 - api_changes: one package; pass `symbol` to narrow it to the functions or classes you use.
+- explain_api: one API of the project's dependencies: its note, the evidence behind it, both \
+signatures and where the project's code uses it.
 - model_cutoff: a model's training cutoff.
 
 Where your memory of a library disagrees, prefer the removals, moves, new required \
@@ -527,6 +531,116 @@ class Tools:
         return _render_project(
             scan, target, settings.include, max(1, limit_per_package), include_internal
         )
+
+    def explain_api(
+        self,
+        api: str,
+        project_dir: str = ".",
+        model: str | None = None,
+        cutoff: str | None = None,
+        package: str | None = None,
+        from_version: str | None = None,
+        to_version: str | None = None,
+        cutoff_margin: int | None = None,
+        include_name_matches: bool = False,
+        *,
+        progress: ProgressFn | None = None,
+    ) -> str:
+        """Explain one changed API of a project's dependency: its note and the evidence behind
+        it, both signatures, the replacement, and where the project's code uses it.
+
+        Use it when a note in AGENTS.md (or a since-cutoff rule file) is unclear or seems
+        wrong, or before changing code that uses an API project_changes lists, to see exactly
+        what changed and what the claim rests on.
+
+        Scans the project as project_changes does (from the cache after a first call), with
+        the model and cutoff of the project's since-cutoff notes when neither `model` nor
+        `cutoff` is given. Read-only: no package code runs, no model is called, nothing is
+        written.
+
+        Args:
+            api: the API as a note names it, e.g. "Messages.create",
+                "huggingface_hub.hf_hub_download"; the end of the name ("create") or
+                "package.API" ("anthropic.Messages.create") works too.
+            project_dir: the project root, e.g. "/home/me/app" or "."; a relative path
+                resolves against the project the client started the server for.
+            model: your model id, e.g. "claude-haiku-4-5"; its training cutoff is looked up
+                (default: the one the project's notes were written for).
+            cutoff: your training cutoff instead of `model`, as "YYYY-MM" or "YYYY-MM-DD".
+            package: only this dependency's APIs (PyPI name), e.g. "anthropic"; needed with
+                `from_version` or `to_version`.
+            from_version: with `package`, compare from this release instead of the one at the
+                cutoff, e.g. "0.60.0".
+            to_version: with `package`, compare to this release instead of the pinned one.
+            cutoff_margin: compare from the newest release published this many days before
+                the cutoff (default 30).
+            include_name_matches: also count uses matched by a method's name alone.
+
+        Returns Markdown: for each API the name finds (at most 3; more are listed by name to
+        pick from), the note with its tag (a notes block's own [type-checked] bullet when it
+        has one) and the files whose notes block has it, or has another note for it (written
+        for another version), the pinned release and the one compared from, each change with
+        both signatures, the changed parameter in each and the library's own deprecation text
+        (with its file), the evidence behind the tag (the replacement and where it is named,
+        what a move kept, a switched dependency's Requires-Dist), the runtime caveat, the
+        changelog link, each file of the project's code that uses it ("old form" or "uses
+        this API") and what the tag does not check. First, what changed in the lockfile since
+        the notes were written and the packages that could not be checked. When nothing
+        matches, the closest names, a note a block still has for the name (the notes are then
+        out of date) and whether its package could not be checked.
+        """
+        root = _project_root(project_dir)
+        project = load_project(root)
+        files = [f for t in read_targets(project.root) for f in target_files(t)]
+        versions = bool((from_version or "").strip() or (to_version or "").strip())
+        if versions and not (package or "").strip():
+            raise SinceCutoffError("pass `package` with `from_version` or `to_version`")
+        days = self._margin(cutoff_margin)
+        basis = None
+        if not (model or "").strip() and not (cutoff or "").strip():
+            basis = next((b for f in files if (b := sticky_target(f, days)) is not None), None)
+        if basis is None:
+            target = self._target(
+                model, cutoff, needs="a since-cutoff notes block in the project", margin=days
+            )
+            basis = ModelTarget(
+                target.model or "cutoff",
+                target.model or "",
+                target.cutoff,
+                target.label,
+                margin=days,
+            )
+        settings = Settings(
+            model=basis.spec,
+            cutoff=basis.cutoff,
+            cutoff_margin=days,
+            include=[package] if package and not versions else [],
+            python_version=project.python_version,
+            today=self._now(),
+            include_name_matches=include_name_matches,
+        )
+        reporter = _Progress(progress, stages=2) if progress else None
+        engine = self._engine(settings, reporter)
+        if versions:
+            scan = version_scan(engine, project, basis, package or "", from_version, to_version)
+        else:
+            scan = engine.scan(project, basis)
+        result = lookup(scan, api, package)
+        given = Given(
+            bool((from_version or "").strip()),
+            bool((to_version or "").strip()),
+            "from_version",
+            "to_version",
+        )
+        lines = lookup_lines(
+            scan,
+            result,
+            blocks_of(files),
+            given=given,
+            package=package,
+            said=notices(project, scan, files),
+        )
+        return "\n".join(lines) + "\n"
 
     # --------------------------------------------------------------- helpers
     def _now(self) -> date:
@@ -1327,7 +1441,7 @@ def _tool_function(fn: Callable[..., str]) -> Callable[..., str]:
 def build_server(
     tools: Tools | None = None, *, log_level: Literal["DEBUG", "WARNING"] = "WARNING"
 ) -> MCPServer[Any]:
-    """The MCP server with the three read-only tools registered.
+    """The MCP server with the four read-only tools registered.
 
     Building it and listing its tools needs no network access and no API key.
     """
@@ -1353,6 +1467,7 @@ def build_server(
         (tools.model_cutoff, "Model training cutoff"),
         (tools.api_changes, "Library API changes since the cutoff"),
         (tools.project_changes, "Project dependency changes since the cutoff"),
+        (tools.explain_api, "One API's note and its evidence"),
     ]
     for fn, title in entries:
         server.add_tool(

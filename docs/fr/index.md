@@ -200,7 +200,10 @@ Ollama et tout serveur compatible OpenAI ; `scan`, `sync` et `status` n'ont bes
 limite du modèle. `since-cutoff status` (hors ligne), `sync --check`, les
 [hooks pre-commit](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#pre-commit)
 et une [action GitHub](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md#github-action)
-préviennent quand les notes ne sont plus à jour ; `since-cutoff mcp` permet à n'importe quel
+préviennent quand les notes ne sont plus à jour ; `sync --target claude-rules` (ou `cursor-rules`,
+`copilot-instructions`) les écrit dans des fichiers de règles que l'agent ne charge que là où
+chaque paquet est utilisé (son dossier, un nouveau fichier compris), et `since-cutoff explain <API>` montre tout ce sur quoi
+repose une note ; `since-cutoff mcp` permet à n'importe quel
 client MCP (Claude Code, Codex, Cursor, VS Code, Gemini CLI) de consulter les changements d'une
 bibliothèque avant d'écrire du code. Il ne prend en charge que Python pour l'instant ; TypeScript
 est la prochaine étape. Vos retours sur la méthode sont les bienvenus dans les

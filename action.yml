@@ -42,11 +42,19 @@ inputs:
   check-notes:
     description: >-
       Also run `since-cutoff sync --check`, and fail the job when the since-cutoff notes in
-      AGENTS.md / CLAUDE.md are out of date for the lockfile and the code (exit code 3), or
-      the block was edited by hand (exit code 4). It writes nothing. The notes keep the model
+      AGENTS.md / CLAUDE.md, or in the rule files sync wrote (.claude/rules, .cursor/rules,
+      .github/instructions), are out of date for the lockfile and the code (exit code 3), or
+      a block was edited by hand (exit code 4). It writes nothing. The notes keep the model
       they were written for; `model` is used when there are none yet.
     required: false
     default: "false"
+  notes-target:
+    description: >-
+      With check-notes, the `--target` of `sync --check`: claude-rules, cursor-rules,
+      copilot-instructions, or a file relative to working-directory. By default sync checks
+      the notes where they are, in AGENTS.md / CLAUDE.md and the rule files it wrote.
+    required: false
+    default: ""
   step-summary:
     description: Add the Markdown summary to the job summary.
     required: false
@@ -125,6 +133,7 @@ runs:
         SC_CUTOFF_MARGIN: ${{ inputs.cutoff-margin }}
         SC_FAIL: ${{ inputs.fail-on-changes }}
         SC_CHECK_NOTES: ${{ inputs.check-notes }}
+        SC_NOTES_TARGET: ${{ inputs.notes-target }}
         SC_STEP_SUMMARY: ${{ inputs.step-summary }}
         SC_ARGS: ${{ inputs.args }}
         SC_VERSION: ${{ inputs.since-cutoff-version }}
@@ -185,11 +194,23 @@ runs:
         # input is for a project with no block yet (sync reads it from SINCE_CUTOFF_MODEL), and
         # so is the cutoff input, as for the scan above. The margin is the scan's setting, not
         # the block's, so it applies always. only and exclude do not apply: the notes are for
-        # the whole project.
+        # the whole project. The blocks are in AGENTS.md, CLAUDE.md and the rule files sync
+        # wrote, or in what notes-target names.
         notes_status=0
         if [ "$SC_CHECK_NOTES" = "true" ]; then
           notes_args=(sync "$SC_WORKDIR" --check)
-          if [ -n "$SC_CUTOFF" ] && ! grep -qs -- '<!-- since-cutoff:start -->' "$SC_WORKDIR/AGENTS.md" "$SC_WORKDIR/CLAUDE.md"; then
+          claude=("$SC_WORKDIR"/.claude/rules/since-cutoff-*.md)
+          cursor=("$SC_WORKDIR"/.cursor/rules/since-cutoff-*.mdc)
+          copilot=("$SC_WORKDIR"/.github/instructions/since-cutoff-*.instructions.md)
+          case "$SC_NOTES_TARGET" in
+            "") notes_files=("$SC_WORKDIR/AGENTS.md" "$SC_WORKDIR/CLAUDE.md" "${claude[@]}" "${cursor[@]}" "${copilot[@]}") ;;
+            claude-rules) notes_files=("${claude[@]}") ;;
+            cursor-rules) notes_files=("${cursor[@]}") ;;
+            copilot-instructions) notes_files=("${copilot[@]}") ;;
+            *) notes_files=("$SC_WORKDIR/$SC_NOTES_TARGET") ;;
+          esac
+          if [ -n "$SC_NOTES_TARGET" ]; then notes_args+=(--target "$SC_NOTES_TARGET"); fi
+          if [ -n "$SC_CUTOFF" ] && ! grep -qs -- '<!-- since-cutoff:start -->' "${notes_files[@]}"; then
             notes_args+=(--model "$SC_MODEL" --cutoff "$SC_CUTOFF")
           fi
           if [ -n "$SC_CUTOFF_MARGIN" ]; then notes_args+=(--cutoff-margin "$SC_CUTOFF_MARGIN"); fi
@@ -220,12 +241,13 @@ runs:
         SC_NOTES_STATUS: ${{ steps.scan.outputs.notes-exit-code }}
         SC_MODEL: ${{ inputs.model }}
         SC_CHANGED: ${{ steps.scan.outputs.changed-packages }}
+        SC_NOTES_TARGET: ${{ inputs.notes-target }}
       run: |
         if [ "$SC_STATUS" = "3" ]; then
           echo "::error title=since-cutoff::API changes since the training cutoff of $SC_MODEL in: ${SC_CHANGED//,/, }"
         fi
         if [ "$SC_NOTES_STATUS" = "3" ]; then
-          echo "::error title=since-cutoff::The since-cutoff notes in AGENTS.md / CLAUDE.md are out of date: run since-cutoff sync and commit the file"
+          echo "::error title=since-cutoff::The since-cutoff notes are out of date: run since-cutoff sync${SC_NOTES_TARGET:+ --target $SC_NOTES_TARGET} and commit what it changes"
         elif [ "$SC_NOTES_STATUS" = "4" ]; then
           echo "::error title=since-cutoff::The since-cutoff notes block was edited by hand: move your text below it, or run since-cutoff sync --force"
         fi

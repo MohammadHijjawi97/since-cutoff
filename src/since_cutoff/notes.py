@@ -1662,8 +1662,14 @@ def render_block(
     suggestions: bool = False,
     per_package: int | None = None,
     margin: int = DEFAULT_CUTOFF_MARGIN,
+    extra: dict[str, Any] | None = None,
+    empty: bool = False,
 ) -> str:
-    """The notes block (format 2) for AGENTS.md / CLAUDE.md.
+    """The notes block (format 2) for AGENTS.md / CLAUDE.md, or for a rule file
+    (:mod:`since_cutoff.rules`), whose meta line also has ``extra``: a hash of its front
+    matter. ``empty``: the markers and the meta line alone, no title, header or notes (a rule
+    file whose package has no notes left keeps it while the user's own text after it stays, so
+    that the file stays since-cutoff's).
 
     ``deps`` is :func:`deps_hash` of every dependency scanned (by default, of the packages and
     versions the notes are about); ``scope`` what the notes cover (SCOPE_*); ``margin`` how many
@@ -1705,7 +1711,7 @@ def render_block(
             body.append(f"- {line}")
             if TAG_TYPE_CHECKED in n.tag_list:
                 checked.append(api_id(n.change))
-    text = "\n".join(body) + "\n"
+    text = "" if empty else "\n".join(body) + "\n"
     if deps is None:
         deps = deps_hash((n.change.package, n.change.to_version) for n in notes)
     meta = {
@@ -1716,13 +1722,16 @@ def render_block(
         "margin": margin,
         "versions_from": version_source,
         "deps": deps,
-        "body": body_hash(text),
+        # parse_block reads the lines between the meta line and the end marker, "\n" for none.
+        "body": body_hash(text or "\n"),
         "scope": scope,
     }
     if suggestions:
         meta["suggestions"] = True
     if scope == SCOPE_IMPORTED and per_package and per_package != IMPORTED_APIS:
         meta["per_package"] = per_package
+    if extra:
+        meta.update(extra)
     if checked:
         meta["checked"] = checked
     return f"{BLOCK_START}\n{_meta_line(meta)}\n{text}{BLOCK_END}\n"
@@ -1806,10 +1815,16 @@ def source_text(version_source: str) -> str:
 
 
 def _meta_line(meta: dict[str, Any]) -> str:
-    # Compact JSON; "<" and ">" escaped so that nothing in it can end the HTML comment.
+    # Compact JSON; "<" and ">" escaped so that nothing in it can end the HTML comment, and a
+    # lone surrogate (a file name that is not UTF-8, read with surrogateescape) as \udcXX, so
+    # that it can be written as UTF-8 and reads back the same.
     text = json.dumps(meta, separators=(",", ":"), ensure_ascii=False)
     text = text.replace("<", "\\u003c").replace(">", "\\u003e")
+    text = _SURROGATE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
     return f"{META_START}{text}{META_END}"
+
+
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
 
 
 def render_legacy_block(
@@ -2119,11 +2134,16 @@ def _read(path: Path) -> str:
 
 def _write(path: Path, text: str) -> None:
     """Write the file, and the folders it is in (``--target docs/RULES.md``); NotesFileError
-    when that fails (a read-only file, a path that is a file's)."""
+    when that fails (a read-only file, a path that is a file's, text that is not UTF-8). The
+    text is encoded first, so that a file is never left empty by a write that fails."""
+    try:
+        data = text.encode("utf-8")
+    except UnicodeError as exc:
+        raise NotesFileError(f"cannot write {path}: the text is not UTF-8 ({exc})") from exc
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
+        with path.open("wb") as fh:
+            fh.write(data)
     except OSError as exc:
         raise NotesFileError(f"cannot write {path}: {exc}") from exc
 

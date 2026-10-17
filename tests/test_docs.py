@@ -245,7 +245,7 @@ def _options() -> dict[str, set[str]]:
 
 
 _CODE = re.compile(r"```[^\n]*\n(.*?)```|`([^`\n]+)`", re.S)
-_SUBCOMMANDS = "run|scan|sync|status|unapply|models|cache|mcp"
+_SUBCOMMANDS = "run|scan|sync|status|explain|unapply|models|cache|mcp"
 # ``since-cutoff sync --check`` anywhere in code; in an inline code span, also ``scan -v``
 # (not the `mcp` of `claude mcp add --scope user ...`).
 _COMMAND = re.compile(rf"since-cutoff(?:@\S+|==\S+)?\s+({_SUBCOMMANDS})\b([^\n#|;&`]*)")
@@ -454,6 +454,21 @@ def test_every_readme_says_how_to_install_run_and_what_the_cache_commands_are(na
         "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md",
         "CLAUDE.md does not import AGENTS.md, so the notes go to both files",
         "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a second copy of the notes",
+        "No API named '",
+        "the notes may be out of date",
+        "is not a dependency of this project",
+        "Give one of",
+        "explain --from and --to need --package",
+        "there is no change to explain",
+        "exists and has no since-cutoff block, so since-cutoff leaves it",
+        "holds the notes for",
+        "since-cutoff writes rule files only inside the project",
+        "is a hard link",
+        "at the repository's root (",
+        "the notes are in rule files (",
+        "had since-cutoff rule files until commit",
+        "do not see the notes in it",
+        "No since-cutoff rule files are left in",
     ),
 )
 def test_troubleshooting_quotes_current_source_text(fragment: str) -> None:

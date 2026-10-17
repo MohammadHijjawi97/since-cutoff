@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+- `sync --target claude-rules`, `cursor-rules` or `copilot-instructions` writes the notes as
+  path-scoped rule files, one per changed package, that the agent loads only while it works
+  where that package's changed APIs are used, instead of one block in AGENTS.md that every
+  request pays for (#16): `.claude/rules/since-cutoff-<package>.md` with `paths:` (Claude Code,
+  and VS Code's Copilot Chat), `.cursor/rules/since-cutoff-<package>.mdc` with `globs:` and
+  `alwaysApply: false` (Cursor), `.github/instructions/since-cutoff-<package>.instructions.md`
+  with `description:` and `applyTo:` (Copilot Chat in VS Code, Visual Studio, JetBrains, Eclipse
+  and Xcode, Copilot CLI, cloud agent and code review), as each agent documents them. The globs
+  come from the scan's locations (with `--scope imported`, and for a package first released
+  after the cutoff, the files that import it), leaving out the files git ignores: a file at the
+  project's root as itself, and the others by their folder (`app/**/*.py`), so that a new file
+  there loads the notes too and the list stays short however many files use the package (by
+  their top-level folder past 20 globs). The file holds the same block as AGENTS.md would, for
+  its package, with a hash of the front matter in its meta line: `sync`, `sync --check`,
+  `status` and `unapply` handle it, a hand edit of the notes or of the front matter shows (a
+  byte order mark does not), a new folder using the package is added on the next sync ("now
+  loaded for 3 globs (1 added)"), and a package with no notes left loses its file; with text of
+  your own after the block, the notes go and the markers stay, so the next notes for the
+  package go back there. Only files named `since-cutoff-<package>` with since-cutoff's markers
+  and that package's block, inside the project, are written or removed; any other rule file, a
+  file of that name without the markers, and a rules folder or file linked in from outside the
+  project (a shared folder) or hard-linked are left alone; one of them that has the markers
+  (not UTF-8, a hard link, reached through a link) gets a line from `status`, `sync` and
+  `unapply` that says why. AGENTS.md / CLAUDE.md stay the default; once rule files exist, a
+  plain `sync` keeps them in step without writing AGENTS.md, and says how to remove a block
+  AGENTS.md or CLAUDE.md still has. When the last rule file goes, `sync` gives the command that
+  writes the notes there again, for the model and cutoff it ran for (`since-cutoff sync --target
+  claude-rules --model claude-sonnet-4-5 --cutoff 2025-07-31`), and inside a git repository a
+  later plain `sync` that would write a first block into AGENTS.md says so first, from git's
+  history, with the `--model` and `--cutoff` it was given, else the removed files' own. git (for
+  the files it ignores, and that history) is run by its full path from `PATH`, never from the
+  current folder or the project: Windows runs a `git.exe` in the current folder first. A plain
+  `unapply` now also removes the rule files since-cutoff wrote, and
+  leaves one that holds another package's block; `unapply --target cursor-rules` removes one
+  format's, and `unapply --target <rule file>` one file. `sync
+  --target copilot-instructions` warns when the project is a folder of a git repository, whose
+  `.github/instructions` GitHub reads at the root only. `run --apply` refuses a rule format, a
+  rule file's path, and (with no `--target`) a project whose notes are in rule files, before any
+  model call. Windsurf / Devin Desktop (a rule with one glob documented, several not) and Codex
+  (no path scoping) have no format. The GitHub Action's `check-notes` sees the rule files (a
+  block in one keeps its model and cutoff, as in AGENTS.md, so the `cutoff` input is only for a
+  first block), and its new `notes-target` input is the `--target` of `sync --check`; the
+  `since-cutoff-sync` and `since-cutoff-status` pre-commit hooks also run when a rule file
+  since-cutoff wrote changes.
+- `since-cutoff explain <API>` and the MCP tool `explain_api` say everything since-cutoff knows
+  about one API, from the scan `sync` runs and with no model call (#28): the note as the block
+  writes it (its own `[type-checked]` bullet when it has one) and which files' blocks have it,
+  or have another note for it (written for another version: the block is out of date), the
+  pinned release and the one compared from and where each comes from, each change with both
+  signatures and the changed parameter in each (saying so when a signature, cut at 400
+  characters, ends inside it), the library's own deprecation text and the file it is in, the
+  replacement and its evidence (a move's kept names, a switched dependency's Requires-Dist), the
+  Runtime line, the changelog, every place the code uses it and in which
+  form (for a package first released after the cutoff, the files that import it), and what the
+  tag does not check. It says first what changed in the lockfile since the notes were written
+  (once for all the files with the same change), and which packages could not be checked. The
+  API can be named as the note names it, with or without backticks and call syntax, by the end
+  of the name or as `package.API` (with the PyPI name too); up to 3 matches are explained,
+  after a line that says how the name matched. An unknown name lists the closest ones, a bullet
+  a block still has about it and a package that could not be checked (exit code 1, as for more
+  than 3 matches). `--package P --from A --to B` explains a change between two releases, of a
+  package the project does not depend on too, and `--json` prints the same as JSON, with the keys
+  results.json uses (docs/how-it-works.md lists them). The MCP server has four tools.
 - Add a reference for environment variables, files and exit codes, with a docs drift check
   (docs/reference.md, #69). The check fails when the code reads a variable the page has no row
   for (`os.getenv` and a constant for the name included), or the page has a row for one the code

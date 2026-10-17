@@ -32,6 +32,8 @@ welcome, and first-time contributors are very welcome.
 | `taskfile.py` | Reads and writes the tasks files of `run --tasks-out` / `--tasks-from` |
 | `notes.py` | The notes from the API diff and their evidence tags; renders, parses, applies and removes the notes block in `AGENTS.md` / `CLAUDE.md` |
 | `sync.py` | `since-cutoff sync` (what the block should be, and why it changes) and `since-cutoff status` (offline) |
+| `rules.py` | The path-scoped rule files of `sync --target claude-rules` / `cursor-rules` / `copilot-instructions`: one per package, its front matter and globs, and which files are since-cutoff's |
+| `explain.py` | `since-cutoff explain` and the MCP tool `explain_api`: finds one API in the scan and says everything known about it |
 | `baselines.py` | The baseline notes of `run --compare` (`template`, `signatures`), built without a model |
 | `stats.py` | Wilson intervals, the cluster bootstrap, the sign test and token estimates |
 | `report.py` | Terminal, Markdown and JSON reports |

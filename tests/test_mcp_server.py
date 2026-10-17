@@ -462,7 +462,7 @@ def test_server_speaks_mcp_and_turns_failures_into_tool_errors(tools: Tools) -> 
         async with Client(server, mode="legacy") as client:
             assert "api_changes" in (client.instructions or "")
             listed = {t.name: t for t in (await client.list_tools()).tools}
-            assert set(listed) == {"model_cutoff", "api_changes", "project_changes"}
+            assert set(listed) == {"model_cutoff", "api_changes", "project_changes", "explain_api"}
             api = listed["api_changes"]
             assert api.input_schema["required"] == ["package"]
             props = api.input_schema["properties"]
@@ -609,7 +609,7 @@ def test_the_server_starts_without_network_or_api_keys(
     async def main() -> None:
         async with Client(server, mode="legacy") as client:
             names = {t.name for t in (await client.list_tools()).tools}
-            assert names == {"model_cutoff", "api_changes", "project_changes"}
+            assert names == {"model_cutoff", "api_changes", "project_changes", "explain_api"}
             prompts = {p.name for p in (await client.list_prompts()).prompts}
             assert prompts == {"check_project", "before_upgrade"}
 
@@ -700,7 +700,7 @@ def test_stdio_server_end_to_end(tmp_path: Path) -> None:
 
             rpc.send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             names = {t["name"] for t in rpc.response(2)["result"]["tools"]}
-            assert names == {"model_cutoff", "api_changes", "project_changes"}
+            assert names == {"model_cutoff", "api_changes", "project_changes", "explain_api"}
 
             call = {"name": "model_cutoff", "arguments": {"model": "claude-sonnet-4-5"}}
             rpc.send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": call})

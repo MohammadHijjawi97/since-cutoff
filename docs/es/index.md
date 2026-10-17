@@ -194,7 +194,10 @@ cualquier servidor compatible con OpenAI; `scan`, `sync` y `status` solo necesit
 corte del modelo. `since-cutoff status` (sin conexión), `sync --check`, los
 [hooks de pre-commit](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md#pre-commit)
 y una [GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.es.md#github-action)
-avisan cuando las notas se quedan atrás; `since-cutoff mcp` permite a cualquier cliente MCP
+avisan cuando las notas se quedan atrás; `sync --target claude-rules` (o `cursor-rules`,
+`copilot-instructions`) las escribe como archivos de reglas que el agente solo carga donde se usa
+cada paquete (su carpeta, un archivo nuevo incluido), y `since-cutoff explain <API>` muestra todo aquello en lo que se
+basa una nota; `since-cutoff mcp` permite a cualquier cliente MCP
 (Claude Code, Codex, Cursor, VS Code, Gemini CLI) consultar los cambios de una biblioteca antes de
 escribir código. Por ahora solo admite Python; TypeScript es lo
 siguiente. Los comentarios sobre el método son muy bienvenidos en los

@@ -3,7 +3,7 @@ name: since-cutoff
 description: Find which dependency APIs this project's Python code uses changed after the model's training cutoff (no model calls), write short AGENTS.md or CLAUDE.md notes from the API diff, each with its source, and keep them in step with the lockfile; optionally measure which of the changes the model gets wrong. Use when the user asks whether the model knows their library versions, when code keeps failing on renamed or removed library APIs, or after upgrading dependencies. Trigger with requests such as "does the model know my openai version", "scan my dependencies for API changes" or "check whether the library notes are up to date".
 license: MIT
 compatibility: Needs since-cutoff on PATH, or uv or pipx to run it, and network access to PyPI. The run command also needs model access (the claude CLI or a provider API key) and the basedpyright type checker (pip install "since-cutoff[run]", or uvx --with basedpyright since-cutoff run); scan, sync and status make no model calls, and status works offline.
-allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff sync:*), Bash(since-cutoff status:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(since-cutoff unapply:*), Bash(uvx since-cutoff:*), Bash(uvx --with basedpyright since-cutoff:*), Bash(pipx run since-cutoff:*), Read
+allowed-tools: Bash(since-cutoff scan:*), Bash(since-cutoff sync:*), Bash(since-cutoff status:*), Bash(since-cutoff explain:*), Bash(since-cutoff run:*), Bash(since-cutoff models:*), Bash(since-cutoff unapply:*), Bash(uvx since-cutoff:*), Bash(uvx --with basedpyright since-cutoff:*), Bash(pipx run since-cutoff:*), Read
 metadata:
   author: Mohammad Hijjawi
   version: "0.5.0"
@@ -76,9 +76,14 @@ report what it prints.
    none of the changed APIs yet), add it to both commands. After `run`, `--apply` writes that
    run's notes in place of the whole block; `since-cutoff sync` then adds the notes from the
    diff for the other changed APIs the code uses, keeping the run's `[type-checked]` ones.
-   `since-cutoff unapply` removes the block again. `since-cutoff status` says, without the
-   network, whether the notes still match the lockfile; from since-cutoff 0.4.0 the Claude Code
-   plugin runs it when a session starts (the first time, uvx downloads since-cutoff).
+   `since-cutoff unapply` removes the block again. When the user wants the notes loaded only
+   where each package is used, add `--target claude-rules` (Claude Code; `cursor-rules` for
+   Cursor, `copilot-instructions` for GitHub Copilot) to both commands: one rule file per package
+   in that agent's rules folder, which a plain `sync` then keeps in step (once the last of them
+   is gone, a plain `sync` writes AGENTS.md instead and says so, with the `--target` command
+   that writes them there again: run that one). `since-cutoff status` says,
+   without the network, whether the notes still match the lockfile; from since-cutoff 0.4.0 the
+   Claude Code plugin runs it when a session starts (the first time, uvx downloads since-cutoff).
 
 ## Output
 
@@ -86,7 +91,8 @@ report what it prints.
   dependencies that changed after the cutoff, and the changed APIs the code uses, each with its
   note. `run` adds the result card of step 6.
 - `.since-cutoff/report.md`: the full report. Read it when the user wants details.
-- The notes block in AGENTS.md or CLAUDE.md, written only by `sync --yes` or `run --apply`. The
+- The notes block in AGENTS.md or CLAUDE.md (or, with `sync --target claude-rules`, one rule
+  file per package), written only by `sync --yes` or `run --apply`. The
   notes in it are API reference facts about the versions the project pins: what was removed,
   renamed or deprecated after the release at your training cutoff, each tagged with what was
   checked, for example `[diff]` (a static comparison of the two releases' public APIs),
@@ -149,8 +155,10 @@ If the notes are out of date, show the diff of `since-cutoff sync --dry-run` and
 
 If the since-cutoff MCP server is connected (the Claude Code plugin starts it), its tools answer
 from a static diff, with no model calls: `api_changes` (one package, optionally one `symbol`),
-`project_changes` (every dependency of the project) and `model_cutoff`. Pass your own model id
-as `model`. Use them before writing code against a dependency that may be newer than your
+`project_changes` (every dependency of the project), `explain_api` (one API's note, the
+evidence behind it, both signatures and where the project uses it) and `model_cutoff`. Pass your
+own model id as `model`. When a note seems wrong, `since-cutoff explain <API>` prints the same as
+`explain_api`. Use them before writing code against a dependency that may be newer than your
 training data; use the CLI above when the user wants the model measured or notes written.
 
 ## Resources

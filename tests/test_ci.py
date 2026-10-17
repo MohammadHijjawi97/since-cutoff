@@ -5,7 +5,11 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 import textwrap
 from datetime import date
 from pathlib import Path
@@ -31,6 +35,7 @@ from since_cutoff.report import (
     render_scan_markdown,
     summary,
 )
+from since_cutoff.rules import FORMATS
 from since_cutoff.selection import project_rank, usage, used_name, used_names, uses_text
 from tests.conftest import ScriptedModel
 
@@ -454,6 +459,27 @@ def test_pre_commit_hook_runs_when_dependencies_change(path: str, hit: bool) -> 
     assert [bool(re.search(pattern, path)) for pattern in files] == [hit] * 3
 
 
+@pytest.mark.parametrize(
+    ("path", "hit"),
+    [
+        *((f.path(Path(), "toylib").as_posix(), True) for f in FORMATS.values()),
+        *((f.path(Path("app"), "huggingface-hub").as_posix(), True) for f in FORMATS.values()),
+        ("AGENTS.md", True),
+        ("sub/CLAUDE.md", True),
+        (".claude/rules/style.md", False),
+        (".cursor/rules/since-cutoff-toylib.md", False),
+        (".github/instructions/since-cutoff-toylib.md", False),
+        ("docs/since-cutoff-toylib.md", False),
+    ],
+)
+def test_the_notes_hooks_run_when_the_notes_change(path: str, hit: bool) -> None:
+    """sync and status run when AGENTS.md, CLAUDE.md or a rule file sync wrote changes (a
+    hand edit is then reported); scan does not read the notes."""
+    scan, sync, status = re.findall(r"^\s*files: '(.+)'$", _read(".pre-commit-hooks.yaml"), re.M)
+    assert not re.search(scan, path)
+    assert [bool(re.search(pattern, path)) for pattern in (sync, status)] == [hit] * 2
+
+
 def _glob(pattern: str) -> re.Pattern[str]:
     """A glob of hashFiles or a workflow's ``paths:``: ``**/`` any directories, ``*`` any
     characters but ``/``."""
@@ -480,6 +506,139 @@ def test_the_action_cache_and_the_readme_workflows_watch_conda_environment_files
         globs = re.findall(r'"([^"]+)"', paths)
         for path in (name, f"envs/{name}"):
             assert any(_glob(g).fullmatch(path) for g in globs), (readme, path, globs)
+
+
+# A stand-in for uvx: it logs each call's arguments, one call a line, each in brackets, and
+# exits with $SYNC_STATUS for a sync.
+_FAKE_UVX = """\
+#!/usr/bin/env bash
+printf '[%s]' "$@" >> "$UVX_LOG"
+echo >> "$UVX_LOG"
+case " $* " in *" sync "*) exit "${SYNC_STATUS:-0}" ;; esac
+exit 0
+"""
+
+
+def _git_bash() -> str:
+    """bash for the action's steps: Git Bash on Windows (the runners' `bash`), not WSL's."""
+    found = shutil.which("bash")
+    if sys.platform == "win32":
+        git = shutil.which("git")
+        candidates = [Path(found)] if found and "\\windows\\" not in found.lower() else []
+        if git:
+            candidates += [folder / "bin" / "bash.exe" for folder in Path(git).resolve().parents]
+        found = next((str(path) for path in candidates if path.is_file()), None)
+    if found is None:
+        pytest.skip("bash (Git Bash on Windows) is not installed")
+    return found
+
+
+def _action_step(name: str, project: Path, tmp_path: Path, **env: str) -> tuple[int, str, str]:
+    """Run the action's step ``name`` in ``project`` with a fake uvx: its exit code, its output
+    and the uvx calls it made."""
+    step = _read("action.yml").split(f"\n    - name: {name}\n", 1)[1].split("\n    - name: ")[0]
+    block = re.search(r"run: \|\n((?:        .*\n|\n)+)", step)
+    assert block is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "uvx").write_bytes(_FAKE_UVX.encode())
+    (bin_dir / "uvx").chmod(0o755)
+    log = tmp_path / "uvx.log"
+    defaults = {
+        "SC_MODEL": "anthropic:claude-sonnet-4-5",
+        "SC_WORKDIR": ".",
+        "SC_VERSION": "0.0.0",
+        "SC_CHECK_NOTES": "true",
+        "SC_STEP_SUMMARY": "false",
+        **dict.fromkeys(("SC_ONLY", "SC_EXCLUDE", "SC_CUTOFF", "SC_CUTOFF_MARGIN", "SC_ARGS"), ""),
+        **dict.fromkeys(("SC_FAIL", "SC_NOTES_TARGET", "SC_ACTION_PATH"), ""),
+    }
+    done = subprocess.run(
+        [_git_bash(), "-c", textwrap.dedent(block.group(1))],
+        cwd=project,
+        env={
+            **os.environ,
+            **defaults,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "UVX_LOG": log.as_posix(),
+            "RUNNER_TEMP": tmp_path.as_posix(),
+            "GITHUB_OUTPUT": (tmp_path / "output").as_posix(),
+            "GITHUB_STEP_SUMMARY": (tmp_path / "summary").as_posix(),
+            **env,
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    return done.returncode, done.stdout + done.stderr, calls
+
+
+@pytest.mark.parametrize(
+    ("notes", "target", "flags"),
+    [
+        # A block keeps its model and cutoff, in AGENTS.md as in each format's rule files.
+        ("AGENTS.md", "", ""),
+        *((f.path(Path(), "toylib").as_posix(), "", "") for f in FORMATS.values()),
+        # No block yet: the cutoff input is for the first one.
+        (None, "", "[--model][anthropic:claude-sonnet-4-5][--cutoff][2025-07-31]"),
+        # notes-target is sync's --target, and only its files' blocks count.
+        (".claude/rules/since-cutoff-toylib.md", "claude-rules", "[--target][claude-rules]"),
+        (
+            "AGENTS.md",
+            "cursor-rules",
+            "[--target][cursor-rules][--model][anthropic:claude-sonnet-4-5][--cutoff][2025-07-31]",
+        ),
+        ("docs/NOTES.md", "docs/NOTES.md", "[--target][docs/NOTES.md]"),
+    ],
+)
+def test_check_notes_sees_the_rule_files_and_takes_a_target(
+    tmp_path: Path, notes: str | None, target: str, flags: str
+) -> None:
+    project = tmp_path / "my project"
+    project.mkdir()
+    if notes:
+        (project / notes).parent.mkdir(parents=True, exist_ok=True)
+        (project / notes).write_text("<!-- since-cutoff:start -->\n- a note\n", encoding="utf-8")
+    code, out, calls = _action_step(
+        "Scan the dependencies",
+        project,
+        tmp_path,
+        SC_CUTOFF="2025-07-31",
+        SC_NOTES_TARGET=target,
+        SYNC_STATUS="3",
+    )
+    assert code == 0, out
+    scan, sync = calls.splitlines()
+    assert scan.startswith("[--from][since-cutoff==0.0.0][since-cutoff][scan][.]")
+    assert sync == f"[--from][since-cutoff==0.0.0][since-cutoff][sync][.][--check]{flags}"
+    assert "notes=out-of-date\n" in (tmp_path / "output").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("target", "command"),
+    [
+        ("", "since-cutoff sync and"),
+        ("claude-rules", "since-cutoff sync --target claude-rules and"),
+    ],
+)
+def test_the_out_of_date_notes_error_names_the_sync_to_run(
+    tmp_path: Path, target: str, command: str
+) -> None:
+    code, out, _ = _action_step(
+        "Report the result",
+        tmp_path,
+        tmp_path,
+        SC_STATUS="0",
+        SC_NOTES_STATUS="3",
+        SC_CHANGED="",
+        SC_NOTES_TARGET=target,
+    )
+    assert code == 3
+    assert (
+        f"::error title=since-cutoff::The since-cutoff notes are out of date: run {command}" in out
+    )
 
 
 def _check_versions() -> Any:

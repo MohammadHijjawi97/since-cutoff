@@ -175,7 +175,9 @@ any OpenAI-compatible server; `scan`, `sync` and `status` need only the model's 
 `since-cutoff status` (offline), `sync --check`, the
 [pre-commit hooks](https://github.com/MohammadHijjawi97/since-cutoff#pre-commit) and a
 [GitHub Action](https://github.com/MohammadHijjawi97/since-cutoff#github-action) tell you when
-the notes fall behind; `since-cutoff mcp` lets any MCP client (Claude Code, Codex, Cursor, VS
+the notes fall behind; `sync --target claude-rules` (or `cursor-rules`, `copilot-instructions`)
+writes them as rule files that the agent loads only where each package is used (its folders, a new file included), and
+`since-cutoff explain <API>` shows everything one note rests on; `since-cutoff mcp` lets any MCP client (Claude Code, Codex, Cursor, VS
 Code, Gemini CLI) look up a library's changes before writing code. It is Python-only for now;
 TypeScript is next. Feedback on the method is very welcome in the
 [issues](https://github.com/MohammadHijjawi97/since-cutoff/issues), and results from your own

@@ -122,5 +122,83 @@ before any model call, so nothing was spent.
 uses a `basedpyright` executable on `PATH`, else the installed module with that environment's
 Python executable.
 
+## No API named '...' changed
+
+`No API named 'Client.send' changed in toylib after claude-sonnet-4-5's training cutoff
+(2025-07-31)` comes from `since-cutoff explain` (exit code 1): no changed API of the scanned
+packages goes by that name. The message lists the closest names (`Close matches: ...`); give
+one of them, or the end of the name (`send`). When a notes block still has a bullet about the
+name, it is printed below with `the notes may be out of date`: the pin moved back to a release
+before the change, for example, and `since-cutoff status` and `since-cutoff sync` bring the
+notes in step. `could not be checked (...)` names a package whose releases or sources could not
+be read (often PyPI unreachable), so explain cannot say whether the name changed in it. `N
+APIs match '...' by the end of the name: ... Give one of them (exit code 1)` means more than 3
+APIs end with that name: give a longer one, or `--package`.
+`<name> is not a dependency of this project` means `--package` names a package the project
+does not depend on; give `--from` and `--to` to diff it all the same (a name it does not have
+then says `No API named '...' changed in <package> between <from> and <to>`). The texts are
+in [`explain.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/explain.py).
+
+## explain --from and --to need --package
+
+`explain --from and --to need --package` (exit code 2): the two releases are one package's,
+so name it, as in `since-cutoff explain Messages.create --package anthropic --from 0.60.0
+--to 1.8.0`. `toylib 1.1 is not newer than 2.0: there is no change to explain` (exit code 1)
+means `--to` is not a later release than `--from`; swap them. Both are checked in
+[`cli.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/cli.py)
+and [`explain.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/explain.py).
+
+## A rule file exists and has no since-cutoff block, or is outside the project
+
+`since-cutoff-toylib.md exists and has no since-cutoff block, so since-cutoff leaves it alone`
+comes from `sync --target claude-rules` (or `cursor-rules`, `copilot-instructions`): a file of
+the name since-cutoff would write is there, without its markers, so it is yours. Rename or
+remove it, then run again. `is not UTF-8 text` is the same for a file in another encoding, and
+`holds the notes for toylib, not otherlib's` for a file named for one package that holds
+another's block (copied or renamed by hand). `.claude/rules is a link to <path>, outside the
+project` means the folder (or the file) is a link into a folder shared between projects;
+since-cutoff writes rule files only inside the project, so make the folder a real one there, or
+keep the notes in AGENTS.md. `is a hard link` is the same for a file. All of them stop `sync`
+before anything is written. The same reasons, ending `so since-cutoff leaves it alone:
+status, sync and unapply do not see the notes in it`, are a warning of `status`, `sync` and
+`unapply` for such a file that has since-cutoff's markers: its notes are not kept in step,
+and a plain `sync` writes AGENTS.md beside it, so two copies may load. Convert it to UTF-8, or
+replace the link with a file of its own, then run sync again. The checks are in
+[`rules.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/rules.py)
+and [`sync.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/sync.py).
+
+## had since-cutoff rule files until commit
+
+`.claude/rules had since-cutoff rule files until commit d7f0a25, which removed the last of
+them: ... writes the notes there instead of into AGENTS.md` is a warning of a plain `sync` (or
+`sync --check`) about to write a first notes block into AGENTS.md or CLAUDE.md: git's history
+shows that the project's notes were in rule files until the last of them went, when its
+package had no notes left, and a plain sync no longer knows that. Run the command it gives,
+which has the `--model` and `--cutoff` the sync was given, else the removed files' model and
+cutoff, to write the notes as rule files again, or go on to keep them in AGENTS.md. The sync
+that removed the last file said the same: `No since-cutoff rule files are left in
+.claude/rules`, with the model and cutoff it ran for. To keep the format whatever happens,
+give `--target` where sync runs. The text is in
+[`rules.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/rules.py).
+
+## GitHub reads .github/instructions at the repository's root only
+
+`GitHub reads .github/instructions at the repository's root (<path>) only, so Copilot does
+not read the files written here` is a warning of `sync --target copilot-instructions` in a
+project that is a folder of a git repository: the files are written, but GitHub's Copilot
+reads them only from the repository's root. VS Code reads them when that folder is the
+workspace. Run sync from the repository's root, or use `claude-rules` or AGENTS.md for that
+folder.
+
+## the notes are in rule files
+
+`the notes are in rule files (.claude/rules), which since-cutoff sync keeps in step; run
+--apply writes one block into a file` (exit code 2) comes from `since-cutoff run --apply`
+without `--target` in a project whose notes are in rule files: it would write AGENTS.md beside
+them. Give `--target AGENTS.md` to write the block there as well. `... is a rule file` is the
+same for a `--target` that is a rule file's path. Both stop before any model call; see
+`_rules_problem()` in
+[`cli.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/cli.py).
+
 When reporting a bug, include the command, `since-cutoff --version`, OS/Python versions and the
 sanitized diagnostic. Leave out API keys, private package-index URLs and customer source code.
