@@ -15,3 +15,6 @@
 .main-content h1, .main-content h2, .main-content h3, .main-content h4, .main-content h5, .main-content h6 { color: #9a3e00; }
 .main-content a { color: #b04700; }
 .main-content :not(pre) > code { color: #3d2a1e; }
+
+// The nav bar between the site's pages (_layouts/default.html).
+.site-nav { margin: 0 0 1.5rem; padding: 0 0 0.75rem; border-bottom: 1px solid #eff0f1; font-size: 0.9rem; color: #819198; line-height: 1.8; }

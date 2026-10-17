@@ -126,7 +126,7 @@ def text_of(lines: list[Any]) -> str:
 GOLDEN = """\
 Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (2025-07-31)
 
-toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml pins 2.0)
+toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; pyproject.toml pins 2.0)
   Client.send: temperature was removed; stream is now keyword-only                          old form
     main.py        passes temperature to send
     sub/other.py   calls send
@@ -160,6 +160,17 @@ def test_the_first_section_fits_a_narrow_terminal(scan: ScanResult) -> None:
     assert "  is now keyword-only                               old form" in lines
     assert "    Note: `Client.send()` no longer accepts `temperature`;" in lines
     assert "          do not pass it. since-cutoff found no replacement" in lines
+
+
+def test_internal_implies_all(
+    app: Path, capsys: pytest.CaptureFixture[str], fake_cli: None, cache: DiskCache, fake_pypi: Any
+) -> None:
+    """``scan --internal`` without ``--all`` printed the same as ``scan``, and said nothing: the
+    changes it asks for are listed under ``--all``, so it implies it."""
+    assert cli.main(["scan", str(app), *CUTOFF, "--internal", "--limit", "3"]) == 0
+    out = capsys.readouterr().out
+    # 0.3's layout, as with --all: the summary panel and the per-package list.
+    assert "since-cutoff · claude-sonnet-4-5" in out and "5 breaking, 1 deprecated" in out
 
 
 def test_the_cli_prints_the_project_first_and_all_adds_0_3_layout(
@@ -653,7 +664,10 @@ def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
         "Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff "
         "(2025-07-31), 1 of them in the old form. Old form: valid for 1.0;" in md
     )
-    assert "### toylib 1.0 -> 2.0 (1.0 was the latest release at the cutoff; pyproject.toml" in md
+    assert (
+        "### toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; "
+        "pyproject.toml"
+    ) in md
     assert (
         "- **`Client.send`: `temperature` was removed; `stream` is now keyword-only** · old form"
         in md

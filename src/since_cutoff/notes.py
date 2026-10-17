@@ -6,7 +6,9 @@ not know, each tagged with what was checked, and nothing else claimed.
 
   ============================  ==========================================================
   ``[diff]``                    the change is in the static comparison of the two releases'
-                                public APIs; no replacement is named ("do not pass it")
+                                public APIs; no replacement is named ("do not pass it"), and
+                                where the library's text names none, the note points at the
+                                package's changelog (from its PyPI metadata) instead
   ``[diff + library]``          the replacement is named in the library's own deprecation
                                 text and exists in the pinned version (``use `stop```)
   ``[diff + move checked]``     the object at the new path keeps the old one's public names
@@ -17,6 +19,10 @@ not know, each tagged with what was checked, and nothing else claimed.
                                 pinned one does not, and the public API that named its types
                                 names another required distribution's types instead
                                 (:func:`dependency_bullet`)
+  ``[metadata]``                a package first released after the cutoff, which no diff can
+                                describe: the day it first appeared on PyPI, the pinned
+                                release's date, its PyPI summary and changelog URL
+                                (:func:`new_package_note`)
   ``[not confirmed]``           names that merely look similar; only with ``suggestions``
   ============================  ==========================================================
 
@@ -46,6 +52,7 @@ from typing import Any
 
 from since_cutoff import __version__
 from since_cutoff.apidiff import (
+    CALL_FORM_LIMIT,
     DEPENDENCY_SWITCHED,
     DEPRECATED,
     DIFF_SCHEMA,
@@ -60,14 +67,13 @@ from since_cutoff.apidiff import (
     PARAM_REQUIRED,
     REMOVED,
     REQUEST_EXTRAS,
-    STATED_REPLACEMENT,
     APIChange,
     object_replacements,
     parameter_replacements,
     signature_parameters,
-    stated_alternatives,
 )
 from since_cutoff.errors import SinceCutoffError
+from since_cutoff.models import DEFAULT_CUTOFF_MARGIN, compare_date
 
 BLOCK_START = "<!-- since-cutoff:start -->"
 BLOCK_END = "<!-- since-cutoff:end -->"
@@ -108,8 +114,8 @@ _LEGEND = {
         "[move checked] the object at the new path keeps the old one's public names or parameters"
     ),
     TAG_METADATA: (
-        "[metadata] the two releases' declared requirements (Requires-Dist in their wheels' "
-        "METADATA)"
+        "[metadata] PyPI metadata: the two releases' Requires-Dist (in their wheels' METADATA), "
+        "or a package's release dates, summary and changelog URL"
     ),
     TAG_PROBABLE_RENAME: "[probable rename] a guess from the parameter's position and type",
     TAG_NOT_CONFIRMED: "[not confirmed] names that look similar, not confirmed as replacements",
@@ -125,6 +131,11 @@ EVIDENCE_METADATA = "requires_dist"  # a switched dependency (DEPENDENCY_SWITCHE
 # Who wrote a note (Note.source); a ``run --compare`` baseline's notes carry its arm's name.
 NOTE_MODEL = "model"
 NOTE_DIFF = "diff"
+
+# The kind of the change a note for a package first released after the cutoff is about
+# (:func:`new_package_note`): not a kind the API diff reports, since there is nothing to
+# compare it with.
+NEW_PACKAGE = "new_package"
 
 # What a block covers (its meta line's "scope").
 SCOPE_USED = "used"  # the changed APIs the project's code uses (scan, sync)
@@ -245,6 +256,18 @@ class Note:
         """How the note names its API: ``Messages.create``, ``huggingface_hub.hf_hub_download``."""
         return api_name(self.change, self.covered)
 
+    @property
+    def apis(self) -> list[str]:
+        """Every API the note names, as the bullet lists them: one for a note about one API,
+        several for a bullet that says the same of several (:func:`diff_notes` with ``merge``:
+        ``["Anthropic.completions", "anthropic.AI_PROMPT", "anthropic.HUMAN_PROMPT"]``)."""
+        by_api: dict[str, list[APIChange]] = {}
+        for c in self.covered:
+            by_api.setdefault(c.api_key, []).append(c)
+        if len(by_api) <= 1:
+            return [self.api]
+        return sorted(api_name(g[0], g) for g in by_api.values())
+
     def applies_to(self) -> dict[str, str]:
         c = self.change
         return {"package": c.package, "version": c.to_version, "cutoff_version": c.from_version}
@@ -253,13 +276,19 @@ class Note:
         """What was checked, and what was not (``measured`` is filled in by a run's report)."""
         c = self.change
         compared = f"{c.from_version} vs {c.to_version}, diff schema {DIFF_SCHEMA}"
-        return {
-            "change": (
+        if c.kind == NEW_PACKAGE:
+            change = (
+                f"the release list and metadata of {c.package} on PyPI: no release by the cutoff"
+            )
+        elif c.kind == DEPENDENCY_SWITCHED:
+            change = (
                 "Requires-Dist of both releases' wheels (METADATA) and a static comparison of "
                 f"their public APIs (griffe), {compared}"
-                if c.kind == DEPENDENCY_SWITCHED
-                else f"static API diff (griffe), {compared}"
-            ),
+            )
+        else:
+            change = f"static API diff (griffe), {compared}"
+        return {
+            "change": change,
             "replacement": "; ".join(_replacement_check(r, c) for r in self.replacements) or None,
             "example_type_checks": (
                 True if TAG_TYPE_CHECKED in self.tag_list else self.example_type_checks
@@ -370,33 +399,96 @@ def is_stubs(package: str) -> bool:
 
 
 def diff_notes(
-    changes: Iterable[APIChange], lookup: ApiLookup | None = None, *, suggestions: bool = False
+    changes: Iterable[APIChange],
+    lookup: ApiLookup | None = None,
+    *,
+    suggestions: bool = False,
+    changelog: str | None = None,
+    merge: bool = False,
 ) -> list[Note]:
     """:func:`diff_note` for each API of ``changes`` (APIChange.api_key), in the order of the
-    first change of each."""
+    first change of each. ``changelog`` is where the package documents its releases
+    (:func:`pypi.changelog_url`), for a note that can name no replacement.
+
+    With ``merge`` (the notes a block holds: ScanResult.scope_notes), the notes that say the
+    same of several APIs of one package become one bullet that lists them (issue #5):
+    "`Anthropic.completions`, `anthropic.AI_PROMPT` and `anthropic.HUMAN_PROMPT` were removed;
+    do not use them.", "`huggingface_hub.hf_hub_download()` and
+    `huggingface_hub.snapshot_download()` no longer accept `proxies` ...". Two notes say the
+    same when their bullets are equal once each one's API name is taken out: the same changes,
+    the same evidence, the same quotes. The merged bullet stands where the first of them stood
+    and covers all their changes (Note.covered), with the APIs in the order of their names.
+    """
     by_api: dict[str, list[APIChange]] = {}
     for c in changes:
         by_api.setdefault(c.api_key, []).append(c)
-    return [diff_note(group, lookup, suggestions=suggestions) for group in by_api.values()]
+    notes = [
+        diff_note(group, lookup, suggestions=suggestions, changelog=changelog)
+        for group in by_api.values()
+    ]
+    if not merge:
+        return notes
+    alike: dict[tuple[str, str, str], list[Note]] = {}
+    for n in notes:
+        alike.setdefault(_shape(n), []).append(n)
+    out: list[Note] = []
+    done: set[tuple[str, str, str]] = set()
+    for n in notes:
+        shape = _shape(n)
+        if shape in done:
+            continue
+        done.add(shape)
+        group = alike[shape]
+        if len(group) == 1 or n.change.kind == DEPENDENCY_SWITCHED:
+            out += group
+            continue
+        merged = [c for m in group for c in m.covered]
+        out.append(diff_note(merged, lookup, suggestions=suggestions, changelog=changelog))
+    return out
+
+
+def _shape(note: Note) -> tuple[str, str, str]:
+    """What a note from the diff says, its API's name taken out: notes of one package and
+    version with the same shape say the same of their APIs (:func:`diff_notes`'s ``merge``)."""
+    api = note.api
+    text = note.bullet.replace(f"`{api}()`", "`()`").replace(f"`{api}`", "``")
+    return note.change.package, note.change.to_version, text
 
 
 def diff_note(
-    changes: Sequence[APIChange], lookup: ApiLookup | None = None, *, suggestions: bool = False
+    changes: Sequence[APIChange],
+    lookup: ApiLookup | None = None,
+    *,
+    suggestions: bool = False,
+    changelog: str | None = None,
 ) -> Note:
-    """One bullet for one API and all its changes (APIChange.api_key), from the diff alone.
+    """One bullet for one API and all its changes (APIChange.api_key), from the diff alone; or,
+    given the changes of several APIs that say the same (:func:`diff_notes` with ``merge``
+    checks that they do), one bullet that names them all, in the order of their names.
 
     The changes are stated in :func:`canonical_order`, whatever order they come in, so that the
     bullet does not depend on which of them the code uses. A replacement is named only when
-    the library's own text states it (the module docstring's table), and the tags say which;
-    text that only mentions a name as advice ("If you want to force a new download, use
-    `force_download=True`") is quoted, and is not a replacement. What has none is said right
-    after what it is about: "huggingface-hub's deprecation text says there is no replacement
-    for `x`" where the library says so, else "since-cutoff found no replacement in its
-    deprecation text" (what was read: docstrings, deprecation decorators, warnings). Names
-    that merely look similar go in ``not_confirmed``, never in the bullet, unless
-    ``suggestions`` asks for them (tagged ``[not confirmed]``); where the library says there is
-    no replacement, they are dropped. ``lookup`` is only used for a change from a diff older
-    than DIFF_SCHEMA 13, which did not record the names its library's text gives.
+    the library's own text states it (the module docstring's table), and the tags say which:
+    directly ("Use `stop` instead.", "renamed to `skip_if_logged_in`") as "Use `stop` instead
+    of `stop_sequences`.", or in a sentence that leads up to it ("replaced by newer agents
+    based on `FunctionAgent`", "in favor of the http-based alternatives implemented in
+    `HfApi`") as that sentence, quoted; text that only mentions a name as advice ("If you want
+    to force a new download, use `force_download=True`") is quoted, and is not a replacement.
+    What has none is said right after what it is about: "huggingface-hub's deprecation text
+    says there is no replacement for `x`" where the library says so; else a pointer to where
+    the package documents its releases, "See <changelog> (2.0.0).", when ``changelog`` is
+    known (:func:`pypi.changelog_url`), else "since-cutoff found no replacement in its
+    deprecation text" (what was read: docstrings, deprecation decorators, warnings). A removed
+    parameter of an SDK method that still takes ``extra_body`` points there instead, and says
+    nothing more. Names that merely look similar go in ``not_confirmed``, never in the bullet,
+    unless ``suggestions`` asks for them (tagged ``[not confirmed]``); where the library says
+    there is no replacement, they are dropped. ``lookup`` is only used for a change from a diff
+    older than DIFF_SCHEMA 13, which did not record the names its library's text gives.
+
+    A function deprecated in one call form only (an ``@overload``, APIChange.call_form) is
+    named by the parameters only that form takes: "`Server(...)` with `on_progress=` passed as
+    a keyword argument is deprecated"; a signature is quoted only when it is short
+    (CALL_FORM_LIMIT).
 
     A stubs package's notes (``pandas-stubs``) say what its declarations no longer have and
     that type checkers reject it, not that the runtime no longer accepts it.
@@ -406,12 +498,23 @@ def diff_note(
     given = list({id(c): c for c in changes}.values())
     if not given:
         raise ValueError("diff_note needs at least one change")
-    ordered = canonical_order(given)
+    by_api: dict[str, list[APIChange]] = {}
+    for c in canonical_order(given):
+        by_api.setdefault(c.api_key, []).append(c)
+    apis = sorted(by_api.values(), key=lambda g: api_name(g[0], g))
+    # The sentences are about the first API; the others say the same of theirs.
+    ordered = apis[0]
     first = ordered[0]
     package = first.package
     stubs = is_stubs(package)
-    name = api_name(first, ordered)
-    call = f"`{name}()`"
+    names = [api_name(g[0], g) for g in apis]
+    name = names[0]
+    many = len(names) > 1
+    s = "" if many else "s"  # accept(s), require(s)
+    was = "were" if many else "was"
+    it, its = ("them", "their") if many else ("it", "its")
+    subject_names = _listed(names, "and")
+    call = _listed([f"{n}()" for n in names], "and")
     tags = [TAG_DIFF]
     sentences: list[str] = []
     replacements: list[Replacement] = []
@@ -420,13 +523,14 @@ def diff_note(
 
     def subject() -> str:
         nonlocal said_what
-        text = call if not said_what else "It"
+        text = call if not said_what else ("They" if many else "It")
         said_what = True
         return text
 
     for kind in dict.fromkeys(c.kind for c in ordered):
         group = [c for c in ordered if c.kind == kind]
         params = _unique(c.parameter for c in group if c.parameter)
+        pointed = False  # a sentence says where a removed field goes: nothing more to add
         if kind == DEPENDENCY_SWITCHED:
             for c in group:
                 sentences.append(dependency_bullet(c))
@@ -444,10 +548,10 @@ def diff_note(
             for c in group:
                 if stubs:
                     sentences.append(
-                        f"{package} no longer declares `{name}`; type checkers reject it."
+                        f"{package} no longer declares {subject_names}; type checkers reject {it}."
                     )
                 else:
-                    sentences.append(f"`{name}` was removed; do not use it.")
+                    sentences.append(f"{subject_names} {was} removed; do not use {it}.")
                 if c.namesake:
                     sentences.append(f"The `{c.name}` at `{c.namesake}` is a different object.")
                 said_what = True
@@ -461,27 +565,29 @@ def diff_note(
                         f"checkers reject {pronoun}."
                     )
                     said_what = True
-                elif extras := _extra_request_arguments(group):
+                elif extra := _extra_request_argument(group):
                     # An SDK method that sends a request (Stainless-generated clients: anthropic,
-                    # openai, ...) takes fields it has no parameter for in extra_body/extra_query:
-                    # the parameter left the signature, not necessarily the API. "do not pass
-                    # them" made agents drop a field the task needed (the benchmark pilot).
+                    # openai, ...) takes fields it has no parameter for in extra_body (a body
+                    # field; extra_query is for a query field): the parameter left the
+                    # signature, not necessarily the API. "do not pass them" made agents drop a
+                    # field the task needed (the benchmark pilot).
                     sentences.append(
-                        f"{subject()} no longer accepts {_listed(plain, 'or')} as "
+                        f"{subject()} no longer accept{s} {_listed(plain, 'or')} as "
                         f"{'keyword arguments' if len(plain) > 1 else 'a keyword argument'}. "
-                        f"If the API still needs "
-                        f"{pronoun}, pass {pronoun} through its {_listed(extras, 'or')} argument."
+                        f"If the API still needs {pronoun}, pass {pronoun} through {its} "
+                        f"`{extra}` argument."
                     )
+                    pointed = True
                 else:
                     sentences.append(
-                        f"{subject()} no longer accepts {_listed(plain, 'or')}; do not pass "
+                        f"{subject()} no longer accept{s} {_listed(plain, 'or')}; do not pass "
                         f"{pronoun}."
                     )
             for p in params:
                 if p.startswith("*"):
                     what = "keyword" if p.startswith("**") else "positional"
                     sentences.append(
-                        f"{subject()} no longer accepts extra {what} arguments (`{p}`)."
+                        f"{subject()} no longer accept{s} extra {what} arguments (`{p}`)."
                     )
         elif kind == DEPRECATED:
             if params:
@@ -495,11 +601,10 @@ def diff_note(
             for c in group:
                 if c.parameter:
                     continue
-                form = f" called as `{_code(c.call_form)}`" if c.call_form else ""
-                sentences.append(f"`{name}`{form} is deprecated; avoid it in new code.")
+                sentences.append(_deprecated_sentence(c, names))
                 said_what = True
         elif kind == PARAM_REQUIRED:
-            sentences.append(f"{subject()} now requires {_listed(params, 'and')}.")
+            sentences.append(f"{subject()} now require{s} {_listed(params, 'and')}.")
         elif kind == PARAM_KEYWORD_ONLY:
             sentences.append(f"Pass {_listed(params, 'and')} to {call} by keyword.")
             said_what = True
@@ -513,12 +618,14 @@ def diff_note(
                     if c.old_kind and c.new_kind
                     else "changed kind"
                 )
-                sentences.append(f"`{name}` {kinds}; check its new signature before use.")
+                sentences.append(f"{subject_names} {kinds}; check {its} new signature before use.")
                 said_what = True
         # What to use instead, for what was removed or deprecated: right after it, so that a
         # sentence about what has no replacement cannot be read as about another change.
         if kind in (REMOVED, PARAM_REMOVED, DEPRECATED):
-            more = _replacement_sentences(group, name, lookup, replacements, tags, similar)
+            more = _replacement_sentences(
+                group, name, lookup, replacements, tags, similar, changelog, pointed=pointed
+            )
             sentences += more
             said_what = said_what and not more  # "It" would not be the API after them
     similar = [s for s in similar if s not in {r.text for r in replacements}]
@@ -541,6 +648,33 @@ def diff_note(
     )
 
 
+def _deprecated_sentence(change: APIChange, names: Sequence[str]) -> str:
+    """``x is deprecated; avoid it in new code.``; for a function deprecated in one call
+    form only (APIChange.call_form), which form: the parameters only it takes ("`Server(...)`
+    with `on_progress=` passed as a keyword argument is deprecated", APIChange.call_form_only),
+    else its signature when that is short (CALL_FORM_LIMIT), else just that one form is."""
+    many = len(names) > 1
+    be, it = ("are", "them") if many else ("is", "it")
+    subject = _listed(names, "and")
+    only = change.call_form_only or []
+    if change.call_form and only:
+        calls = _listed([f"{n}(...)" for n in names], "and")
+        keywords = _listed([f"{p}=" for p in only], "or")
+        arguments = "keyword arguments" if len(only) > 1 else "a keyword argument"
+        return (
+            f"{calls} with {keywords} passed as {arguments} {be} deprecated; avoid {it} in "
+            "new code."
+        )
+    if change.call_form and len(change.call_form) <= CALL_FORM_LIMIT:
+        form = _code(change.call_form)
+        return f"{subject} called as `{form}` {be} deprecated; avoid {it} in new code."
+    if change.call_form:
+        return (
+            f"One call form of {subject} (an overload) is deprecated; avoid that form in new code."
+        )
+    return f"{subject} {be} deprecated; avoid {it} in new code."
+
+
 def _replacement_sentences(
     group: list[APIChange],
     name: str,
@@ -548,9 +682,15 @@ def _replacement_sentences(
     replacements: list[Replacement],
     tags: list[str],
     similar: list[str],
+    changelog: str | None = None,
+    *,
+    pointed: bool = False,
 ) -> list[str]:
     """What to use instead of each change of ``group`` (one kind, of one API), and what has
-    none; ``replacements``, ``tags`` and ``similar`` gather the evidence for the note."""
+    none; ``replacements``, ``tags`` and ``similar`` gather the evidence for the note. With
+    ``pointed`` (the bullet says where a removed field goes already), nothing is said about
+    what has no replacement; with ``changelog``, that is a pointer to it instead of "found no
+    replacement"."""
     package = group[0].package
     sentences: list[str] = []
     none_said: list[str] = []  # the library's own text says nothing replaces it
@@ -599,14 +739,25 @@ def _replacement_sentences(
             f"{package}'s deprecation text says there is no replacement for "
             f"{_listed(_unique(none_said), 'or')}."
         )
-    if unnamed:
+    if unnamed and not pointed:
         # Named when the sentence is not about everything it follows.
         some = _unique(unnamed) != _unique(items)
-        rest = f" for {_listed(_unique(unnamed), 'or')}" if some else ""
-        sentences.append(
-            f"since-cutoff found no replacement{rest} in {package}'s deprecation text."
-        )
+        listed = _listed(_unique(unnamed), "or")
+        if changelog:
+            see = f"For {listed}, see" if some else "See"
+            sentences.append(f"{see} {_url(changelog)} ({group[0].to_version}).")
+        else:
+            rest = f" for {listed}" if some else ""
+            sentences.append(
+                f"since-cutoff found no replacement{rest} in {package}'s deprecation text."
+            )
     return sentences
+
+
+def _url(url: str) -> str:
+    """A URL from PyPI metadata as a note writes it: one line, nothing that ends the block or
+    a code span."""
+    return _one_line(url).replace(" ", "").replace("`", "")
 
 
 def says_no_replacement(change: APIChange) -> bool:
@@ -701,35 +852,53 @@ def _library_evidence(
 ) -> tuple[str, Replacement | None] | None:
     """What the library's own deprecation text for ``change`` gives, when it names something
     that exists in the new version (else None): the sentence, and the replacement when the
-    text states it as one ("Use `stop` instead."). Text that only mentions a name as advice
-    ("If you want to force a new download, use `force_download=True`") gives a quote and no
-    replacement (None), or nothing when there is nothing worth quoting."""
+    text states it as one (:func:`_stated_replacement`). Stated directly ("Use `stop`
+    instead.", "renamed to `skip_if_logged_in`"), the sentence is "Use `stop` instead of
+    `stop_sequences`."; stated in a sentence that leads up to the name ("replaced by newer
+    agents based on `FunctionAgent`", "in favor of the http-based alternatives implemented in
+    `HfApi`"), the sentence is that one, quoted, so that the library's own words stand (the
+    "Use ... instead" form when it is too long to quote). Text that only mentions a name as
+    advice ("If you want to force a new download, use `force_download=True`", "see `Config`
+    for the available options") gives a quote and no replacement (None), or nothing when there
+    is nothing worth quoting."""
     names = library_names(change, lookup)
     if not names:
         return None
+    what = change.parameter or api_name(change)
+    # "On `x`," only for a parameter: the API itself is what the bullet is about already.
+    on = f"On `{what}`, " if change.parameter else ""
+    # The old version's text (``hint``) and the pinned one's (``deprecation``), each with the
+    # version and file the note cites.
+    texts = [
+        (text, version, where, said)
+        for text, version, where, said in (
+            (change.hint, change.from_version, change.hint_file, "said"),
+            (change.deprecation, change.to_version, change.deprecation_file, "says"),
+        )
+        if text
+    ]
+    for text, version, where, said in texts:
+        stated = _stated_replacement(text, names, what.rsplit(".", 1)[-1])
+        if stated is None or not stated.replacement:
+            continue  # nothing stated, or a pointer at a name: quoted below, as advice
+        found = stated.names
+        source = f"{change.package} {version}" + (f" {where}" if where else "")
+        replacement = Replacement(found[0], EVIDENCE_LIBRARY, source, what)
+        shown = _listed([_shown_name(n) for n in found], "or")
+        use = f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
+        quote = "" if stated.direct else _quote(text, found[0])
+        if quote:
+            return f'{on}{change.package} {version} {said}: "{quote}"', replacement
+        return use, replacement
+    # Nothing stated: the text that names one of them, quoted up to that sentence.
     best = names[0]
     last = best.rsplit(".", 1)[-1]
-    # The old version's text (``hint``) or the pinned one's (``deprecation``): the one that
-    # names it, and so the version and file the note cites.
-    if change.hint and (not change.deprecation or _mentions(change.hint, last)):
-        text, version, where, said = change.hint, change.from_version, change.hint_file, "said"
-    else:
-        text = change.deprecation or ""
-        version, where, said = change.to_version, change.deprecation_file, "says"
-    source = f"{change.package} {version}" + (f" {where}" if where else "")
-    what = change.parameter or api_name(change)
-    stated = _stated_replacement(text, names)
-    if stated:
-        shown = _listed([_shown_name(s) for s in stated], "or")
-        sentence = (
-            f"Use {shown} instead of `{what}`." if change.parameter else f"Use {shown} instead."
-        )
-        return sentence, Replacement(stated[0], EVIDENCE_LIBRARY, source, what)
+    text, version, _where, said = next(
+        (t for t in texts if _mentions(_plain(t[0]), last)), texts[-1]
+    )
     quote = _quote(text, best)
     if not quote:
         return None
-    # "On `x`," only for a parameter: the API itself is what the bullet is about already.
-    on = f"On `{what}`, " if change.parameter else ""
     return f'{on}{change.package} {version} {said}: "{quote}"', None
 
 
@@ -773,16 +942,88 @@ def library_names(change: APIChange, lookup: ApiLookup | None = None) -> list[st
     return list(dict.fromkeys(found))
 
 
-def _stated_replacement(text: str, names: list[str]) -> list[str] | None:
-    """The ones of ``names`` that ``text`` states as the replacement, the first it gives
-    first ("Use `stop` instead."; httpx 0.27's "Use 'proxy' or 'mounts' instead."), or None
-    when the text only mentions them ("If you want to force a new download, use
-    `force_download=True`" is advice, not a replacement)."""
-    for pattern in STATED_REPLACEMENT:
-        for m in re.finditer(pattern, text, re.IGNORECASE):
-            said = [_named_as(s, names) for s in (m.group("n").strip("."), *stated_alternatives(m))]
-            if said[0] is not None:
-                return list(dict.fromkeys(n for n in said if n is not None))
+# How a deprecation text states its replacement, and where in the sentence the name is: after
+# "use", up to "instead" (every alternative in between: httpx 0.27's "Use 'proxy' or 'mounts'
+# instead."); after "replaced by", "renamed to", "in favour of" or "deprecated: use", up to the
+# end of the clause. A name right after the cue is stated directly; one that the clause leads
+# up to ("replaced by newer agents based on `FunctionAgent`") is stated in that sentence. The
+# cues are tried in this order in the sentence that names the deprecated API (all but the last
+# two), then over the whole text, so that "see `Helper` for the background. Use `new_func`
+# instead." names `new_func`. The last two point at a name without saying to
+# use it: a sentence-initial "Use" states a replacement only when nothing but names follows
+# ("Please use fetch."; "Use `strict=False` to keep the previous lenient parsing." is
+# advice), and "see `X`" never does.
+_CUES = (
+    re.compile(r"\buse\s+(?P<rest>.+?)\s+(?:instead|in\s+its\s+place)\b", re.IGNORECASE),
+    re.compile(r"\b(?:replaced|superseded)\s+(?:by|with)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\brenamed\s+(?:to|as)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\bin\s+favou?r\s+of\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\bdeprecated\W+(?:please\s+)?use\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"^\W*(?P<weak>(?:please\s+)?use)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+    re.compile(r"\b(?P<weak>see)\s+(?P<rest>[^,;:(]+)", re.IGNORECASE),
+)
+_TOKEN = re.compile(r"[A-Za-z_][\w.]*")
+
+
+@dataclass(frozen=True)
+class _Stated:
+    """What a deprecation text says of the names that exist in the pinned version
+    (:func:`_stated_replacement`)."""
+
+    names: list[str]  # the ones it names after a cue, the first it gives first
+    # Nothing but the names (and "or") after the cue: "Use `stop` instead.", "Use 'proxy' or
+    # 'mounts' instead.", "renamed to `skip_if_logged_in`".
+    direct: bool
+    # The cue states them as the replacement. False for "see `X`", and for a sentence-initial
+    # "Use `X` to ..." that says more than the names: advice, quoted and not a replacement.
+    replacement: bool
+
+
+def _stated_replacement(text: str, names: list[str], subject: str = "") -> _Stated | None:
+    """The ones of ``names`` that ``text`` names after a cue (:data:`_CUES`: a cue that states
+    a replacement in the sentence naming ``subject``, the deprecated API, or else in the first
+    sentence; then the strongest cue anywhere in the text), and how: directly, or in a
+    sentence that leads up to them or says more ("replaced by newer agents based on
+    `FunctionAgent`", "in favor of the
+    http-based alternatives implemented in [`HfApi`]", "use StateGraph with a 'messages' key
+    instead"), and whether the cue states them as the replacement at all ("see `Config` for
+    the available options" and "Use `strict=False` to keep the previous lenient parsing" do
+    not). None when the text only mentions them ("If you want to force a new download, use
+    `force_download=True`" is advice, not a replacement). Markup around a name (Sphinx roles,
+    MkDocs' ``[`X`]``) does not count."""
+    sentences = _sentences(text)
+    # A cue that states a replacement in the sentence that names the deprecated API (else the
+    # first) beats a later "use ... instead": "`old` was renamed to `new`. If you need the
+    # legacy behaviour, use `compat` instead." names `new`.
+    at = next((i for i, s in enumerate(sentences) if subject and _mentions(s, subject)), 0)
+    strong = [cue for cue in _CUES if "weak" not in cue.groupindex]
+    for cues, among in ((strong, sentences[at : at + 1]), (_CUES, sentences)):
+        for cue in cues:
+            stated = _stated_by(cue, among, names)
+            if stated is not None:
+                return stated
+    return None
+
+
+def _stated_by(cue: re.Pattern[str], sentences: list[str], names: list[str]) -> _Stated | None:
+    """What ``cue`` states of ``names`` at its first match in ``sentences`` that names one of
+    them (:func:`_stated_replacement`); None when no match does."""
+    matches = sorted(
+        ((i, m) for i, sentence in enumerate(sentences) for m in cue.finditer(sentence)),
+        key=lambda im: (im[0], im[1].start("rest")),
+    )
+    for _, m in matches:
+        tokens = [t.strip(".") for t in _TOKEN.findall(m.group("rest"))]
+        said = [(t, _named_as(t, names)) for t in tokens if t]
+        found = _unique(n for _, n in said if n is not None)
+        if not found:
+            continue
+        direct = all(n is not None or t.lower() in ("or", "and") for t, n in said)
+        weak = m.groupdict().get("weak")
+        if weak is None:
+            return _Stated(found, direct, True)
+        # A sentence-initial "Use" that names nothing else states it; "see" never does.
+        return _Stated(found, direct, direct and weak.lower() != "see")
     return None
 
 
@@ -802,8 +1043,19 @@ _NOISE = re.compile(
 )
 
 
+# Markup a docstring puts around a name: Sphinx roles (:func:`x`, :py:meth:`~pkg.x`) and
+# MkDocs' cross-references ([`HfApi`], ['Repository']).
+_ROLE = re.compile(r":(?:\w+:)+(?=`)")
+_BRACKETED = re.compile(r"\[([`'\"][^\[\]]*?[`'\"])\]")
+
+
+def _plain(text: str) -> str:
+    """``text`` without the markup around names: ``[`HfApi`]`` reads ```HfApi```."""
+    return _BRACKETED.sub(r"\1", _ROLE.sub("", text).replace("`~", "`"))
+
+
 def _sentences(text: str) -> list[str]:
-    return [s for s in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if s]
+    return [s for s in re.split(r"(?<=[.!?])\s+", " ".join(_plain(text).split())) if s]
 
 
 def _worth_quoting(sentence: str) -> bool:
@@ -1195,8 +1447,10 @@ def _unique(items: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(items))
 
 
-def _extra_request_arguments(changes: Sequence[APIChange]) -> list[str]:
-    """``extra_body`` / ``extra_query`` when the pinned callable of these changes takes them.
+def _extra_request_argument(changes: Sequence[APIChange]) -> str | None:
+    """``extra_body`` when the pinned callable of these changes takes it (an SDK method that
+    sends a request: a removed parameter was a body field, as every parameter of a POST method
+    is), else ``extra_query`` when it takes only that (a GET method: a query field), else None.
 
     From ``request_extras`` (DIFF_SCHEMA 17), else from the recorded new signature, which
     is cut at 400 characters. Whether the API itself still takes a removed field is not
@@ -1211,7 +1465,7 @@ def _extra_request_arguments(changes: Sequence[APIChange]) -> list[str]:
             found.update(
                 name for name in REQUEST_EXTRAS if re.search(rf"[(,]\s*{name}\s*[:=,)]", signature)
             )
-    return [name for name in REQUEST_EXTRAS if name in found]
+    return next((name for name in REQUEST_EXTRAS if name in found), None)
 
 
 def _listed(names: Sequence[str], conjunction: str) -> str:
@@ -1229,6 +1483,46 @@ def _code(text: str | None) -> str:
 
 def _one_line(text: str) -> str:
     return " ".join(text.replace("<!--", "").replace("-->", "").split())
+
+
+# ------------------------------------------------- a package newer than the cutoff
+def new_package_note(
+    package: str,
+    version: str,
+    first_released: str | None,
+    summary: str | None = None,
+    changelog: str | None = None,
+    released: str | None = None,
+    margin: int | None = None,
+) -> Note:
+    """The one bullet for a package first released after the cutoff that the project's code
+    imports: no release existed at the cutoff to compare with, so there is no diff, and the
+    model has no training data on it. What PyPI's metadata says of it: the day of its first
+    release (``first_released``, ISO), the day the pinned ``version`` was released
+    (``released``, ISO: the two differ, httpx2 0.0.0 came out months before 2.13.1), its
+    one-line ``summary`` and where it documents its releases (``changelog``,
+    :func:`pypi.changelog_url`), each left out when unknown. ``margin``: the package was first
+    released that many days before the cutoff or fewer (ModelTarget.released_within_margin),
+    after the day the scan compares from, which the bullet says instead of "after the cutoff".
+    Tagged ``[metadata]``; about 50 tokens.
+
+    ``httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no training
+    data on it. The project pins 2.13.1 (released 2026-09-23). Summary: The next generation
+    HTTP client. Changelog: https://...``
+    """
+    when = f"on {first_released}, after the cutoff" if first_released else "after the cutoff"
+    known = "the model has no training data on it"
+    if margin is not None and first_released:
+        when = f"on {first_released}, within {margin} days before the cutoff"
+        known = "the model has little or no training data on it"
+    pinned = f"{version} (released {released})" if released else version
+    text = f"{package} first appeared on PyPI {when}; {known}. The project pins {pinned}."
+    if summary:
+        text += f" Summary: {safe_text(summary, 120).rstrip('.')}."
+    if changelog:
+        text += f" Changelog: {_url(changelog)}"
+    change = APIChange(package, "", version, NEW_PACKAGE, package, package)
+    return Note(change, text, None, False, NOTE_DIFF, (TAG_METADATA,), changes=[change])
 
 
 # ------------------------------------------------------------ model's notes
@@ -1367,11 +1661,15 @@ def render_block(
     tool: str = __version__,
     suggestions: bool = False,
     per_package: int | None = None,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     """The notes block (format 2) for AGENTS.md / CLAUDE.md.
 
     ``deps`` is :func:`deps_hash` of every dependency scanned (by default, of the packages and
-    versions the notes are about); ``scope`` what the notes cover (SCOPE_*). The first line is
+    versions the notes are about); ``scope`` what the notes cover (SCOPE_*); ``margin`` how many
+    days before the cutoff the comparison releases were published by (``--cutoff-margin``; the
+    header says the day, and the meta line keeps the number, so that ``status`` sees a block
+    compared from another day). The first line is
     0.3's marker, so 0.3's ``unapply`` still finds and removes a block written by 0.4.
     ``suggestions`` (``sync --suggestions``: the notes name similar names, ``[not confirmed]``)
     is recorded in the meta line, only when set, so that the next ``sync`` keeps it; so is
@@ -1389,12 +1687,14 @@ def render_block(
     for n in notes:
         by_pkg.setdefault((n.change.package, n.change.to_version), []).append(n)
     used_tags = {t for n in notes for t in n.tag_list}
-    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags)]
+    body = [TITLE, "", _header(model, cutoff, version_source, scope, tool, used_tags, margin)]
     checked: list[str] = []
     for (pkg, version), items in sorted(by_pkg.items()):
         olds = _unique(n.change.from_version for n in items if n.change.from_version)
-        at_cutoff = f" ({olds[0]} at the cutoff)" if len(olds) == 1 else ""
-        body += ["", f"**{pkg} {version}**{at_cutoff}"]
+        # The release the notes compare from: the latest published ``margin`` days before the
+        # cutoff, which the header says (a block from before the margin said "at the cutoff").
+        compared = f" (compared from {olds[0]})" if len(olds) == 1 else ""
+        body += ["", f"**{pkg} {version}**{compared}"]
         seen: set[str] = set()
         # A switched dependency first: it concerns every object of it the code hands over.
         for n in sorted(items, key=lambda n: (n.change.kind != DEPENDENCY_SWITCHED, n.api, n.line)):
@@ -1413,6 +1713,7 @@ def render_block(
         "tool": tool,
         "model": model or None,
         "cutoff": cutoff.isoformat(),
+        "margin": margin,
         "versions_from": version_source,
         "deps": deps,
         "body": body_hash(text),
@@ -1440,16 +1741,31 @@ def model_names(model: str | None) -> list[str]:
 
 
 def _header(
-    model: str, cutoff: date, version_source: str, scope: str, tool: str, tags: set[str]
+    model: str,
+    cutoff: date,
+    version_source: str,
+    scope: str,
+    tool: str,
+    tags: set[str],
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> str:
     # The model's name comes from the user or a settings file: it must not end the block either.
     name = _one_line(_code(model))
     names = model_names(name)
     day = cutoff.isoformat()
+    # As the model line of ``scan`` says it: "training cutoff 2025-07-31, comparing from
+    # releases up to 2025-07-01" (--cutoff-margin 30).
+    from_day = (
+        f", comparing from releases up to {compare_date(cutoff, margin).isoformat()}"
+        if margin > 0
+        else ""
+    )
     if len(names) > 1:
-        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day})"
+        who = f"the earliest training cutoff of {_listed(names, 'and')} ({day}{from_day})"
+    elif name:
+        who = f"the training cutoff of `{name}` ({day}{from_day})"
     else:
-        who = f"the training cutoff of `{name}` ({day})" if name else f"{day}"
+        who = f"{day} ({from_day[2:]})" if from_day else day
     source = _one_line(_code(version_source))
     versions = (
         "the latest versions on PyPI"
@@ -1533,7 +1849,9 @@ class PackageNotes:
     """One package's section of a block."""
 
     version: str
-    cutoff_version: str | None  # format 2 only: "(0.60.0 at the cutoff)"
+    # Format 2 only: the release the notes compare from, "(compared from 0.56.0)" (a block
+    # written before there was a margin: "(0.60.0 at the cutoff)").
+    cutoff_version: str | None
     bullets: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)  # (text, tags)
 
 
@@ -1555,8 +1873,11 @@ _LEGACY_HEADER = re.compile(
     r"Generated by \[since-cutoff\]\([^)]*\) for `(?P<model>[^`]*)` \(training cutoff "
     r"(?P<cutoff>\d{4}-\d{2}-\d{2})\), checked against `(?P<source>[^`]*)`\."
 )
+# ``**anthropic 1.8.0** (compared from 0.56.0)``, or, from a block written before there was a
+# margin, ``**anthropic 1.8.0** (0.60.0 at the cutoff)``.
 _PACKAGE_LINE = re.compile(
-    r"^\*\*(?P<pkg>\S+) (?P<version>\S+)\*\*(?: \((?P<cutoff>\S+) at the cutoff\))?$"
+    r"^\*\*(?P<pkg>\S+) (?P<version>\S+)\*\*"
+    r"(?: \((?:compared from (?P<cutoff>\S+)|(?P<at_cutoff>\S+) at the cutoff)\))?$"
 )
 
 
@@ -1600,7 +1921,7 @@ def parse_block(text: str, name: str = "AGENTS.md") -> ParsedBlock | None:
     for line in inner:
         m = _PACKAGE_LINE.match(line.strip())
         if m is not None:
-            current = PackageNotes(m.group("version"), m.group("cutoff"))
+            current = PackageNotes(m.group("version"), m.group("cutoff") or m.group("at_cutoff"))
             packages[m.group("pkg")] = current
         elif current is not None and line.startswith("- "):
             current.bullets.append(split_tags(line[2:].strip()))
@@ -1614,11 +1935,8 @@ INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 
 def default_target(root: Path, explicit: str | None = None) -> Path:
     """The file for a first block: ``explicit`` (``--target``, relative to the project), else
-    AGENTS.md, or CLAUDE.md when only that one exists.
-
-    Claude Code reads only CLAUDE.md when both exist; writing to both, or to AGENTS.md only
-    when CLAUDE.md imports it with ``@AGENTS.md``, is issue #13 (not changed here; see
-    :func:`block_targets`).
+    AGENTS.md, or CLAUDE.md when only that one exists. With both files, :func:`block_targets`
+    adds CLAUDE.md unless it imports AGENTS.md (issue #13).
     """
     if explicit:
         p = Path(explicit)
@@ -1636,19 +1954,77 @@ def block_targets(root: Path, explicit: str | None = None) -> list[Path]:
     2. otherwise each of AGENTS.md and CLAUDE.md that already has a block (or since-cutoff
        markers that cannot be read, which reading it then reports), so that a block stays
        where it was written (``run --apply --target CLAUDE.md``) and none is left behind;
-    3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists.
+    3. otherwise :func:`default_target`: AGENTS.md, or CLAUDE.md when only that one exists;
+       with both files, AGENTS.md and CLAUDE.md, unless CLAUDE.md imports AGENTS.md
+       (:func:`imports_agents`) or cannot be read, when AGENTS.md is the only one (issue #13).
 
-    Issue #13 (a good first issue) is the case of both files and no block yet. Claude Code
-    reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md imports it with
-    ``@AGENTS.md`` (outside code spans and fenced blocks). The plan for it: with that import,
-    AGENTS.md only (removing a block left in CLAUDE.md); without it, both files, with the tip
-    "add `@AGENTS.md` to CLAUDE.md to keep one copy". Until then that case keeps 0.3's
-    choice, AGENTS.md.
+    A CLAUDE.md that is a link to AGENTS.md is that file: AGENTS.md alone.
+
+    Claude Code reads only CLAUDE.md when both exist, and AGENTS.md too when CLAUDE.md
+    imports it with ``@AGENTS.md``; the agents that read AGENTS.md (Codex, Cursor, Copilot)
+    do not read CLAUDE.md. A block already in one file stays the only one (2.): the tip
+    (:func:`agents_import_tip`) says what Claude Code needs.
     """
     if explicit:
         return [default_target(root, explicit)]
+    agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
+    if _same_file(agents, claude):  # CLAUDE.md is a link to AGENTS.md: one file
+        return [agents]
     found = [root / name for name in INSTRUCTION_FILES if has_markers(root / name)]
-    return found or [default_target(root)]
+    if found:
+        return found
+    if agents.exists() and _misses_agents(agents, claude):
+        return [agents, claude]
+    return [default_target(root)]
+
+
+# ``@AGENTS.md`` (or ``@./AGENTS.md``) after a space or at the start of a line: Claude Code's
+# import, which it does not read inside a code span or a fenced block. Lines keep a ``\r``
+# (files are read as they are), which a closing fence may end with.
+_AGENTS_IMPORT = re.compile(r"(?<!\S)@(?:\./)?AGENTS\.md(?![\w/-])")
+# A fenced block closes at a fence of the same character at least as long as the opening one
+# (Markdown), or at the end of the file.
+_FENCED = re.compile(
+    r"(?ms)^[ \t]{0,3}((`)\2{2,}|(~)\3{2,}).*?(?:^[ \t]{0,3}\1(?:\2|\3)*[ \t]*\r?$|\Z)"
+)
+# A code span does not run past a blank line (the end of a paragraph): a stray backtick does
+# not pair with one in a later paragraph and hide what is between them.
+_CODE_SPAN = re.compile(r"(`+)(?!`)(?:(?!\n[ \t]*\r?\n).)+?(?<!`)\1(?!`)", re.S)
+
+
+def _imports(text: str) -> bool:
+    text = text.removeprefix("\ufeff")  # the byte order mark some editors put first
+    return bool(_AGENTS_IMPORT.search(_CODE_SPAN.sub("", _FENCED.sub("", text))))
+
+
+def imports_agents(claude: Path) -> bool:
+    """Whether CLAUDE.md imports AGENTS.md with ``@AGENTS.md``, outside code spans and fenced
+    blocks, as Claude Code reads imports. A file that cannot be read imports nothing."""
+    try:
+        return _imports(_read(claude))
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` are one file (a symbolic or hard link); False when one is not
+    there."""
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
+def _misses_agents(agents: Path, claude: Path) -> bool:
+    """Whether Claude Code does not read AGENTS.md: CLAUDE.md is a file of its own that does
+    not import it (:func:`imports_agents`). False when CLAUDE.md is AGENTS.md (a link) and when
+    it cannot tell: no CLAUDE.md, or one that cannot be read (not UTF-8), as before #13."""
+    if not claude.is_file() or _same_file(agents, claude):
+        return False
+    try:
+        return not _imports(_read(claude))
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 # What says to add: ``@AGENTS.md`` in CLAUDE.md is how Claude Code reads AGENTS.md too.
@@ -1656,25 +2032,34 @@ AGENTS_IMPORT_TIP = (
     "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md: "
     "add a line `@AGENTS.md` to CLAUDE.md"
 )
+# Both files have the block because CLAUDE.md does not import AGENTS.md (issue #13).
+TWO_COPIES_TIP = (
+    "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one copy, add "
+    "a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target CLAUDE.md`"
+)
+# Both files have the block, and CLAUDE.md imports AGENTS.md (added after the blocks were).
+SECOND_COPY_TIP = (
+    "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a second copy of the notes: run "
+    "`since-cutoff unapply --target CLAUDE.md` to keep one"
+)
 
 
 def agents_import_tip(root: Path, targets: Sequence[Path]) -> str | None:
-    """:data:`AGENTS_IMPORT_TIP` when the notes go to AGENTS.md (``targets``) and not to
-    CLAUDE.md, although a CLAUDE.md exists that does not mention ``@AGENTS.md``: Claude Code
-    then reads only CLAUDE.md. None otherwise.
-
-    A plain text search, so ``@AGENTS.md`` inside a code span counts too: choosing the files
-    for this case (both files, or AGENTS.md alone with the import) is issue #13, which will
-    also read the import as Claude Code does, outside code; this tip is only until then.
+    """What to do when the notes go to AGENTS.md (``targets``) and CLAUDE.md does not import
+    it (:func:`imports_agents`): :data:`TWO_COPIES_TIP` when they go to CLAUDE.md too,
+    :data:`AGENTS_IMPORT_TIP` when they do not (a block already in AGENTS.md alone), as Claude
+    Code then reads only CLAUDE.md. When they go to both files and CLAUDE.md does import
+    AGENTS.md (a block in each, then the import): :data:`SECOND_COPY_TIP`. None otherwise,
+    also when CLAUDE.md is a link to AGENTS.md or cannot be read.
     """
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents not in targets or claude in targets or not claude.is_file():
+    if agents not in targets:
         return None
-    try:
-        text = _read(claude)
-    except (OSError, UnicodeDecodeError):
-        return None
-    return None if re.search(r"@(?:\./)?AGENTS\.md", text) else AGENTS_IMPORT_TIP
+    if _misses_agents(agents, claude):
+        return TWO_COPIES_TIP if claude in targets else AGENTS_IMPORT_TIP
+    if claude in targets and not _same_file(agents, claude) and imports_agents(claude):
+        return SECOND_COPY_TIP
+    return None
 
 
 _MARKER_LINE = re.compile(

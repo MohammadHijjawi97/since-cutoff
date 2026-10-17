@@ -218,6 +218,7 @@ def test_reports_carry_the_statistics_and_the_run_settings(tmp_path, cache, fake
         "tool_version": __version__,
         "diff_schema": DIFF_SCHEMA,
         "griffe_version": griffe_version(),
+        "cutoff_margin": 30,
         "date": "2026-09-27",
         "model": "scripted:scripted-1",
         "task_model": "scripted:scripted-1",
@@ -310,7 +311,13 @@ def test_a_scan_report_records_the_diff_schema(tmp_path, cache, fake_pypi, scrip
     engine = make_engine(cache, fake_pypi, scripted)
     scan = engine.scan(load_project(make_project(tmp_path)), engine.resolve_target())
     settings = summary(scan)["settings"]
-    assert set(settings) == {"tool_version", "diff_schema", "griffe_version", "date"}
+    assert set(settings) == {
+        "tool_version",
+        "diff_schema",
+        "griffe_version",
+        "cutoff_margin",
+        "date",
+    }
     assert settings["griffe_version"] == griffe_version() != "unknown"
     md = render_markdown(scan)
     assert "| API diff schema |" in md and f"| griffe version | {griffe_version()} |" in md

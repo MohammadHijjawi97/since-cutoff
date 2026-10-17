@@ -2,6 +2,113 @@
 
 ## Unreleased
 
+- Notes from the diff say what to use instead in more cases, and point somewhere useful when they
+  cannot (an audit of 36 libraries found 25 of 36 notes ending in "since-cutoff found no
+  replacement in X's deprecation text", several although the text named one; #14). A replacement
+  the library states in a sentence that leads up to it is named, in the library's own words:
+  llama-index-core's "FunctionCallingAgent has been rewritten and replaced by newer agents based
+  on llama_index.core.agent.workflow.FunctionAgent" and huggingface-hub's "['Repository'] is
+  deprecated in favor of the http-based alternatives implemented in [`HfApi`]" (the doc markup
+  dropped) are quoted, tagged `[diff + library]`; "renamed to X" and a sentence-initial "Use X."
+  count as well. A cue in the sentence that names the deprecated API (else the first sentence)
+  wins over a later "use ... instead" ("`old` was renamed to `new`. If you need the legacy
+  behaviour, use `compat` instead." names `new`), and otherwise the strongest cue anywhere in the
+  text ("see `Helper` for the background. Use `new_func` instead." names `new_func`). "see X" and
+  advice ("Use `strict=False` to keep the previous lenient parsing") are quoted under `[diff]`,
+  not taken as replacements.
+  Where the text names nothing, the note points at the package's changelog with the pinned
+  version ("See https://github.com/encode/httpx/blob/master/CHANGELOG.md (0.28.1).": the
+  Changelog URL in its PyPI metadata, else the releases page of the GitHub repository its Source,
+  Repository or Homepage URL names; never a sponsors or organisation page, pydantic-core's first
+  URL being `github.com/sponsors/samuelcolvin`), and says "found no replacement" only when PyPI
+  lists neither. The cached PyPI metadata now keeps a package's project URLs, summary and home
+  page (`PyPI.project_urls`, `PyPI.summary`); a copy cached before is fetched again once, and
+  read as it is when PyPI cannot be reached, without asking PyPI again for the rest of the scan.
+- A function deprecated in one call form only (a PEP 702 `@deprecated` on one `@overload`) is
+  named by the parameters that form alone takes (diff schema 21, `call_form_only`): mcp 2.2's
+  note read "`Server` called as `__init__(self, name: str, *, version: str = ..., ...)` is
+  deprecated", a 400-character signature, and labelled every `Server("x")` call "uses this API";
+  it reads "`Server(...)` with `on_set_logging_level=`, `on_roots_list_changed=` or
+  `on_progress=` passed as keyword arguments is deprecated", and a call is in the old form only
+  when it passes one of them. When one of the form's own parameters cannot be passed by keyword
+  (cachetools' positional-only `info`, a `**kwargs`), the note, the terminal heading and `--all`
+  quote the form's signature instead, when it is at most 120 characters, and otherwise say that
+  one call form (an overload) is deprecated. The task and note prompts quote that description:
+  they are prompt version 3, so `run` does not reuse tasks or answers cached under version 2.
+- A removed parameter of an SDK method that still takes `extra_body` points there alone (the
+  note named `extra_query` too, which is for query fields, and then said it found no
+  replacement): "If the API still needs them, pass them through its `extra_body` argument."
+- Bullets that say the same of several APIs of one package merge into one in the block (#5):
+  anthropic 1.8's three bullets for `Anthropic.completions`, `anthropic.AI_PROMPT` and
+  `anthropic.HUMAN_PROMPT` are one ("… were removed; do not use them."), and huggingface-hub's
+  `hf_hub_download()` and `snapshot_download()` share one. The terminal, report.md, the MCP tools
+  and the JSON keep one entry per API (report.md's sources name every API of a merged bullet),
+  and the `run --compare` baselines are unchanged. `sync` keeps a `[type-checked]` note next to
+  the merged bullet of the other APIs, and counts bullets that merged as changed, not dropped.
+- A dependency first released after the cutoff that the code imports gets a note, tagged
+  `[metadata]`, which `sync` writes and the scan counts as ready: "httpx2 first appeared on PyPI
+  on 2026-05-11, after the cutoff; the model has no training data on it. The project pins 2.13.1
+  (released 2026-09-23). Summary: The next generation HTTP client. Changelog:
+  https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md". The scan said its whole
+  API was newer than the cutoff, and `sync` wrote nothing. One first released within the margin
+  before the cutoff gets the note too, which says so ("first appeared on PyPI on 2025-07-15,
+  within 30 days before the cutoff; the model has little or no training data on it"), and `sync`
+  drops the note once the code no longer imports the package ("first released 2025-07-15, within
+  30 days of the cutoff, and your code no longer imports it").
+- The comparison release is the latest release published at least 30 days before the model's
+  training cutoff, not at the cutoff itself. A model's training data lags its stated cutoff, so
+  it knows the last weeks before the cutoff least: llama-index-core 0.13.0, which removed
+  `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on 2025-07-30, the day before
+  claude-sonnet-4-5's cutoff, and a scan of a project pinning 0.14.25 said the code used none
+  of the APIs that changed; it now reports both removals. `--cutoff-margin DAYS`,
+  `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and the action's `cutoff-margin`
+  input set the margin; 0 compares from the cutoff itself, as before. The model line says both
+  days ("training cutoff 2025-07-31, comparing from releases up to 2025-07-01"), and so do the
+  reports, `results.json` (`compare_from`, `settings.cutoff_margin`, also in `sync --json` and
+  `status --json`) and the notes block's header and meta line, so `status` and `sync --check`
+  report a block compared from another day as out of date. A block written by an earlier
+  since-cutoff compared from the cutoff itself and is reported out of date until `since-cutoff
+  sync` rewrites it (`--cutoff-margin 0` keeps the old comparison). The block's package line
+  says which release the notes compare from, `**anthropic 1.8.0** (compared from 0.56.0)`; it
+  said "0.56.0 at the cutoff", which the margin made false, and both forms are read. A
+  dependency first released within the margin counts as new to the model, and the scan, the
+  MCP tools and `sync` say it was "first released 2025-07-15, within 30 days of the cutoff", not
+  "after the cutoff"; one the model knows is "the latest release 30 days before the cutoff".
+- A module that takes its names from another distribution with `from x import *` is compared
+  with that distribution read next to the release: mcp 2.3.0's `mcp/types/__init__.py` is `from
+  mcp_types import *` (mcp requires `mcp-types==2.3.0`), and the report had no entry under
+  `mcp.types` while mcp-types had renamed every field to snake_case, so
+  `types.Tool(name=..., inputSchema=...)` broke unreported. The sibling distribution is
+  downloaded at the version the project locks (or the newest its requirement allows on the
+  comparison date, for the release at the cutoff), under the usual download limit and cache, and
+  its names are compared under the paths that re-export them (`mcp.types.Tool.inputSchema`
+  removed). Only a star import that runs counts: not one in a docstring, a function or an `if
+  TYPE_CHECKING:` block. An object a release only re-exports from elsewhere is now compared too,
+  where griffe stops at the alias: a class's members (inherited ones included), a function's
+  parameters and a change of kind, reported under the re-exporting path. When the sibling cannot be downloaded,
+  the scan, the report and the MCP tools warn that changes to those modules are not reported.
+  Cached diffs are keyed on the siblings read, and on the source schema, with the diff schema;
+  which distributions each release star-imports is kept in the cache, so a cached diff is still
+  served from the pinned release alone, with nothing else to download.
+- README: a newcomer now sees, in order, what it is, how to install it (uvx, pipx, pip), a
+  Quick start on the sample project with the real `scan` output and the block `sync` writes,
+  when to use it and what it does not do, then the existing sections. New FAQ: the training
+  cutoff against the release date, what is sent where, why some notes name no replacement,
+  AGENTS.md and CLAUDE.md, the notes' cost in tokens, offline use. The counts come from 0.5.0's
+  scan (307 breaking changes and 23 new deprecations in the sample project). The Chinese,
+  Spanish and French READMEs follow the same structure, and now also describe the Gemini CLI
+  model detection and `sync --json`, which only the English README had.
+- Docs site: index.md and ai-stack.md describe 0.5.0 (scan, sync, status, pre-commit, the Action
+  and the MCP server) and ai-stack.md's counts come from a re-run with 0.5.0; a nav bar links
+  the pages and the GitHub docs (#67); the link-preview text no longer says "verified AGENTS.md
+  notes" (#51); benchmark.md says it is the study as run with 0.4.1's notes.
+- README (all four languages) and how-it-works.md: the intro, the Quick start, "The problem",
+  the MCP and `[diff]` tables, the `sync` and block descriptions describe the comparison release
+  as the latest release published at least 30 days before the model's training cutoff by
+  default; they still said "on or before the cutoff".
+- `scripts/check_versions.py` checks the pre-commit `rev` and the action's `since-cutoff-version`
+  default in all four READMEs (the Spanish and French pins and the translated action tables
+  were not checked).
 - A changed method is found when the code never names its class: the receiver of a method
   call is typed from the pinned release's own annotations, read statically with griffe and
   cached per release (a new `receivers` folder in the cache). `df = pd.read_csv(...)` is a
@@ -26,6 +133,81 @@
 - `--base-url` wins over `OPENAI_BASE_URL` for `openai:<model>`, as a flag wins over the
   environment for every other setting (#94). The variable overrode the flag; the order is now
   the flag, then `OPENAI_BASE_URL`, then `https://api.openai.com/v1`.
+- With both AGENTS.md and CLAUDE.md and no block yet, `sync` and `run --apply` write the block
+  to both files when CLAUDE.md does not import AGENTS.md, and to AGENTS.md alone when it does,
+  is not UTF-8 or is a link to AGENTS.md (#13): Claude Code reads only CLAUDE.md unless it
+  imports AGENTS.md with `@AGENTS.md`, and Codex, Cursor and Copilot read only AGENTS.md.
+  CLAUDE.md is read as Markdown, as Claude Code reads imports: not inside a code span (which
+  ends with its paragraph, so a stray backtick does not hide a later import) or a fenced block
+  (` ``` ` or `~~~`, closed by a fence of the same character at least as long), and after a
+  byte order mark. The block went to AGENTS.md alone, where Claude Code never saw it. `scan`,
+  `sync`, `run --apply` and now `status` (its text and `status --json`; `status --hook` stays
+  quiet) say "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one
+  copy, add a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target
+  CLAUDE.md`", and `sync --json` has it as `tip`. When both files have the block and CLAUDE.md
+  then imports AGENTS.md, they say "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a
+  second copy of the notes: run `since-cutoff unapply --target CLAUDE.md` to keep one". A
+  block already in AGENTS.md alone stays the only one, with the tip that Claude Code does not
+  read it, now also from `status`.
+- A model that models.dev lists several times, by its maker and by gateways and resellers,
+  takes the cutoff of the requested provider's own listing when it has one, also under the
+  provider's own spelling (`cloudflare-workers-ai:@cf/meta/llama-3.2-3b-instruct`,
+  `nvidia:meta/llama-3.2-3b-instruct`); else of the maker's own listing, for a dated snapshot
+  without a cutoff the maker's model (`claude-sonnet-4-20250514` takes `claude-sonnet-4`'s,
+  not a gateway's cutoff for the dated id); else the earliest cutoff among the listings that
+  have one, whichever route's spelling of the id is asked for (#87). The maker's entry for a
+  new model often has no cutoff yet while gateways' and resellers' have, and they disagree
+  (Qwen3.5-397B-A17B: 2025-01 to 2026-01): `opencode/glm-5.1`, Together's and DeepInfra's
+  GLM-5 and the routes of Qwen3.5-397B-A17B stopped with "models.dev has no knowledge
+  cutoff", and an earlier cutoff gives more notes, the safe side. The model line names a
+  listing that is not the maker's ("from models.dev, deepinfra's listing"), as do the MCP
+  tools, and `since-cutoff models <id>` ends with the listing `--model <id>` takes. A model
+  the maker does not list is found in the gateway's or reseller's own listing by its bare id:
+  Amazon Bedrock's `qwen.qwen3-coder-480b-a35b-v1:0`, Cloudflare's
+  `@cf/meta/llama-3.2-3b-instruct`, OpenRouter's `aion-labs/aion-rp-llama-3.1-8b`. `meta` is
+  no longer an alias of `llama`: models.dev has a provider `meta` of its own (Meta's Muse
+  Spark models), a maker whose listing is preferred and which `models --makers` lists; Meta's
+  Llama API stays `llama`.
+- `since-cutoff models` takes `--json` (#25): `{"source": ..., "models": [...]}`, each model
+  with `provider`, `id`, `name`, `family`, `training_cutoff` as models.dev writes it,
+  `cutoff_date` as since-cutoff uses it and `released`, in the table's order, whether or not
+  stdout is a terminal. `--makers` lists only the model makers' own entries, without the
+  gateways and resellers that list the same ids.
+- The MCP tool `api_changes` carries the "older copy from the cache" warning also in its reply
+  that a package had no release by the cutoff: the copy may not know an older release either.
+  That reply was built before the check.
+- A metapackage is reported as information, not as a failure: "llama-index 0.14.25 is a
+  metapackage with no API of its own; its parts are dependencies of their own, checked like
+  any other: llama-index-core, ..." on a line of its own in `scan` and `run`, and with a `•`
+  in `sync`, in place of "1 of 3 dependencies could not be checked: llama-index 0.14.25 is a
+  metapackage without code of its own: it installs ...; check those packages instead".
+- `sync --json`'s help says it needs `--yes`, `--check` or `--dry-run`, and the README that
+  stdout stays empty whenever sync fails, not only on a usage error.
+- basedpyright, which only `run` uses, is an extra: `pip install "since-cutoff[run]"`, or
+  `uvx --with basedpyright since-cutoff run`. With the Node.js it brings it was 180 of the
+  196 MB an installation took, paid as well by `scan`, `sync`, `status`, the MCP server, the
+  Action, the pre-commit hooks and the plugin, none of which run it. Without it, `run` stops
+  before the scan and the model calls with the install line; it used to fail at the first
+  probe, after the scan. The `dev` dependency group installs it.
+- `since-cutoff --help`, `--version` and `cache` start in about 150 ms instead of 400 (Python
+  3.13; 140 instead of 340 on 3.10): the CLI imports the engine, the API diff, the reports and
+  rich only in the commands that use them. `status --hook`, which the Claude Code plugin runs
+  at every session start, no longer loads rich or the reports either; what it still pays for
+  is the project's imports, which the hash of the dependencies is made of.
+- `since-cutoff cache info` prints where the cache is and, for each kind (PyPI metadata,
+  sources, diffs, model output, ...), its size, its entries and files, and the oldest: when
+  its oldest entry was written, or for the sources, which record their use, when the least
+  recently used tree was last used. `cache clear --sources`, `--diffs` and `--pypi` clear
+  one kind and leave the model's answers to `run`, which cost money, alone (#30).
+- The extracted package sources, the bulk of the cache (4 GB on a machine that scanned many
+  projects), are capped: `SINCE_CUTOFF_CACHE_MAX_MB` (default 2048; 0 for no cap). After a new
+  version is extracted, the least recently used trees are removed until the sources fit,
+  never a tree the running scan uses or one used in the last hour, which another process may
+  be reading. Trees extracted by earlier versions are measured once, at the first extraction
+  after upgrading, which may remove many at once: the first removal in a run prints one line
+  with how many trees and MB went (the rest are in the `--debug` log), as later scans download
+  them again. A value that is not a number (`inf` and `nan` too) gives a warning and the
+  default.
 - `sync --json` reports proposals and write results for scripts, with progress on stderr.
   It requires `--yes`, `--check` or `--dry-run`, never prompts, and preserves sync's exit codes.
 - Check each downloaded wheel or sdist against the sha256 that PyPI lists, skipping the package with a clear error on a mismatch without caching.
@@ -62,8 +244,10 @@
   stub), is no longer reported as removed, nor is what it defines or a name a readable
   module still imports from it (#52). Since only sources are extracted, the diff could not
   tell it from a removal. A name a readable module stopped importing from it is still
-  removed, and a package whose `__init__` is compiled hides only its own names, not its
-  readable submodules. The source tree now records the compiled modules (extension modules
+  removed. A top-level package whose `__init__` is compiled hides only the names it defines; a
+  compiled subpackage `__init__` hides that subpackage, since griffe cannot enter a directory
+  without an `__init__.py` inside a regular package, and the scan warns. The source tree now
+  records the compiled modules (extension modules
   in wheels, `.pth` directories included, and Cython `.pyx` files without a `.py` in sdists),
   and the scan, the report and the MCP tools warn that changes to such a module, private
   ones included, and to the names taken from it are not reported. After upgrading, cached
@@ -98,6 +282,55 @@
   PyPI, after a diff schema bump for example; `--check` only says which would change. Two new
   golden pairs, httpx 0.27.2 -> 0.28.1 and click 8.1.8 -> 8.2.0, pin what their changelogs
   document and the notes an agent gets for them (`tests/test_golden_diffs.py`).
+- A parameter removed behind `**kwargs: Unpack[SomeTypedDict]` (PEP 692) is reported (#60).
+  pandas 3.0's `read_csv` and `read_table` take their keywords through `**kwds:
+  Unpack[_read_shared]`, and griffe takes a `**kwargs` for any keyword, so the loss of
+  `delim_whitespace`, `date_parser`, `infer_datetime_format`, `keep_date_col` and `verbose`
+  was not reported. The TypedDict's keys (its bases' included) are now compared like the
+  signature's names, in both directions: a key of the old TypedDict the new signature does
+  not name is a removed parameter too. A bare `**kwargs` still takes anything, and so does a
+  TypedDict that allows other keys (PEP 728's `extra_items=` or `closed=False`); `self` and
+  `cls` are no keywords, so a method made static or a class method is not a change (diff
+  schema 21).
+- A change to a method is matched under the public classes that inherit it without overriding
+  it. pandas 2.3.1 -> 3.0.6's `NDFrame.fillna` lost `method`, and the change carried only
+  `pandas.core.generic.NDFrame.fillna`, a path no code calls, so `df.fillna(method="ffill")`
+  on a `DataFrame` was not a use and the change never reached the report. The change now lists
+  the inheriting classes' paths (`pandas.DataFrame.fillna`) in `import_paths` and `also`, and
+  the scan matches calls on them. A change to a method of a private class (`pkg._base._Base
+  .fillna`) that a public class inherits, never reported before, is reported under the
+  shortest public inheritor (`pkg.DataFrame.fillna`), as a folded removal is.
+- An attribute a class set in a method at the cutoff and may get from a base in another
+  package in the pinned release is unknown, not removed. fastapi 0.143.0's `Param(pydantic
+  .fields.FieldInfo)` no longer assigns `self.deprecated`; it puts `kwargs["deprecated"]` and
+  calls `super().__init__(**use_kwargs)`, so pydantic may set it, and the scan reported it as
+  removed. since-cutoff does not read other distributions, so when the new constructor hands
+  the name to the base's (by name, in position, through a `**kwargs`, or by having no
+  constructor of its own) the scan, report.md and the MCP tools warn once per package that
+  the class's attributes were not compared, next to the compiled-module warning. A field or
+  constant of the class body (a pydantic model's `usage: int`), an attribute the constructor
+  neither sets nor hands on (0.143.0's `APIRoute.secure_cloned_response_field`), a method the
+  class dropped and a key dropped from a `TypedDict` are still removed. An attribute the new
+  class sets where griffe does not look, in a tuple target (`self.dependant, _ = ...`) or in a
+  function of its module given `self` (0.143.0's `_populate_api_route_state(self, path,
+  ...)`, which sets `route.path`, `endpoint`, `name` and `methods`), is not removed.
+- The counts tell public APIs from internal ones. fastapi 0.116.1 -> 0.143.0 scanned as "35
+  breaking changes", 9 of them helpers such as `dependencies.utils.get_flat_dependant` and 34
+  paths to `BaseModelWithConfig.Config`; uvicorn's were `loops.*`, `config.LOOP_SETUPS` and
+  `main.HTTP_CHOICES`. Each change now has a `tier`: public when the package's top level
+  exports the API (a `from .m import *` there that copies it from a module re-exporting it
+  on purpose counts: `anthropic.AnthropicBedrock`), a module names it in `__all__` or
+  re-exports it as `from .m import X as X` (`anthropic.types.CompletionCreateParams`), or it
+  is documented (a value made of a function, `convert = deprecated(...)(_convert)`, with the
+  function's docstring; a member with its class; a method a public class inherits is public),
+  else internal. The headline counts, `scan --all`, the Action summary and the MCP tools'
+  totals count the public changes and give the internal ones once as "+N internal"; the
+  dependency table's breaking column gives them as "19 (+3)"; `scan --internal` (which
+  implies `--all`) and `include_internal` (MCP) list them; report.md lists them after the
+  public ones; results.json and `scan --json` keep every change (`internal_changes` next to
+  `breaking_changes`). `api_changes(symbol=...)` matches the symbol against every change and
+  lists the internal ones when they are all that match: a question about an API asks for its
+  changes. The notes are not affected: they cover the APIs the code uses.
 
 ## 0.5.0 - 2026-09-28
 

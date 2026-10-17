@@ -12,6 +12,7 @@ import email.parser
 import hashlib
 import io
 import json
+import logging
 import re
 import shutil
 import tarfile
@@ -19,6 +20,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -30,8 +32,21 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from since_cutoff import net
-from since_cutoff.cache import DiskCache
-from since_cutoff.errors import NoCodeError, PackageIndexError
+from since_cutoff.cache import (
+    MB,
+    SOURCES_MARKER,
+    DiskCache,
+    evict_tree,
+    last_used,
+    max_sources_bytes,
+    remove_evicted_leftovers,
+    sources_over_cap,
+    touch,
+    tree_size,
+)
+from since_cutoff.errors import METAPACKAGE, NoCodeError, PackageIndexError
+
+log = logging.getLogger(__name__)
 
 PYPI_JSON = "https://pypi.org/pypi/{name}/json"
 METADATA_TTL = 12 * 3600
@@ -50,8 +65,8 @@ _NON_PACKAGE_DIRS = {"test", "tests", "docs", "doc", "examples", "example", "ben
 _MAX_MEMBER_BYTES = 8 * 1024 * 1024
 _MAX_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_MEMBERS = 50_000
-_MARKER = ".since-cutoff.json"
-_MB = 1024 * 1024  # --max-download-mb counts in these, and so do the messages about it
+_MARKER = SOURCES_MARKER
+_MB = MB  # --max-download-mb counts in these, and so do the messages about it
 
 
 @dataclass(frozen=True)
@@ -90,6 +105,96 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+# What of PyPI's ``info`` the cache keeps: the summary and the URLs are for the notes
+# (notes.new_package_note; changelog_url).
+_INFO_KEPT = ("name", "version", "summary", "project_urls", "home_page")
+# A project URL that documents the releases, by the label PyPI shows (lower case, spaces and
+# hyphens dropped), in the order tried.
+_CHANGELOG_LABELS = (
+    "changelog",
+    "changes",
+    "releasenotes",
+    "releases",
+    "history",
+    "whatsnew",
+    "news",
+)
+# The project URLs most likely to name the repository, by label as above, in the order tried
+# before the others: pydantic-core's URLs start with a Funding one, a sponsors page.
+_REPO_LABELS = ("source", "sourcecode", "repository", "repo", "code", "github", "homepage")
+# A first path segment on github.com that is no user or organisation: the page is not a
+# repository (``github.com/sponsors/<user>``, ``github.com/orgs/<org>/discussions``).
+_GITHUB_NOT_OWNERS = frozenset(
+    {
+        "about",
+        "apps",
+        "codespaces",
+        "collections",
+        "contact",
+        "copilot",
+        "customer-stories",
+        "discussions",
+        "enterprise",
+        "events",
+        "explore",
+        "features",
+        "issues",
+        "join",
+        "login",
+        "marketplace",
+        "notifications",
+        "orgs",
+        "pricing",
+        "pulls",
+        "readme",
+        "resources",
+        "search",
+        "security",
+        "settings",
+        "site",
+        "solutions",
+        "sponsors",
+        "team",
+        "topics",
+        "trending",
+        "users",
+    }
+)
+_GITHUB_REPO = re.compile(
+    r"^https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s#?]+?)(?:\.git)?(?:[/?#].*)?$",
+    re.IGNORECASE,
+)
+
+
+def _label(key: str) -> str:
+    """A project URL's label as compared: lower case, spaces, hyphens and underscores
+    dropped ("Release Notes" is ``releasenotes``)."""
+    return re.sub(r"[\s_-]+", "", key.lower())
+
+
+def changelog_url(urls: Mapping[str, str]) -> str | None:
+    """Where a package documents its releases, from its project URLs (:meth:`PyPI.project_urls`):
+    the URL labelled Changelog, Changes, Release notes, Releases, History, What's new or News,
+    else the releases page of the GitHub repository another URL names
+    (``https://github.com/owner/repo/releases``), the Source, Repository or Homepage URL before
+    the others; a GitHub page that is no repository (``github.com/sponsors/<user>``, pydantic-
+    core's Funding URL; ``github.com/orgs/<org>/...``) names none. None when neither is there."""
+    by_label = {_label(k): v.strip() for k, v in urls.items()}
+    for label in _CHANGELOG_LABELS:
+        if by_label.get(label, "").startswith(("https://", "http://")):
+            return by_label[label]
+
+    def rank(item: tuple[str, str]) -> int:
+        label = _label(item[0])
+        return _REPO_LABELS.index(label) if label in _REPO_LABELS else len(_REPO_LABELS)
+
+    for _, value in sorted(urls.items(), key=rank):
+        m = _GITHUB_REPO.match(value.strip())
+        if m and m.group(1).lower() not in _GITHUB_NOT_OWNERS:
+            return f"https://github.com/{m.group(1)}/{m.group(2)}/releases"
+    return None
+
+
 class PyPI:
     def __init__(self, cache: DiskCache, *, max_download_mb: float = 80.0) -> None:
         self.cache = cache
@@ -97,11 +202,18 @@ class PyPI:
         self.max_download_bytes = int(max_download_mb * _MB)
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
+        # The source trees this process served (``sources/<name>-<version>``): a scan reads them
+        # after :meth:`source` returns, so the cap on the sources never evicts them.
+        self._served: set[str] = set()
+        self._trim_lock = threading.Lock()
+        # The first trim that evicts says so on the terminal (a warning); later ones are logged.
+        self._evictions_reported = False
         # Release lists served from a cache entry older than METADATA_TTL because PyPI could
         # not be reached: canonical name -> (the entry, the day it was fetched, when it was
         # last tried). Reused for STALE_REUSE seconds, so that each later lookup in a scan does
-        # not wait for the retries again.
-        self._stale: dict[str, tuple[dict[str, Any], date, float]] = {}
+        # not wait for the retries again. The day is None for a copy within METADATA_TTL that
+        # only lacks the URLs (PyPI.project): reused the same way, but it is not stale.
+        self._stale: dict[str, tuple[dict[str, Any], date | None, float]] = {}
 
     @property
     def stale(self) -> dict[str, date]:
@@ -110,7 +222,9 @@ class PyPI:
         A package leaves it once PyPI answers for it again.
         """
         with self._locks_guard:
-            return {name: day for name, (_, day, _) in sorted(self._stale.items())}
+            return {
+                name: day for name, (_, day, _) in sorted(self._stale.items()) if day is not None
+            }
 
     def _lock(self, key: str) -> threading.Lock:
         with self._locks_guard:
@@ -118,8 +232,16 @@ class PyPI:
 
     # ----------------------------------------------------------------- metadata
     def project(self, name: str) -> dict[str, Any]:
+        """The package's PyPI JSON, cut down to what the scan reads: ``info`` (name, version,
+        summary, project_urls, home_page) and ``releases``. Cached for METADATA_TTL; a cached
+        copy from before the info held the URLs is fetched again, and read as it is when PyPI
+        cannot be reached (it is no older than the TTL: only the URLs are missing), for
+        STALE_REUSE seconds without asking PyPI again, and not counted in :attr:`stale`."""
         key = canonicalize_name(name)
         cached = self.cache.get("pypi", key, max_age=METADATA_TTL)
+        old_shape: dict[str, Any] | None = None
+        if cached is not None and "project_urls" not in (cached.get("info") or {}):
+            old_shape, cached = cached, None
         if cached is not None:
             if self._stale:  # another process may have reached PyPI meanwhile
                 with self._locks_guard:
@@ -132,12 +254,16 @@ class PyPI:
         try:
             data = net.get_json(PYPI_JSON.format(name=key))
             slim = {
-                "info": {k: data["info"].get(k) for k in ("name", "version", "summary")},
+                "info": {k: data["info"].get(k) for k in _INFO_KEPT},
                 "releases": dict(data.get("releases") or {}),
             }
         except net.HTTPError as exc:
             if exc.status == 404:
                 raise PackageIndexError(f"'{name}' is not on PyPI") from exc
+            if old_shape is not None:  # fresh enough; the notes point at no changelog
+                with self._locks_guard:
+                    self._stale[key] = (old_shape, None, time.monotonic())
+                return dict(old_shape)
             fallback = self._stale_copy(key) if exc.transient else None
             if fallback is not None:
                 return fallback
@@ -163,6 +289,22 @@ class PyPI:
         with self._locks_guard:
             self._stale[key] = (entry, day, time.monotonic())
         return dict(entry)
+
+    def summary(self, name: str) -> str | None:
+        """PyPI's one-line summary of the package, from the cached metadata; None without."""
+        text = (self.project(name).get("info") or {}).get("summary")
+        return str(text).strip() or None if text else None
+
+    def project_urls(self, name: str) -> dict[str, str]:
+        """The package's project URLs on PyPI (``project_urls`` of its JSON; ``home_page`` as
+        "Homepage" when the URLs do not name one), from the cached metadata. {} for a cached
+        copy made before the metadata kept them, or a package that lists none."""
+        info = self.project(name).get("info") or {}
+        urls = {str(k): str(v) for k, v in (info.get("project_urls") or {}).items() if v}
+        home = info.get("home_page")
+        if home and not any(k.lower() == "homepage" for k in urls):
+            urls["Homepage"] = str(home)
+        return urls
 
     def releases(self, name: str) -> list[Release]:
         out: list[Release] = []
@@ -250,10 +392,17 @@ class PyPI:
 
     # ------------------------------------------------------------------ sources
     def source(self, name: str, version: str) -> SourceTree:
-        """Download (once) and extract the Python sources of ``name==version``."""
+        """Download (once) and extract the Python sources of ``name==version``. After a new
+        extraction, the least recently used trees go while the sources are over their cap
+        (``SINCE_CUTOFF_CACHE_MAX_MB``); the trees this process served stay."""
         key = f"{canonicalize_name(name)}-{version}"
         with self._lock(key):
-            return self._source(name, version, key)
+            tree, extracted = self._source(name, version, key)
+            with self._locks_guard:
+                self._served.add(key)
+        if extracted:
+            self._trim_sources()
+        return tree
 
     def is_cached(self, name: str, version: str) -> bool:
         """Whether :meth:`source` has these sources already, so needs no download."""
@@ -262,12 +411,65 @@ class PyPI:
             is not None
         )
 
-    def _source(self, name: str, version: str, key: str) -> SourceTree:
+    def _trim_sources(self) -> None:
+        """Evict the least recently used trees while the sources are over the cap. The first
+        trim of this process that evicts any prints one line (a warning): the first one after an
+        upgrade may remove many trees at once, which later scans download again."""
+        cap = max_sources_bytes()
+        if cap is None:
+            return
+        with self._trim_lock:
+            remove_evicted_leftovers(self.cache.root)
+            with self._locks_guard:
+                keep = set(self._served)
+            trees = evicted = 0
+            for entry in sources_over_cap(self.cache.root, cap, keep):
+                # Under the tree's own lock, so that it is not read by another thread of this
+                # process meanwhile; one that is busy (being extracted or served) stays.
+                lock = self._lock(entry.key)
+                if not lock.acquire(blocking=False):
+                    continue
+                try:
+                    with self._locks_guard:
+                        served = entry.key in self._served
+                    used = last_used(entry.path)
+                    if served or (used is not None and used > entry.last_used):
+                        continue  # served, or used by another process since the plan was made
+                    if evict_tree(entry.path):
+                        trees += 1
+                        evicted += entry.bytes
+                        log.info(
+                            "evicted the sources %s (%.1f MB): the extracted sources are over "
+                            "the %d MB cap (SINCE_CUTOFF_CACHE_MAX_MB)",
+                            entry.key,
+                            entry.bytes / MB,
+                            cap // MB,
+                        )
+                    else:
+                        log.info("could not evict the sources %s: in use", entry.key)
+                finally:
+                    lock.release()
+            if trees:
+                level = logging.INFO if self._evictions_reported else logging.WARNING
+                self._evictions_reported = True
+                log.log(
+                    level,
+                    "removed %d least recently used source %s (%s MB) from the cache: the "
+                    "extracted sources are over the %s MB cap (SINCE_CUTOFF_CACHE_MAX_MB)",
+                    trees,
+                    "tree" if trees == 1 else "trees",
+                    f"{evicted / MB:,.1f}",
+                    f"{cap // MB:,}",
+                )
+
+    def _source(self, name: str, version: str, key: str) -> tuple[SourceTree, bool]:
+        """The tree, and whether this call extracted it."""
         sources = self.cache.root / "sources"
         root = sources / key
         cached = _read_marker(root)
         if cached is not None:
-            return SourceTree(name, version, root, *cached)
+            touch(root / _MARKER)  # when a tree was last used, for the cap on the sources
+            return SourceTree(name, version, root, *cached), False
 
         rel = self.release(name, version)
         artifact = _pick_artifact(rel.files, allow_yanked=True)
@@ -354,6 +556,7 @@ class PyPI:
                         "import_names": import_names,
                         "requires": requires,
                         "compiled": compiled,
+                        "bytes": tree_size(package_root)[1],
                     }
                 ),
                 encoding="utf-8",
@@ -372,7 +575,7 @@ class PyPI:
         cached = _read_marker(root)
         if cached is None:
             raise PackageIndexError(f"could not publish the sources of {name}=={version}")
-        return SourceTree(name, version, root, *cached)
+        return SourceTree(name, version, root, *cached), True
 
 
 # --------------------------------------------------------------------- helpers
@@ -429,7 +632,11 @@ def _supports(release: Release, python: str) -> bool:
 
 def _metapackage(name: str, version: str, requires: list[str]) -> str | None:
     """Why a release without modules has nothing to diff, when it is a metapackage (docling,
-    griffe 2): no code of its own, only requirements on the packages that have it."""
+    griffe 2, llama-index): no API of its own, only requirements on the packages that have one.
+    Those are dependencies of their own, which the scan checks under the same rules as any
+    other (direct, imported by the code, or ``--all-deps``): the text is information, not a
+    failure, and the report shows it so (:data:`errors.METAPACKAGE`); the list comes last,
+    where the terminal clips it."""
     installs = []
     for line in requires:
         try:
@@ -440,11 +647,13 @@ def _metapackage(name: str, version: str, requires: list[str]) -> str | None:
             installs.append(f"{req.name}{req.specifier}")
     if not installs:
         return None
-    what = "that package" if len(installs) == 1 else "those packages"
-    return (
-        f"{name} {version} is a metapackage without code of its own: it installs "
-        f"{', '.join(installs[:3])}{', ...' if len(installs) > 3 else ''}; check {what} instead"
+    parts = f"{', '.join(installs[:3])}{', ...' if len(installs) > 3 else ''}"
+    these = (
+        "its part is a dependency of its own, checked like any other"
+        if len(installs) == 1
+        else "its parts are dependencies of their own, checked like any other"
     )
+    return f"{name} {version} {METAPACKAGE}; {these}: {parts}"
 
 
 def _read_marker(

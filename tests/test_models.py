@@ -92,7 +92,185 @@ def test_lookup_prefers_additional_model_makers_over_resellers(tmp_path):
     assert registry.require("kimi-k2.7-code").provider == "moonshotai"
     assert registry.require("qwen3-coder-plus", "qwen").provider == "alibaba"
     assert registry.require("glm-4.6", "glm").provider == "zai"
-    assert registry.require("llama-3.3-70b-instruct", "meta").provider == "llama"
+    assert registry.require("llama-3.3-70b-instruct", "llama").provider == "llama"
+
+
+# Issue #87: what models.dev lists for the same model ids as the makers do.
+RESELLERS = {
+    "zai": {"models": {"glm-5.1": {"name": "GLM-5.1"}, "glm-4.6": {"knowledge": "2025-04"}}},
+    "opencode": {"models": {"glm-5.1": {"knowledge": "2025-07"}, "glm-6": {"name": "GLM-6"}}},
+    "alibaba": {"models": {"qwen3-coder-plus": {"knowledge": "2025-04"}}},
+    "amazon-bedrock": {"models": {"qwen.qwen3-coder-480b-a35b-v1:0": {"knowledge": "2025-03"}}},
+    "cloudflare-workers-ai": {
+        "models": {"@cf/meta/llama-3.2-3b-instruct": {"knowledge": "2023-12"}}
+    },
+    "openrouter": {"models": {"aion-labs/aion-rp-llama-3.1-8b": {"knowledge": "2023-12"}}},
+    "anthropic": {
+        "models": {
+            "claude-sonnet-4": {"knowledge": "2025-03"},
+            "claude-sonnet-4-20250514": {"name": "Claude Sonnet 4"},
+        }
+    },
+    "llama": {"models": {"x-model": {"knowledge": "2024-01"}}},
+    "meta": {
+        "models": {"x-model": {"knowledge": "2025-01"}, "muse-spark-1.3": {"knowledge": "2025-06"}}
+    },
+}
+
+
+@pytest.fixture
+def resellers(tmp_path):
+    cache = DiskCache(tmp_path)
+    cache.set("models", "models-dev", slim_models_dev(RESELLERS))
+    return ModelRegistry(cache, offline=True)
+
+
+def test_a_listing_with_a_cutoff_beats_the_makers_listing_without_one(resellers):
+    """Issue #87: the maker's own entry for a new model often has no cutoff yet, while a
+    reseller's has; ``opencode/glm-5.1`` stopped with "models.dev has no knowledge cutoff"."""
+    for provider in ("zai", "glm", None):
+        info = resellers.require("glm-5.1", provider)
+        assert info.provider == "opencode" and info.knowledge == date(2025, 7, 31)
+    # A dated snapshot without a cutoff takes the model's.
+    assert resellers.require("claude-sonnet-4-20250514").knowledge == date(2025, 3, 31)
+    # Listed without one everywhere: still an error, with the id as listed.
+    with pytest.raises(ModelLookupError, match="no knowledge cutoff for 'glm-6'"):
+        resellers.require("glm-6")
+
+
+def test_a_model_the_maker_does_not_list_is_found_in_the_resellers_listing(resellers):
+    """hosts.hosted_spec names Bedrock's ``qwen.qwen3-coder-480b-a35b-v1:0``
+    ``alibaba:qwen3-coder-480b-a35b`` and Cloudflare's ``@cf/meta/llama-3.2-3b-instruct``
+    ``llama:llama-3.2-3b-instruct``; the makers list neither, the resellers do under their
+    own spelling. OpenRouter's own ids have a ``maker/`` prefix the lookup drops."""
+    assert resellers.require("qwen3-coder-480b-a35b", "alibaba").provider == "amazon-bedrock"
+    assert resellers.require("llama-3.2-3b-instruct", "llama").provider == "cloudflare-workers-ai"
+    found = resellers.require("aion-labs/aion-rp-llama-3.1-8b", "openrouter")
+    assert found.provider == "openrouter" and found.knowledge == date(2023, 12, 31)
+    assert resellers.lookup("qwen3-coder-480b", "alibaba") is None
+
+
+def test_meta_is_a_provider_of_its_own_not_an_alias_of_llama(resellers):
+    """models.dev lists Meta's Muse Spark models under ``meta``; Llama is ``llama``."""
+    assert models.PROVIDER_ALIASES["meta"] == "meta"
+    assert resellers.require("x-model", "meta").knowledge == date(2025, 1, 31)
+    assert resellers.require("x-model", "llama").knowledge == date(2024, 1, 31)
+    assert resellers.require("meta/muse-spark-1.3").provider == "meta"
+
+
+def test_meta_is_a_maker_preferred_over_a_reseller(tmp_path):
+    """``meta`` is Meta's own listing (Muse Spark), so it is preferred over a reseller's with
+    an earlier cutoff, and ``models --makers`` lists it."""
+    cache = DiskCache(tmp_path)
+    data = {
+        "meta": {"models": {"muse-spark": {"knowledge": "2025-06"}}},
+        "openrouter": {"models": {"meta/muse-spark": {"knowledge": "2025-01"}}},
+    }
+    cache.set("models", "models-dev", slim_models_dev(data))
+    registry = ModelRegistry(cache, offline=True)
+    assert "meta" in models.FIRST_PARTY
+    assert registry.require("muse-spark").provider == "meta"
+
+
+# Issue #87, review: resellers that disagree, prefixed ids, a reseller's dated listing.
+DISAGREE = {
+    "zai": {"models": {"glm-5.1": {"name": "GLM-5.1"}}},
+    "opencode": {"models": {"glm-5.1": {"knowledge": "2025-07"}}},
+    "deepinfra": {"models": {"zai-org/GLM-5.1": {"knowledge": "2025-04"}}},
+    "openrouter": {"models": {"z-ai/glm-5.1": {"knowledge": "2025-11"}}},
+    "anthropic": {
+        "models": {
+            "claude-sonnet-4": {"knowledge": "2025-03"},
+            "claude-sonnet-4-20250514": {"name": "Claude Sonnet 4"},
+        }
+    },
+    "some-gateway": {"models": {"claude-sonnet-4-20250514": {"knowledge": "2024-11"}}},
+    "llama": {"models": {"llama-3.2-3b-instruct": {"knowledge": "2024-03"}}},
+    "cloudflare-workers-ai": {
+        "models": {"@cf/meta/llama-3.2-3b-instruct": {"knowledge": "2023-12"}}
+    },
+    "nvidia": {"models": {"meta/llama-3.2-3b-instruct": {"knowledge": "2024-06"}}},
+}
+
+
+@pytest.fixture
+def disagree(tmp_path):
+    cache = DiskCache(tmp_path)
+    cache.set("models", "models-dev", slim_models_dev(DISAGREE))
+    return ModelRegistry(cache, offline=True)
+
+
+def test_resellers_that_disagree_give_the_earliest_cutoff_whatever_the_spelling(disagree):
+    """The maker lists GLM-5.1 without a cutoff; the resellers say 2025-07, 2025-04 and
+    2025-11. The earliest is the safe side (more notes), and the route's spelling of the id
+    does not change it; it took the first provider by name."""
+    for spelling in ("glm-5.1", "GLM-5.1", "zai-org/GLM-5.1", "z-ai/glm-5.1"):
+        info = disagree.require(spelling)
+        assert (info.provider, info.knowledge) == ("deepinfra", date(2025, 4, 30)), spelling
+    assert disagree.require("glm-5.1", "zai").provider == "deepinfra"
+    # The requested provider's own listing wins when it has a cutoff.
+    assert disagree.require("glm-5.1", "opencode").knowledge == date(2025, 7, 31)
+    assert disagree.require("openrouter/z-ai/glm-5.1").provider == "openrouter"
+
+
+def test_the_makers_model_beats_a_resellers_dated_listing(disagree):
+    """A dated snapshot the maker lists without a cutoff takes the maker's model's, not the
+    cutoff a gateway lists for the dated id."""
+    info = disagree.require("claude-sonnet-4-20250514")
+    assert (info.provider, info.id, info.knowledge) == (
+        "anthropic",
+        "claude-sonnet-4",
+        date(2025, 3, 31),
+    )
+
+
+def test_the_requested_providers_prefixed_listing_wins(disagree):
+    """``cloudflare-workers-ai:@cf/meta/...`` and ``nvidia:meta/...``: the provider's own
+    listing under its own spelling, not the maker's or another reseller's."""
+    found = disagree.require("@cf/meta/llama-3.2-3b-instruct", "cloudflare-workers-ai")
+    assert (found.provider, found.knowledge) == ("cloudflare-workers-ai", date(2023, 12, 31))
+    found = disagree.require("meta/llama-3.2-3b-instruct", "nvidia")
+    assert (found.provider, found.knowledge) == ("nvidia", date(2024, 6, 30))
+    assert disagree.require("llama-3.2-3b-instruct").provider == "llama"
+
+
+def test_the_listing_is_named_unless_it_is_the_makers(disagree, tmp_path):
+    """The model line (``(from models.dev, deepinfra's listing)``) and the MCP tools say
+    whose listing a cutoff is from when it is not the maker's."""
+    from since_cutoff.engine import Engine, Settings
+    from since_cutoff.mcp_server import Tools
+
+    assert models.listing_note(disagree.require("glm-5.1")) == "deepinfra's listing"
+    assert models.listing_note(disagree.require("claude-sonnet-4")) == ""
+    store = DiskCache(tmp_path / "store")
+    tools = Tools(store, registry=disagree, today=date(2026, 10, 1))
+    for spec, source in (
+        ("glm-5.1", "models.dev, deepinfra's listing"),
+        ("claude-sonnet-4", "models.dev"),
+    ):
+        settings = Settings(model=spec, today=date(2026, 10, 1))
+        engine = Engine(settings, store=store, llm_cache=store, registry=disagree)
+        assert engine.resolve_target(allow_calls=False).cutoff_source == source
+    assert tools._target("glm-5.1", None).label.endswith("(deepinfra's listing)")
+    assert "listing" not in tools._target("claude-sonnet-4", None).label
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "listed_by"),
+    [
+        ("amazon-bedrock", "qwen.qwen3-coder-480b-a35b-v1:0", "amazon-bedrock"),
+        ("cloudflare-workers-ai", "@cf/meta/llama-3.2-3b-instruct", "cloudflare-workers-ai"),
+    ],
+)
+def test_the_spec_hosted_spec_names_resolves(resellers, provider, model, listed_by):
+    """What hosts.hosted_spec makes of a hosted model is a spec the registry resolves to a
+    cutoff, not only the string its docstring shows."""
+    from since_cutoff.hosts import hosted_spec
+
+    spec = hosted_spec(provider, model)
+    name, _, mid = spec.partition(":")
+    info = resellers.require(mid, name)
+    assert info.provider == listed_by and info.knowledge is not None
 
 
 def test_unknown_model_asks_for_cutoff(registry):

@@ -31,6 +31,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.HelpOption",
     "click.decorators.HelpOption"
@@ -45,7 +46,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -71,6 +73,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.HelpOption",
     "click.decorators.HelpOption"
@@ -85,7 +88,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -111,6 +115,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.testing.CliRunner.mix_stderr"
    ],
@@ -124,7 +129,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -150,6 +156,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.CommandCollection.add_source",
     "click.core.CommandCollection.add_source"
@@ -164,7 +171,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -190,6 +198,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.testing.CliRunner.__init__"
    ],
@@ -203,7 +212,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -229,6 +239,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Argument.make_metavar",
     "click.core.Argument.make_metavar"
@@ -243,7 +254,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -262,16 +274,26 @@
    "deprecation": null,
    "hint": null,
    "suggestions": [],
-   "occurrences": 1,
-   "also": [],
+   "occurrences": 3,
+   "also": [
+    "click.HelpOption.make_metavar",
+    "click.Option.make_metavar",
+    "click.core.Option.make_metavar",
+    "click.decorators.HelpOption.make_metavar"
+   ],
    "old_kind": null,
    "new_kind": null,
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
+    "click.HelpOption.make_metavar",
+    "click.Option.make_metavar",
     "click.Parameter.make_metavar",
-    "click.core.Parameter.make_metavar"
+    "click.core.Option.make_metavar",
+    "click.core.Parameter.make_metavar",
+    "click.decorators.HelpOption.make_metavar"
    ],
    "hint_source": null,
    "move_evidence": null,
@@ -283,7 +305,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -309,6 +332,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.testing.Result.__init__"
    ],
@@ -322,7 +346,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -348,6 +373,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Choice.get_metavar",
     "click.types.Choice.get_metavar"
@@ -362,7 +388,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -388,6 +415,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.Choice.get_missing_message",
     "click.types.Choice.get_missing_message"
@@ -402,7 +430,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -428,6 +457,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.DateTime.get_metavar",
     "click.types.DateTime.get_metavar"
@@ -442,7 +472,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -461,16 +492,41 @@
    "deprecation": null,
    "hint": null,
    "suggestions": [],
-   "occurrences": 1,
-   "also": [],
+   "occurrences": 14,
+   "also": [
+    "click.File.get_metavar",
+    "click.FloatRange.get_metavar",
+    "click.IntRange.get_metavar",
+    "click.Path.get_metavar",
+    "click.Tuple.get_metavar"
+   ],
    "old_kind": null,
    "new_kind": null,
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
+    "click.File.get_metavar",
+    "click.FloatRange.get_metavar",
+    "click.IntRange.get_metavar",
     "click.ParamType.get_metavar",
-    "click.types.ParamType.get_metavar"
+    "click.Path.get_metavar",
+    "click.Tuple.get_metavar",
+    "click.types.BoolParamType.get_metavar",
+    "click.types.CompositeParamType.get_metavar",
+    "click.types.File.get_metavar",
+    "click.types.FloatParamType.get_metavar",
+    "click.types.FloatRange.get_metavar",
+    "click.types.FuncParamType.get_metavar",
+    "click.types.IntParamType.get_metavar",
+    "click.types.IntRange.get_metavar",
+    "click.types.ParamType.get_metavar",
+    "click.types.Path.get_metavar",
+    "click.types.StringParamType.get_metavar",
+    "click.types.Tuple.get_metavar",
+    "click.types.UUIDParameterType.get_metavar",
+    "click.types.UnprocessedParamType.get_metavar"
    ],
    "hint_source": null,
    "move_evidence": null,
@@ -482,7 +538,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -501,16 +558,43 @@
    "deprecation": null,
    "hint": null,
    "suggestions": [],
-   "occurrences": 1,
-   "also": [],
+   "occurrences": 15,
+   "also": [
+    "click.DateTime.get_missing_message",
+    "click.File.get_missing_message",
+    "click.FloatRange.get_missing_message",
+    "click.IntRange.get_missing_message",
+    "click.Path.get_missing_message"
+   ],
    "old_kind": null,
    "new_kind": null,
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
+    "click.DateTime.get_missing_message",
+    "click.File.get_missing_message",
+    "click.FloatRange.get_missing_message",
+    "click.IntRange.get_missing_message",
     "click.ParamType.get_missing_message",
-    "click.types.ParamType.get_missing_message"
+    "click.Path.get_missing_message",
+    "click.Tuple.get_missing_message",
+    "click.types.BoolParamType.get_missing_message",
+    "click.types.CompositeParamType.get_missing_message",
+    "click.types.DateTime.get_missing_message",
+    "click.types.File.get_missing_message",
+    "click.types.FloatParamType.get_missing_message",
+    "click.types.FloatRange.get_missing_message",
+    "click.types.FuncParamType.get_missing_message",
+    "click.types.IntParamType.get_missing_message",
+    "click.types.IntRange.get_missing_message",
+    "click.types.ParamType.get_missing_message",
+    "click.types.Path.get_missing_message",
+    "click.types.StringParamType.get_missing_message",
+    "click.types.Tuple.get_missing_message",
+    "click.types.UUIDParameterType.get_missing_message",
+    "click.types.UnprocessedParamType.get_missing_message"
    ],
    "hint_source": null,
    "move_evidence": null,
@@ -522,7 +606,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -548,6 +633,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.BaseCommand",
     "click.core.BaseCommand"
@@ -564,7 +650,8 @@
    "deprecation_file": "click/__init__.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -590,6 +677,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.MultiCommand",
     "click.core.MultiCommand"
@@ -606,7 +694,8 @@
    "deprecation_file": "click/__init__.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -632,6 +721,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.OptionParser",
     "click.parser.OptionParser"
@@ -646,7 +736,8 @@
    "deprecation_file": "click/__init__.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -672,6 +763,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.BaseCommand",
     "click.core.BaseCommand"
@@ -688,7 +780,8 @@
    "deprecation_file": "click/core.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -714,6 +807,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.MultiCommand",
     "click.core.MultiCommand"
@@ -730,7 +824,8 @@
    "deprecation_file": "click/core.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -756,6 +851,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.Argument"
    ],
@@ -769,7 +865,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "click",
@@ -795,6 +892,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.Option"
    ],
@@ -808,7 +906,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "click",
@@ -834,6 +933,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.OptionParser",
     "click.parser.OptionParser"
@@ -848,7 +948,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -874,6 +975,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.ParsingState"
    ],
@@ -887,7 +989,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "click",
@@ -913,6 +1016,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.normalize_opt"
    ],
@@ -926,7 +1030,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "click",
@@ -952,6 +1057,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.split_arg_string"
    ],
@@ -965,7 +1071,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "click",
@@ -991,6 +1098,7 @@
    "namesake": null,
    "deprecated_by": "__getattr__",
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "click.parser.split_opt"
    ],
@@ -1004,7 +1112,8 @@
    "deprecation_file": "click/parser.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   }
  ]
 }

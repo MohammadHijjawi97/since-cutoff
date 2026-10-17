@@ -20,7 +20,8 @@ for it, and is not a failure either: sync keeps the block's model.
 from __future__ import annotations
 
 import difflib
-from collections.abc import Iterable, Sequence
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -29,6 +30,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from since_cutoff import __version__
+from since_cutoff.apidiff import APIChange
 from since_cutoff.engine import (
     KNOWN,
     NEW,
@@ -40,6 +42,7 @@ from since_cutoff.engine import (
     dependency_pairs,
     scanned_dependencies,
 )
+from since_cutoff.models import DEFAULT_CUTOFF_MARGIN
 from since_cutoff.notes import (
     BLOCK_END,
     BLOCK_VERSION,
@@ -51,6 +54,7 @@ from since_cutoff.notes import (
     TAG_TYPE_CHECKED,
     Note,
     ParsedBlock,
+    agents_import_tip,
     api_id,
     block_text,
     deps_hash,
@@ -95,6 +99,9 @@ STALE_VERSION = "stale"
 ORPHANED = "orphan"
 DEPENDENCIES_CHANGED = "dependencies_changed"
 VERSIONS_FROM_CHANGED = "versions_from_changed"
+# The block compared from another day than the scan does now (--cutoff-margin): a block
+# written before the margin existed compared from the cutoff itself.
+MARGIN_CHANGED = "margin_changed"
 OLD_FORMAT = "old_format"  # written by since-cutoff 0.3: sync upgrades it
 RUN_BLOCK = "run_block"  # written by `run --apply`: sync writes the notes for the used APIs
 # Not a reason the block is out of date (sync keeps the block's model): a coding agent set up
@@ -160,8 +167,10 @@ def read_target(root: Path, path: Path) -> TargetFile:
     return TargetFile(path, name, text, parse_block(text, path.name), block_text(text, path.name))
 
 
-def sticky_target(target: TargetFile) -> ModelTarget | None:
-    """The model and cutoff of the block in ``target``, as sync keeps them, or None."""
+def sticky_target(target: TargetFile, margin: int = DEFAULT_CUTOFF_MARGIN) -> ModelTarget | None:
+    """The model and cutoff of the block in ``target``, as sync keeps them, or None. The margin
+    is not the block's: it is the scan's setting (``--cutoff-margin``), the same for everyone,
+    and ``status`` says when a block was compared from another day."""
     basis = target.basis
     if basis is None:
         return None
@@ -169,8 +178,20 @@ def sticky_target(target: TargetFile) -> ModelTarget | None:
     how = "--model" if model else "--cutoff"
     source = f"the notes in {target.name}; {how} to change"
     if not model:
-        return ModelTarget.cutoff_only(cutoff, source)
-    return ModelTarget(model, model, cutoff, source)
+        return ModelTarget.cutoff_only(cutoff, source, margin=margin)
+    return ModelTarget(model, model, cutoff, source, margin=margin)
+
+
+def block_margin(meta: dict[str, Any]) -> int:
+    """How many days before the cutoff a block's comparison releases were published by (its
+    meta line's ``margin``); 0 for a block written before there was a margin."""
+    margin = meta.get("margin")
+    return margin if isinstance(margin, int) and margin >= 0 else 0
+
+
+def margin_text(margin: int) -> str:
+    """``30 days before the cutoff``, or ``the cutoff itself``."""
+    return f"{margin} days before the cutoff" if margin else "the cutoff itself"
 
 
 # ------------------------------------------------------------------ sync
@@ -197,15 +218,18 @@ class Proposal:
     new_text: str | None  # the file after sync; None: it still does not exist
     action: str | None  # "created", "appended to", "updated", "removed from"; None: nothing
     notes: int
+    # Days before the cutoff the comparison releases were published by (--cutoff-margin).
+    margin: int = DEFAULT_CUTOFF_MARGIN
     # SCOPE_IMPORTED: APIs noted per package (``--per-package``, or the block's own choice).
     per_package: int = IMPORTED_APIS
     changes: list[Change] = field(default_factory=list)
     # Packages whose [type-checked] notes were dropped because their version changed, with
     # the version they were for (`since-cutoff run --only <pkg>` tests the model again).
     retest: dict[str, str] = field(default_factory=dict)
-    # The API each bullet of the new block is about (Note.api), by its line: a bullet whose
-    # API had one before is "changed", not "added" and "dropped".
-    apis: dict[str, str] = field(default_factory=dict)
+    # The APIs each bullet of the new block names (Note.apis; several for a bullet that says
+    # the same of several), by its line: a bullet whose API had one before is "changed", not
+    # "added" and "dropped".
+    apis: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def changed(self) -> bool:
@@ -231,10 +255,12 @@ def propose(
     gets with SCOPE_IMPORTED; :data:`IMPORTED_APIS` by default). The ``[type-checked]`` notes of the block in
     the file stay, in place of the notes from the diff for their APIs, while their package
     keeps the same version, the code still uses their API and the model and cutoff are the
-    same (:func:`_kept_notes`); a section goes when its package is no longer a dependency, is
-    no newer than the release at the cutoff, or has no changed API the code uses. When the
-    notes are the same as those in the file, the block stays exactly as it is, even if another
-    version of since-cutoff wrote it.
+    same (:func:`_kept_notes`); the notes from the diff are then built again without those
+    APIs, so that a bullet one of them shared with other APIs still names the others. A
+    section goes when its package is no longer a dependency, is no newer than the release at
+    the cutoff, or has no changed API the code uses. When the notes are the same as those in
+    the file, the block stays exactly as it is, even if another version of since-cutoff wrote
+    it.
     """
     model, cutoff = scan.target.model_id, scan.target.cutoff
     same = target.basis == (model, cutoff)
@@ -246,8 +272,13 @@ def propose(
     replaced: set[str] = set()
     if same and old is not None:
         kept, retest, replaced = _kept_notes(old, notes)
-    # A [type-checked] note replaces the note from the diff for its API.
-    notes = [n for n in notes if api_id(n.change) not in replaced] + kept
+    if replaced:
+        # A [type-checked] note replaces the note from the diff for its API: the others' notes
+        # again, without it (a merged bullet names only the APIs left to it).
+        notes = scan.scope_notes(
+            scope, suggestions=suggestions, per_package=per_package, exclude=replaced
+        )
+    notes += kept
     versions_from = scan.project.version_source
     block: str | None = None
     new_text: str | None
@@ -261,6 +292,7 @@ def propose(
             "scope": scope,
             "suggestions": suggestions,
             "per_package": per_package,
+            "margin": scan.target.margin,
         }
         block = render_block(notes, **options)
         tool = target.meta.get("tool")
@@ -276,9 +308,10 @@ def propose(
     proposal = Proposal(
         target, model, cutoff, scope, versions_from, block, new_text, action, len(notes)
     )
+    proposal.margin = scan.target.margin
     proposal.per_package = per_package
     proposal.retest = retest
-    proposal.apis = {n.line: n.api for n in notes}
+    proposal.apis = {n.line: tuple(n.apis) for n in notes}
     if not proposal.changed:
         proposal.action = None
     else:
@@ -292,9 +325,14 @@ def _kept_notes(old: ParsedBlock, notes: list[Note]) -> tuple[list[Note], dict[s
     says which API each is about: notes.api_id), in place of the note from the diff for that
     API. A block that does not say (edited, or written before it did) keeps them per package:
     while the package has a section. Also, for a package whose version changed, the version
-    its ``[type-checked]`` notes were for; and the APIs whose note from the diff they replace.
+    its ``[type-checked]`` notes were for; and the APIs (APIChange.api_key) whose note from
+    the diff they replace.
     """
-    by_api = {api_id(n.change): n for n in notes}
+    # Every API a note names (Note.covered: a merged bullet names several), with its change.
+    by_api: dict[str, tuple[Note, APIChange]] = {}
+    for n in notes:
+        for c in n.covered:
+            by_api.setdefault(api_id(c), (n, c))
     first: dict[str, Note] = {}
     for n in notes:
         first.setdefault(n.change.package, n)
@@ -315,16 +353,20 @@ def _kept_notes(old: ParsedBlock, notes: list[Note]) -> tuple[list[Note], dict[s
     retest: dict[str, str] = {}
     replaced: set[str] = set()
     for i, (package, section, text, tags) in enumerate(checked):
-        note = by_api.get(ids[i]) if known and ids else first.get(package)
-        if note is None or note.change.package != package:
+        if known and ids:
+            change = by_api.get(ids[i], (None, None))[1]
+        else:
+            note = first.get(package)
+            change = note.change if note is not None else None
+        if change is None or change.package != package:
             continue  # its API is no longer used, or the whole section goes (Change says why)
-        if not _same_version(note.change.to_version, section.version):
+        if not _same_version(change.to_version, section.version):
             retest[package] = section.version
             continue
-        # The package, versions and API are the note's; the text and tags are the bullet's.
-        kept.append(Note(note.change, text, None, True, NOTE_MODEL, tags))
+        # The package, versions and API are the change's; the text and tags are the bullet's.
+        kept.append(Note(change, text, None, True, NOTE_MODEL, tags))
         if known:
-            replaced.add(api_id(note.change))
+            replaced.add(change.api_key)
     return kept, retest, replaced
 
 
@@ -386,7 +428,7 @@ def _changes(scan: ScanResult, target: TargetFile, p: Proposal, *, same: bool) -
         new_lines = [_line(b) for b in now.bullets]
         added = [line for line in new_lines if line not in old_lines]
         gone = [line for line in old_lines if line not in new_lines]
-        what = _counts(added, gone, p.apis)
+        what = _counts(added, gone, p.apis, name)
         retest = p.retest.get(name)
         again = (
             f"; its [type-checked] notes were for {retest}, so the notes from the diff take "
@@ -442,6 +484,15 @@ def _changes(scan: ScanResult, target: TargetFile, p: Proposal, *, same: bool) -
                 f"{old.meta.get('versions_from')}",
             )
         )
+    if block_margin(old.meta) != p.margin:
+        before, after = margin_text(block_margin(old.meta)), margin_text(p.margin)
+        out.append(
+            Change(
+                None,
+                f"now comparing from {after} (it was {before}; --cutoff-margin)",
+                f"the notes compare from {before}, not {after} (--cutoff-margin)",
+            )
+        )
     if bool(old.meta.get("suggestions")) != bool(new.meta.get("suggestions")):
         what = "with" if new.meta.get("suggestions") else "without"
         out.append(
@@ -479,16 +530,23 @@ def _dropped(scan: ScanResult, p: PackageScan | None, name: str, scope: str) -> 
         return f"no longer checked: {why}", f"{name} is no longer checked ({why})"
     where = scan.versions_from(p)
     if p.status == KNOWN:
+        latest = f"the latest release {scan.target.compare_when}"
         if p.locked and p.cutoff_version and not _same_version(p.locked, p.cutoff_version):
-            why = f"older than {p.cutoff_version}, the latest release at the cutoff"
+            why = f"older than {p.cutoff_version}, {latest}"
         else:
-            why = "the latest release at the cutoff"
+            why = latest
         return f"{p.locked} is {why}", f"{name} {p.locked} in {where} is {why}"
     if p.status == UNCHANGED:
         why = f"did not change from {p.cutoff_version} to {p.locked}"
         return f"its API {why}", f"{name}'s API {why}"
     if p.status == NEW:
-        why = "first released after the cutoff"
+        if scan.target.released_within_margin(p):
+            when = (
+                f"first released {p.first_released}, within {scan.target.margin} days of the cutoff"
+            )
+        else:
+            when = "first released after the cutoff"
+        why = f"{when}, and your code no longer imports it"
         return why, f"{name} was {why}"
     if p.status == SKIPPED:
         return f"could not be checked: {p.reason}", f"{name} could not be checked ({p.reason})"
@@ -643,6 +701,8 @@ class TargetStatus:
             "format": block.version if block is not None else None,
             "model": meta.get("model"),
             "cutoff": meta.get("cutoff"),
+            # As results.json and ``sync --json`` name it (the meta line keeps it as ``margin``).
+            "cutoff_margin": block_margin(meta) if block is not None else None,
             "tool": meta.get("tool"),
             "scope": meta.get("scope"),
             "versions_from": meta.get("versions_from"),
@@ -664,11 +724,14 @@ def target_status(
     *,
     deps: str | None = None,
     detected: DetectedModel | None = None,
+    margin: int = DEFAULT_CUTOFF_MARGIN,
 ) -> TargetStatus:
     """Whether the block in ``target`` is current for the project's dependencies as they are,
     without the network: the version of each package it has notes for, the hash of the
-    dependencies (``deps``: :func:`current_deps_hash`), where the versions come from, and, when
-    the coding agent's model is known (``detected``), its cutoff."""
+    dependencies (``deps``: :func:`current_deps_hash`), where the versions come from, how many
+    days before the cutoff the comparison releases were published by (``margin``, the scan's
+    ``--cutoff-margin``; the block says its own), and, when the coding agent's model is known
+    (``detected``), its cutoff."""
     status = TargetStatus(target)
     block = target.block
     if block is None:
@@ -724,6 +787,14 @@ def target_status(
                     f"{meta.get('versions_from')}",
                 )
             )
+        if block_margin(meta) != margin and not status.problems:
+            status.problems.append(
+                (
+                    MARGIN_CHANGED,
+                    f"the notes compare from {margin_text(block_margin(meta))}; the scan now "
+                    f"compares from {margin_text(margin)} (--cutoff-margin {margin})",
+                )
+            )
     changed = _model_change(target, detected)
     if changed:
         status.notes.append(changed)
@@ -758,6 +829,20 @@ def _model_change(target: TargetFile, detected: DetectedModel | None) -> str | N
         f"miss changes from before {cutoff.isoformat()}: `since-cutoff sync --model "
         f"{detected.spec}` writes the notes for it"
     )
+
+
+def note_import_tip(root: Path, statuses: Sequence[TargetStatus]) -> None:
+    """Say in ``status`` what ``scan`` and ``sync`` say (notes.agents_import_tip) when CLAUDE.md
+    does not import AGENTS.md: that both files have the block and how to keep one copy, or
+    that Claude Code does not read the block in AGENTS.md; and when it does import it and both
+    files have the block, that CLAUDE.md's is a second copy. Added to the AGENTS.md block's
+    notes, so the text and ``status --json`` both have it (#13)."""
+    tip = agents_import_tip(root, [s.target.path for s in statuses])
+    if tip is None:
+        return
+    for s in statuses:
+        if s.target.path == root / "AGENTS.md" and s.state != NEVER_RUN:
+            s.notes.append(tip)
 
 
 def exit_code(statuses: Sequence[TargetStatus]) -> int:
@@ -822,10 +907,14 @@ def hook_line(statuses: Sequence[TargetStatus]) -> str | None:
     )
 
 
-def sync_json(proposals: Sequence[Proposal], code: int, written: set[str]) -> dict[str, Any]:
-    """Describe proposals separately from writes, including check/dry-run refusals."""
+def sync_json(
+    proposals: Sequence[Proposal], code: int, written: set[str], *, tip: str | None = None
+) -> dict[str, Any]:
+    """Describe proposals separately from writes, including check/dry-run refusals; ``tip``
+    is what sync says about AGENTS.md and CLAUDE.md (notes.agents_import_tip), or None."""
     return {
         "exit_code": code,
+        "tip": tip,
         "targets": [
             {
                 "target": p.target.name,
@@ -835,6 +924,7 @@ def sync_json(proposals: Sequence[Proposal], code: int, written: set[str]) -> di
                 "written": p.target.name in written,
                 "model": p.model,
                 "cutoff": p.cutoff.isoformat(),
+                "cutoff_margin": p.margin,
                 "scope": p.scope,
                 "notes": p.notes,
                 "changes": [
@@ -911,20 +1001,31 @@ def _line(bullet: tuple[str, tuple[str, ...]]) -> str:
     return f"{text} {tag_text(tags)}".strip()
 
 
-def _counts(added: list[str], gone: list[str], apis: dict[str, str] | None = None) -> str:
-    """``1 added, 1 dropped``; a new bullet about an API that an old bullet names (``apis``:
-    the API of each new bullet) counts as ``1 changed`` instead."""
+def _counts(
+    added: list[str],
+    gone: list[str],
+    apis: Mapping[str, Sequence[str]] | None = None,
+    package: str | None = None,
+) -> str:
+    """``1 added, 1 dropped``; an old bullet that names the API of a new one (``apis``: the
+    APIs each new bullet names, Note.apis) counts as ``changed`` instead of dropped, and so
+    does every old bullet whose API a new bullet names when it names several (two bullets
+    that merged into one: ``2 changed``). A new bullet about ``package`` as a whole (the one
+    of a package first released after the cutoff, notes.new_package_note) stands for every
+    old bullet of the section."""
     gone = list(gone)
     fresh = []
     changed = 0
     for line in added:
-        api = (apis or {}).get(line)
-        old = next((g for g in gone if api and f"`{api}" in g), None) if api else None
-        if old is None:
+        names = list((apis or {}).get(line) or ())
+        whole = package is not None and package in names
+        olds = [g for g in gone if whole or any(_names(api, g) for api in names)]
+        if not olds:
             fresh.append(line)
-        else:
+            continue
+        for old in olds:
             gone.remove(old)
-            changed += 1
+        changed += len(olds)
     if not fresh and not gone and not changed:
         return "text unchanged"
     parts = []
@@ -935,6 +1036,12 @@ def _counts(added: list[str], gone: list[str], apis: dict[str, str] | None = Non
     if gone:
         parts.append(f"{len(gone)} dropped")
     return ", ".join(parts)
+
+
+def _names(api: str, bullet: str) -> bool:
+    """Does ``bullet`` name ``api`` as a note does: ```Messages.create()```, ```pkg.Thing```
+    (not another API whose name starts the same)?"""
+    return re.search(rf"`{re.escape(api)}[`(]", bullet) is not None
 
 
 def _same_version(a: str, b: str) -> bool:
