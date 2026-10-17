@@ -76,7 +76,10 @@ def test_markdown_summary_lists_what_the_code_uses_first(tmp_path, cache, fake_p
     md = render_scan_markdown(scan, limit=3)
 
     assert md.startswith("## since-cutoff scan\n")
-    assert "Model `claude-sonnet-4-5`, training cutoff **2025-07-31** (source: --cutoff)" in md
+    assert (
+        "Model `claude-sonnet-4-5`, training cutoff **2025-07-31**, comparing from releases up "
+        "to **2025-07-01** (source: --cutoff)"
+    ) in md
     assert "- 1 of 1 dependency changed its API after the cutoff" in md
     assert "- Static diff: 5 breaking changes, 1 new deprecation" in md
     # The same columns, in the same order, as the terminal table and report.md.
@@ -265,15 +268,24 @@ def test_scan_with_only_a_cutoff_names_no_model(tmp_path, capsys, fake_cli, monk
     assert cli.main(argv) == 0
 
     out = capsys.readouterr().out
-    assert "Custom cutoff 2025-02-28 (from --cutoff; no model given)" in out
+    assert (
+        "Custom cutoff 2025-02-28, comparing from releases up to 2025-01-29 "
+        "(from --cutoff; no model given)" in out
+    )
     assert "Your code uses 1 API that changed after the cutoff (2025-02-28)" in out
     assert cli.main([*argv, "--all"]) == 0  # 0.3's summary panel
     assert "since-cutoff · custom cutoff 2025-02-28" in capsys.readouterr().out
     assert "sonnet" not in out and "assuming" not in out
     md = summary_md.read_text(encoding="utf-8")
-    assert "\nCustom cutoff **2025-02-28** (given with --cutoff, no model) · project `app`" in md
+    assert (
+        "\nCustom cutoff **2025-02-28**, comparing from releases up to **2025-01-29** (given with --cutoff, no model) · project `app`"
+        in md
+    )
     report = (root / ".since-cutoff" / "report.md").read_text(encoding="utf-8")
-    assert "- Custom cutoff **2025-02-28** (given with --cutoff, no model)" in report
+    assert (
+        "- Custom cutoff **2025-02-28**, comparing from releases up to **2025-01-29** (given with --cutoff, no model)"
+        in report
+    )
     data = json.loads((root / ".since-cutoff" / "results.json").read_text(encoding="utf-8"))
     assert (data["model"], data["model_spec"], data["cutoff"]) == (None, None, "2025-02-28")
 

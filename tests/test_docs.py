@@ -42,6 +42,7 @@ PAGES = (
     "docs/es/index.md",
     "docs/fr/index.md",
     "docs/ai-stack.md",
+    "docs/troubleshooting.md",
     "PRIVACY.md",
     "CONTRIBUTING.md",
     "skills/since-cutoff/SKILL.md",
@@ -51,6 +52,7 @@ ENGLISH = (
     "docs/how-it-works.md",
     "docs/index.md",
     "docs/ai-stack.md",
+    "docs/troubleshooting.md",
     "PRIVACY.md",
     "CONTRIBUTING.md",
     "skills/since-cutoff/SKILL.md",
@@ -162,7 +164,7 @@ def test_the_first_screen_quotes_what_the_scan_writes(name: str) -> None:
     )
     assert _unwrapped(console.rstrip().split("\n\n")[-1]) == ready
     # The block `sync` writes has the same bullet, under the package's line.
-    assert f"**anthropic 1.8.0** (0.60.0 at the cutoff)\n- {note}\n" in text
+    assert f"**anthropic 1.8.0** (compared from 0.56.0)\n- {note}\n" in text
     # One command that needs no API key.
     assert "```bash\nuvx since-cutoff scan\n```" in first
 
@@ -236,3 +238,54 @@ def test_the_slug_is_githubs() -> None:
     assert _slug("Mantener las notas al día: sync y status") == (
         "mantener-las-notas-al-día-sync-y-status"
     )
+
+
+_UNQUOTED_EXTRA = re.compile(r'(?<!")since-cutoff\[run\]|since-cutoff\[run\](?!")')
+
+
+@pytest.mark.parametrize("name", [*PAGES, "CHANGELOG.md"])
+def test_the_run_extra_is_always_quoted(name: str) -> None:
+    """Unquoted, zsh takes ``since-cutoff[run]`` for a glob and the install fails."""
+    lines = [line for line in _text(name).splitlines() if _UNQUOTED_EXTRA.search(line)]
+    assert lines == []
+
+
+@pytest.mark.parametrize("name", READMES)
+def test_every_readme_says_how_to_install_run_and_what_the_cache_commands_are(name: str) -> None:
+    text = _text(name)
+    for needed in (
+        'pip install "since-cutoff[run]"',
+        "uvx --with basedpyright since-cutoff run",
+        "since-cutoff cache info",
+        "`--sources`",
+        "SINCE_CUTOFF_CACHE_MAX_MB",
+    ):
+        assert needed in text, needed
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    (
+        "No dependency could be checked",
+        "MB download limit (--max-download-mb)",
+        "could not find importable modules in",
+        "Not written: there is no terminal to ask in",
+        "The since-cutoff block in",
+        "was edited by hand; sync would replace it",
+        "unknown model '",
+        "Pass its training cutoff explicitly",
+        "models.dev has no knowledge cutoff for '",
+        "the `claude` CLI was not found on PATH",
+        "ANTHROPIC_API_KEY is not set",
+        "run checks the model's answers with the basedpyright type checker, which is not",
+        'installed: pip install "since-cutoff[run]", or uvx --with basedpyright since-cutoff run',
+        "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md",
+    ),
+)
+def test_troubleshooting_quotes_current_source_text(fragment: str) -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "src/since_cutoff").rglob("*.py"))
+    )
+    assert fragment in source
+    assert fragment in _text("docs/troubleshooting.md")

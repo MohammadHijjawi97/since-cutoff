@@ -34,8 +34,9 @@ uvx since-cutoff scan
 # écrire les notes dans AGENTS.md et les tenir à jour (aucun appel au modèle)
 uvx since-cutoff sync
 
-# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle)
-uvx since-cutoff run
+# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle ;
+# --with ajoute le vérificateur de types basedpyright, dont seul run a besoin)
+uvx --with basedpyright since-cutoff run
 ```
 
 [Documentation en français et code source sur GitHub](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/README.fr.md) ·
@@ -189,8 +190,9 @@ uvx since-cutoff scan
 # écrire les notes dans AGENTS.md et les tenir à jour (aucun appel au modèle)
 uvx since-cutoff sync
 
-# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle)
-uvx since-cutoff run
+# facultatif : mesurer sur quels changements votre modèle se trompe, et tester les notes (appelle le modèle ;
+# --with ajoute le vérificateur de types basedpyright, dont seul run a besoin)
+uvx --with basedpyright since-cutoff run
 ```
 
 `run` fonctionne avec Claude Code (sous forme de plugin), Anthropic, OpenAI, OpenRouter, DeepSeek,

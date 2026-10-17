@@ -45,20 +45,46 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
    (`2025-07` means 31 July 2025). Without `--model`, the model is the one your coding agent is
    set up with (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
-3. **The comparison release** is the newest final, non-yanked release published on or before the
-   cutoff date (PyPI upload time). A package that had only pre-releases by
-   then is compared with the newest of them (development releases do not count). A package
-   first released after the cutoff, or whose release at the cutoff only reserved the name (no
-   modules, or only empty ones), is reported as first released after the cutoff.
+3. **The comparison release** is the newest final, non-yanked release published at least 30
+   days before the cutoff date (PyPI upload time): the latest release published on or before
+   the cutoff minus the margin. The margin is `--cutoff-margin DAYS`, or
+   `SINCE_CUTOFF_CUTOFF_MARGIN`, or the `cutoff_margin` parameter of the MCP tools; 0 compares
+   from the latest release at the cutoff itself. The default is 30 because a model's training
+   data lags its stated cutoff, so it knows the last weeks before the cutoff least: llama-index-core
+   0.13.0, which removed `ReActAgent.from_tools` and `FunctionCallingAgent`, was uploaded on
+   2025-07-30, the day before claude-sonnet-4-5's cutoff, and a scan without the margin
+   compared from 0.13.0 and reported no change the code used; with the margin it compares
+   from 0.12.45 and reports both. The model line says both days: "training cutoff 2025-07-31,
+   comparing from releases up to 2025-07-01", and `results.json` records `compare_from` and
+   `settings.cutoff_margin`. A package that had only pre-releases by the comparison date is
+   compared with the newest of them (development releases do not count). A package first
+   released after it, or whose release then only reserved the name (no modules, or only empty
+   ones), is reported as first released after the cutoff (within the margin of it, when it was).
 4. **The API diff.** Both versions are downloaded once (wheels, falling back to sdists; only
    `.py`/`.pyi` files are extracted) and loaded *statically* with
    [griffe](https://mkdocstrings.github.io/griffe/). A module the pinned release ships
    compiled, with no `.py` source and no `.pyi` stub (an extension module in a wheel, a Cython
-   `.pyx` in an sdist), cannot be read this way: when it had a source or a stub at the cutoff,
+   `.pyx` in an sdist), cannot be read this way: when it had a source or a stub in the comparison release,
    it is not reported as removed, nor is what it defines or what a readable module still
    imports from it, and the scan warns that changes to it are not reported. A name a readable
-   module no longer imports from it is still removed. A package whose `__init__` is compiled
-   hides only the names it defines, not its readable submodules.
+   module no longer imports from it is still removed. A top-level package whose `__init__` is
+   compiled hides only the names it defines; a compiled subpackage `__init__` hides that
+   subpackage (griffe cannot enter a directory without an `__init__.py` inside a regular
+   package), and the scan warns.
+   A module that takes its names from another distribution with `from x import *` (mcp 2.3's
+   `mcp/types/__init__.py` is `from mcp_types import *`, and its requirements pin mcp-types
+   2.3.0) is compared with that distribution read next to the release, at the version the project
+   locks or, for the comparison release, the newest its requirement allowed on the
+   comparison date (a few hundred KB, under the same download limit and cache); its names are
+   reported under the paths that re-export them (`mcp.types.Tool.inputSchema` was removed:
+   mcp-types spells it `input_schema`), and so is what else changed in an object the release
+   now only re-exports, where griffe stops at the alias: a class's members (inherited ones
+   included), a function's parameters, a change of kind. When that distribution cannot be
+   downloaded, the scan warns that changes to those modules are not reported. Only star imports
+   that run are followed (not one in a docstring, a function or an `if TYPE_CHECKING:` block),
+   and only of a distribution the release's own requirements name. Which distributions a
+   release star-imports is kept in the cache with its diff, so a cached diff is served from the
+   pinned release alone, as before.
    since-cutoff reports only changes that break code written for the old version:
 
    | kind | example |
@@ -85,7 +111,19 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    now" offers only names that are new in the same owner. A positional parameter renamed in
    place is one change, with the new name as a suggestion. A removed `*args` or `**kwargs` is
    reported as such (its parameter in results.json is `*args` or `**kwargs`), unless the new
-   signature names the parameters it took.
+   signature names the parameters it took. A `**kwargs` annotated `Unpack[SomeTypedDict]`
+   (PEP 692) takes the TypedDict's keys and no other keyword, so a keyword the release at the
+   cutoff took and the pinned release's TypedDict has not is a removed parameter (pandas 3.0's
+   `read_csv(delim_whitespace=...)`, whose overloads end in `**kwds: Unpack[_read_shared]`),
+   and so is a key of the old TypedDict that the new signature does not name; a key that moved
+   to a base TypedDict is still a key, `self` and `cls` are no keywords, and a bare `**kwargs`
+   or a TypedDict that allows other keys (PEP 728's `extra_items=`, `closed=False`) takes
+   anything. A change to a method or attribute carries the paths of the public classes that
+   inherit it without overriding it (`pandas.DataFrame.fillna` for `NDFrame.fillna`), so that
+   code calling it on them is matched; a change to a method of a private class that a public
+   class inherits is reported under the shortest public inheritor. Each change says whether its
+   API is public or internal (`tier` in results.json; see [What the numbers
+   mean](#what-the-numbers-mean-and-do-not-mean)).
 
    Not reported, because code written for the old version still works or never used them:
    - a name still listed in `__all__` of a module that binds names the source does not spell
@@ -94,7 +132,18 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    - a member a class may still inherit: from a standard-library base, from a base the package
      vendors, or from a base in another package when the removed override called the base's
      method; and a module function the old version attached to a class that is now a method of
-     it;
+     it. An attribute the old class set in a method and the new constructor hands to a base in
+     another package (fastapi 0.143's `Param(pydantic.fields.FieldInfo)` no longer assigns
+     `self.deprecated`; it passes `kwargs["deprecated"]` to `super().__init__(**use_kwargs)`),
+     by name, in position, through a `**kwargs` or by having no constructor of its own, is
+     unknown, not removed, since since-cutoff did not read that base: the scan warns once per
+     package that the class's attributes were not compared (the compiled-module warning says
+     the same of its modules). A field or constant of the class body (a pydantic model's
+     `usage: int`), an attribute the constructor neither sets nor hands on, and a key dropped
+     from a TypedDict (typing's constructs set no attributes) are removed. An attribute the new
+     class sets in a tuple target, or in a function of its module that a method gives `self`
+     to (0.143's `_populate_api_route_state(self, path, ...)` sets `route.path`), is there,
+     although griffe lists neither;
    - a function the new version declares only with `@overload`, as most stubs do;
    - names bound only under `if __name__ == "__main__":` or on some `if`/`try` paths, loggers,
      type variables, `TYPE_CHECKING`, imports that `from x import *` copies, generated
@@ -108,13 +157,14 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
 
 The cutoff date picks a comparison point. It is not a claim about what a model memorised.
 since-cutoff takes the date from models.dev (or `--cutoff`); a month means its last day
-(`2025-07` is 31 July 2025). For each dependency it takes the newest final, non-yanked release
-uploaded on or before that date (a pre-release only if the package had no final release by then,
+(`2025-07` is 31 July 2025). It moves that date back by the margin (`--cutoff-margin`, 30 days
+by default), and for each dependency takes the newest final, non-yanked release uploaded on or
+before the day it lands on (a pre-release only if the package had no final release by then,
 never a development release), and diffs that release's public API against your locked version.
 That diff is a list of candidates: API changes that the model's training data probably does not
 include.
 
-The date decides three things:
+The comparison date decides three things:
 
 - which packages are diffed at all: a package whose locked version is no newer than that release
   has nothing to diff, and a package first released after the date is listed as new;
@@ -124,9 +174,10 @@ The date decides three things:
   version, with the error on a changed API, is "stale" rather than "wrong".
 
 A model can know a release after its stated cutoff or not know releases shortly before it, so the
-scan can list changes the model already handles and miss some it does not. Whether the model
-actually writes the old API is shown only by `run`, which asks it: with no tools, told which
-version the project pins.
+scan can list changes the model already handles and miss some it does not. The margin is for the
+second case; `--cutoff-margin 0` compares from the cutoff itself. Whether the model actually
+writes the old API is shown only by `run`, which asks it: with no tools, told which version the
+project pins.
 
 ## Notes without a model: scan and sync
 
@@ -146,7 +197,9 @@ the files that import the package, and statically (nothing is run):
   when the module lists the name in `__all__`);
 - a method or attribute where the file reads it on the class, or on what the file shows is an
   instance of the class (`client = anthropic.Anthropic(); client.messages.create(...)`), or on
-  `self` or `super()` in a subclass of it;
+  `self` or `super()` in a subclass of it; a method counts under every public class that
+  inherits it without overriding it (`df.fillna(method="ffill")` on a `DataFrame` for the
+  change to `NDFrame.fillna`);
 - a constructor where the class is called, under any name of the class;
 - a parameter only where it is passed by keyword to that very callable: `temperature=` passed to
   another library's `create` in the same file does not count. An SDK's beta mirror
@@ -159,7 +212,7 @@ Each use is one of two **forms**:
 
 | form | meaning |
 |---|---|
-| **old form** | the code uses the API as the release at the cutoff allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
+| **old form** | the code uses the API as the comparison release allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
 | **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
 
 The terminal and the MCP tool `project_changes` show at most 3 files per API (`scan -v` shows
@@ -305,6 +358,7 @@ comes a meta line, an HTML comment holding JSON:
 | `v` | the block format, 2 |
 | `tool` | the since-cutoff version that wrote it |
 | `model`, `cutoff` | the model (several, comma-separated, for `sync --model a,b`) and the training cutoff the notes are for |
+| `margin` | how many days before the cutoff the comparison releases were published by (`--cutoff-margin`, 30 by default); a block without it, from an earlier since-cutoff, compared from the cutoff itself |
 | `versions_from` | where the versions come from (`uv.lock`; `pyproject.toml, latest on PyPI for 3 unpinned`) |
 | `deps` | a hash of the dependencies and their versions (an unpinned one by its declared range), so `status` sees a change offline |
 | `body` | a hash of the block's text after the meta line, with line breaks normalised, so a hand edit shows |
@@ -312,10 +366,12 @@ comes a meta line, an HTML comment holding JSON:
 | `suggestions`, `checked`, `added_eol` | only when needed: `sync --suggestions` was used; the API each `[type-checked]` bullet is about; the line break since-cutoff added to a file that did not end with one, which `unapply` takes away again |
 
 Then the title "## Library changes after the model's training cutoff", a header that names the
-model, the cutoff, the file the versions come from and the since-cutoff version, says what the
-tags mean, that no library code was run, and "Where these lines conflict with what you remember,
-follow these lines", and one group per package: `**anthropic 1.8.0** (0.60.0 at the cutoff)`
-followed by its bullets.
+model, the cutoff and the day the comparison releases were published by ("the training cutoff
+of `claude-sonnet-4-5` (2025-07-31, comparing from releases up to 2025-07-01)"), the file the
+versions come from and the since-cutoff version, says what the tags mean, that no library code
+was run, and "Where these lines conflict with what you remember, follow these lines", and one
+group per package: `**anthropic 1.8.0** (compared from 0.56.0)`, the release the notes compare
+from, followed by its bullets.
 
 ### `sync`
 
@@ -335,7 +391,9 @@ file:
 2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
    teammates whose agents use other models do not rewrite it back and forth; with no block, the
    model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and
-   names both.
+   names both. The margin (`--cutoff-margin`) is not kept from the block: it is the scan's
+   setting, the same for everyone, and a block compared from another day is rewritten, with
+   "now comparing from 30 days before the cutoff (it was the cutoff itself)" as the reason.
 3. **What changes.** Notes for APIs the code starts using are added, and a bumped package is
    diffed again (diffs are cached per package and pair of versions, so the others come from the
    cache). A
@@ -393,7 +451,9 @@ What it prints, from the sample project:
 `since-cutoff status` compares the block with the project's dependencies as they are, with no
 network and without reading the code (`sync --check` does that): per package, the version the
 notes are for and the version the lockfile has; whether other dependencies changed (the `deps`
-hash); where the versions come from; and whether the model your coding agent is set up with has
+hash); where the versions come from; whether the block compared from another day than the scan
+does now (its `margin` against `--cutoff-margin`: a block from before there was a margin
+compared from the cutoff itself); and whether the model your coding agent is set up with has
 an earlier training cutoff than the notes, which may then miss changes (it prints the
 `sync --model` command for it; this is not a failure, since sync keeps the block's model). A
 block that 0.3 or `run --apply` wrote is out of date, as `sync --check` would find it. No block
@@ -441,7 +501,8 @@ starts (0.4.0 and later).
    project files: Claude Code is run with `--tools ""`, no MCP servers, no slash commands and an
    empty working directory.
 4. **Scoring.** The code is type-checked with
-   [basedpyright](https://github.com/DetachHead/basedpyright) twice: against the locked version
+   [basedpyright](https://github.com/DetachHead/basedpyright) (the `"since-cutoff[run]"`
+   extra) twice: against the locked version
    and against the cutoff version, each in an isolated environment that contains that package
    version and its own runtime dependencies, nothing else. Only diagnostics that involve the
    package count (other imports are absent from the environment and are ignored):
@@ -555,7 +616,7 @@ was checked, and nothing else is claimed:
 
 | tag | what was checked | what was not |
 |---|---|---|
-| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release on or before the model's training cutoff, and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
+| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release published at least 30 days before the model's training cutoff (by default), and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
 | `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
@@ -599,7 +660,7 @@ parameter; missing required argument; wrong number of arguments). Pure type-stri
 are ignored. No answer is executed.
 
 The block in AGENTS.md holds the bullets with their tags, and for each package the version its
-notes apply to and the release at the cutoff. The rest is in `scan --json` and `results.json`:
+notes apply to and the release they are compared from. The rest is in `scan --json` and `results.json`:
 `used_apis[]` (each changed API the code uses, where, its changes, its replacements with their
 source, and its note with `tags`, `applies_to` and `checks`) and, after `run`, `notes_detail[]`
 (each note with the model's example and what the held-out test measured; `verified` is kept,
@@ -612,9 +673,25 @@ meaning the same as `checks.example_type_checks`).
   [Where the code uses a changed API](#where-the-code-uses-a-changed-api)); nothing is run, and a
   file that only calls the API is "uses this API".
 - In `scan`, "**breaking**" and "**deprecated**" count each change once, however many import
-  paths reach it. "**Imported by your code**" means a file of the project imports the package
-  (by its import names); dependencies whose API changed come first, the imported ones first
-  among them.
+  paths reach it, and only the changes to **public** APIs: an API is public when the package's
+  top level exports it (`pkg.Thing`, including a name a `from .m import *` there copies from a
+  module that re-exports it on purpose: `anthropic.AnthropicBedrock`), a module it is reached
+  through names it in `__all__` or re-exports it as `from .m import X as X`
+  (`anthropic.types.CompletionCreateParams`), or it is documented (a docstring, at a path with
+  no private part; a value made of a function, `convert = deprecated(...)(_convert)`, has the
+  function's); a member counts with its class, and a method a public class inherits is public.
+  A plain `from .m import X` in a package `__init__` is a path to the object, not a re-export
+  on purpose, so an undocumented class reached only that way is internal (openai's `types`
+  modules re-export as `X as X`; a package that does not, and documents nothing, counts as
+  internal). The rest are **internal** (fastapi 0.143's `dependencies.utils.get_flat_dependant`,
+  uvicorn's `config.LOOP_SETUPS` and its `loops.*` modules), counted once as "+N internal"
+  next to the public counts (the dependency table's breaking column reads "19 (+3)"); `scan
+  --internal` (which implies `--all`) and the MCP tools' `include_internal` list them,
+  `api_changes(symbol=...)` lists the internal changes to a symbol when they are all that
+  match it, report.md lists them after the public ones, and results.json has every change with
+  its `tier`. The notes are not affected: they cover the APIs the code uses, whichever tier.
+  "**Imported by your code**" means a file of the project imports the package (by its import
+  names); dependencies whose API changed come first, the imported ones first among them.
 - "**Stale API use in X of Y probed dependencies**": Y is the number of dependencies with at
   least one scored probe; X is how many of them had at least one probe scored *stale*.
 - Probes cover a **sample** of the breaking changes (ranked as above), not all of them.
@@ -644,6 +721,14 @@ meaning the same as `checks.example_type_checks`).
   behaviour changes (same signature, different semantics) or deprecations that only warn at run
   time.
 - Everything is cached. Re-running gives the same result; `--fresh` asks the model again.
+  `since-cutoff cache info` shows where the cache is and its size by kind; `cache clear
+  --sources` (or `--diffs`, `--pypi`) removes one kind and keeps the model's answers, which
+  cost money. The extracted package sources are capped at `SINCE_CUTOFF_CACHE_MAX_MB` (2048 by
+  default; 0 for no cap): after a new version is extracted, the least recently used trees are
+  removed until the sources fit, never one the running scan uses or one used in the last hour,
+  which another process may be reading; the first removal in a run prints one line saying how
+  many trees and MB went. In `cache info`, "oldest" is when a kind's oldest entry was written;
+  only the sources record their use, so for them it is the least recently used tree's last use.
 
 ## Safety
 

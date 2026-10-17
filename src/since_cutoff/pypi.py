@@ -12,6 +12,7 @@ import email.parser
 import hashlib
 import io
 import json
+import logging
 import re
 import shutil
 import tarfile
@@ -30,8 +31,21 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from since_cutoff import net
-from since_cutoff.cache import DiskCache
+from since_cutoff.cache import (
+    MB,
+    SOURCES_MARKER,
+    DiskCache,
+    evict_tree,
+    last_used,
+    max_sources_bytes,
+    remove_evicted_leftovers,
+    sources_over_cap,
+    touch,
+    tree_size,
+)
 from since_cutoff.errors import METAPACKAGE, NoCodeError, PackageIndexError
+
+log = logging.getLogger(__name__)
 
 PYPI_JSON = "https://pypi.org/pypi/{name}/json"
 METADATA_TTL = 12 * 3600
@@ -50,8 +64,8 @@ _NON_PACKAGE_DIRS = {"test", "tests", "docs", "doc", "examples", "example", "ben
 _MAX_MEMBER_BYTES = 8 * 1024 * 1024
 _MAX_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_MEMBERS = 50_000
-_MARKER = ".since-cutoff.json"
-_MB = 1024 * 1024  # --max-download-mb counts in these, and so do the messages about it
+_MARKER = SOURCES_MARKER
+_MB = MB  # --max-download-mb counts in these, and so do the messages about it
 
 
 @dataclass(frozen=True)
@@ -97,6 +111,12 @@ class PyPI:
         self.max_download_bytes = int(max_download_mb * _MB)
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
+        # The source trees this process served (``sources/<name>-<version>``): a scan reads them
+        # after :meth:`source` returns, so the cap on the sources never evicts them.
+        self._served: set[str] = set()
+        self._trim_lock = threading.Lock()
+        # The first trim that evicts says so on the terminal (a warning); later ones are logged.
+        self._evictions_reported = False
         # Release lists served from a cache entry older than METADATA_TTL because PyPI could
         # not be reached: canonical name -> (the entry, the day it was fetched, when it was
         # last tried). Reused for STALE_REUSE seconds, so that each later lookup in a scan does
@@ -250,17 +270,77 @@ class PyPI:
 
     # ------------------------------------------------------------------ sources
     def source(self, name: str, version: str) -> SourceTree:
-        """Download (once) and extract the Python sources of ``name==version``."""
+        """Download (once) and extract the Python sources of ``name==version``. After a new
+        extraction, the least recently used trees go while the sources are over their cap
+        (``SINCE_CUTOFF_CACHE_MAX_MB``); the trees this process served stay."""
         key = f"{canonicalize_name(name)}-{version}"
         with self._lock(key):
-            return self._source(name, version, key)
+            tree, extracted = self._source(name, version, key)
+            with self._locks_guard:
+                self._served.add(key)
+        if extracted:
+            self._trim_sources()
+        return tree
 
-    def _source(self, name: str, version: str, key: str) -> SourceTree:
+    def _trim_sources(self) -> None:
+        """Evict the least recently used trees while the sources are over the cap. The first
+        trim of this process that evicts any prints one line (a warning): the first one after an
+        upgrade may remove many trees at once, which later scans download again."""
+        cap = max_sources_bytes()
+        if cap is None:
+            return
+        with self._trim_lock:
+            remove_evicted_leftovers(self.cache.root)
+            with self._locks_guard:
+                keep = set(self._served)
+            trees = evicted = 0
+            for entry in sources_over_cap(self.cache.root, cap, keep):
+                # Under the tree's own lock, so that it is not read by another thread of this
+                # process meanwhile; one that is busy (being extracted or served) stays.
+                lock = self._lock(entry.key)
+                if not lock.acquire(blocking=False):
+                    continue
+                try:
+                    with self._locks_guard:
+                        served = entry.key in self._served
+                    used = last_used(entry.path)
+                    if served or (used is not None and used > entry.last_used):
+                        continue  # served, or used by another process since the plan was made
+                    if evict_tree(entry.path):
+                        trees += 1
+                        evicted += entry.bytes
+                        log.info(
+                            "evicted the sources %s (%.1f MB): the extracted sources are over "
+                            "the %d MB cap (SINCE_CUTOFF_CACHE_MAX_MB)",
+                            entry.key,
+                            entry.bytes / MB,
+                            cap // MB,
+                        )
+                    else:
+                        log.info("could not evict the sources %s: in use", entry.key)
+                finally:
+                    lock.release()
+            if trees:
+                level = logging.INFO if self._evictions_reported else logging.WARNING
+                self._evictions_reported = True
+                log.log(
+                    level,
+                    "removed %d least recently used source %s (%s MB) from the cache: the "
+                    "extracted sources are over the %s MB cap (SINCE_CUTOFF_CACHE_MAX_MB)",
+                    trees,
+                    "tree" if trees == 1 else "trees",
+                    f"{evicted / MB:,.1f}",
+                    f"{cap // MB:,}",
+                )
+
+    def _source(self, name: str, version: str, key: str) -> tuple[SourceTree, bool]:
+        """The tree, and whether this call extracted it."""
         sources = self.cache.root / "sources"
         root = sources / key
         cached = _read_marker(root)
         if cached is not None:
-            return SourceTree(name, version, root, *cached)
+            touch(root / _MARKER)  # when a tree was last used, for the cap on the sources
+            return SourceTree(name, version, root, *cached), False
 
         rel = self.release(name, version)
         artifact = _pick_artifact(rel.files, allow_yanked=True)
@@ -347,6 +427,7 @@ class PyPI:
                         "import_names": import_names,
                         "requires": requires,
                         "compiled": compiled,
+                        "bytes": tree_size(package_root)[1],
                     }
                 ),
                 encoding="utf-8",
@@ -365,7 +446,7 @@ class PyPI:
         cached = _read_marker(root)
         if cached is None:
             raise PackageIndexError(f"could not publish the sources of {name}=={version}")
-        return SourceTree(name, version, root, *cached)
+        return SourceTree(name, version, root, *cached), True
 
 
 # --------------------------------------------------------------------- helpers

@@ -643,7 +643,8 @@
      "openai/_httpx2.py:27"
     ],
     "still_named_count": 1
-   }
+   },
+   "tier": "public"
   }
  ]
 }

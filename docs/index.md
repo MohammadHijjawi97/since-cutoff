@@ -26,8 +26,9 @@ uvx since-cutoff scan
 # write the notes into AGENTS.md and keep them current (no model calls)
 uvx since-cutoff sync
 
-# optional: measure which of the changes your model gets wrong, and test the notes (calls it)
-uvx since-cutoff run
+# optional: measure which of the changes your model gets wrong, and test the notes (calls it;
+# --with adds the basedpyright type checker, which only run needs)
+uvx --with basedpyright since-cutoff run
 ```
 
 [Source and documentation on GitHub](https://github.com/MohammadHijjawi97/since-cutoff) ·
@@ -164,8 +165,9 @@ uvx since-cutoff scan
 # write the notes into AGENTS.md and keep them current (no model calls)
 uvx since-cutoff sync
 
-# optional: measure which of the changes your model gets wrong, and test the notes (calls it)
-uvx since-cutoff run
+# optional: measure which of the changes your model gets wrong, and test the notes (calls it;
+# --with adds the basedpyright type checker, which only run needs)
+uvx --with basedpyright since-cutoff run
 ```
 
 `run` works with Claude Code (as a plugin), Anthropic, OpenAI, OpenRouter, DeepSeek, Ollama and
