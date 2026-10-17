@@ -22,8 +22,8 @@ row here, or no longer reads one that has.
 | Coding agents | `GEMINI_MODEL` | Model detection | Gemini CLI's model, ahead of its settings files. |
 | Coding agents | `AIDER_MODEL` | Model detection | Aider's model, ahead of `.aider.conf.yml`. |
 | Coding agents | `CLAUDE_PROJECT_DIR` | The MCP tools | The folder a relative `project_dir` is resolved against (Claude Code sets it for the servers it starts); else the server's working directory. An absolute path is used as it is. |
-| Providers | `ANTHROPIC_API_KEY` | `run` with an `anthropic:` model | Required. Not read for `claude-code:`, which calls the `claude` CLI. |
-| Providers | `ANTHROPIC_BASE_URL` | `run` with an `anthropic:` model | The API's base URL when `--base-url` is not given; default `https://api.anthropic.com`. |
+| Providers | `ANTHROPIC_API_KEY` | `run` with an `anthropic:` model; the `claude` subprocess of `run` | Required for `anthropic:`. since-cutoff does not read it for `claude-code:`, but the `claude` subprocess inherits it, as it does `ANTHROPIC_BASE_URL` and the rest of the environment, and Claude Code then uses the key instead of a subscription. |
+| Providers | `ANTHROPIC_BASE_URL` | `run` with an `anthropic:` model; the `claude` subprocess of `run` | The API's base URL when `--base-url` is not given; default `https://api.anthropic.com`. The `claude` subprocess sends its requests there too; `--base-url` does not change it. |
 | Providers | `OPENAI_API_KEY` | `run` with an `openai:` or `openai-compatible:` model | Required for `openai:`. Sent to an `openai-compatible:` server when set; a local server needs none. |
 | Providers | `OPENAI_BASE_URL` | `run` with an `openai:` model | The base URL when `--base-url` is not given; default `https://api.openai.com/v1`. Not read for `openai-compatible:` or the other providers. |
 | Providers | `OPENROUTER_API_KEY` | `run` with an `openrouter:` model | Required. |
@@ -35,7 +35,7 @@ row here, or no longer reads one that has.
 | GitHub Actions | `GITHUB_REPOSITORY`, `GITHUB_SHA` | `scan --markdown` | The repository and commit the summary links source files at; both are needed for the links. |
 | GitHub Actions | `GITHUB_SERVER_URL` | `scan --markdown` | The server of those links; default `https://github.com`. |
 | Network | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | Python's `urllib`, for every request (PyPI, models.dev, the model APIs) | The proxy, as Python reads it (the lowercase names too); without them, on Windows and macOS, the system's proxy settings. since-cutoff does not read them itself. |
-| Network | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Python's `ssl`, for the same requests | The CA certificates to trust, as a bundle file or a folder (one with a company's certificate, say), in place of OpenSSL's default ones; on Windows, the system's certificate store is trusted too. since-cutoff does not read them itself. |
+| Network | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Python's `ssl`, for the same requests | The CA certificates to trust (one with a company's certificate, say): `SSL_CERT_FILE` replaces OpenSSL's default bundle file and `SSL_CERT_DIR` its default folder, each on its own, so with only one of them set the other default still counts; on Windows, the system's certificate store is trusted too. since-cutoff does not read them itself. |
 
 The model-detection variables are `hosts.ENV_VARS`. Detection ranks environment variables, then
 the project's settings, then the user's; between equally specific settings the agent order is

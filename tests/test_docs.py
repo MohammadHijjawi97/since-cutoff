@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import ast
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pytest
@@ -87,34 +87,53 @@ NOT_READ_BY_NAME = {
     "CLAUDE_CODE_ENTRYPOINT",
 }
 _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+_MAPPING_READS = ("get", "pop", "setdefault")
 
 
-def _env_reads(sources: Iterable[str]) -> set[str]:
-    """The environment variables the code reads by name: ``os.environ.get("X")``,
-    ``os.getenv("X")``, ``os.environ["X"]``, ``"X" in os.environ``, the same on a mapping given
-    for the environment (``env.get("X")``, ``(env or {}).get("X")``), hosts' ``places.var("X")``,
-    and each of them with a module constant for the name, from any of the modules
-    (``os.environ.get(CUTOFF_MARGIN_VAR)``, ``os.environ.get(models.CUTOFF_MARGIN_VAR)``).
+def _module_name(path: Path) -> str:
+    """``src/since_cutoff/providers/claude_code.py`` -> ``since_cutoff.providers.claude_code``."""
+    parts = path.relative_to(SRC.parent).with_suffix("").parts
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _env_reads(modules: Mapping[str, str]) -> set[str]:
+    """The environment variables the code reads by name, given each module's source by the
+    module's name: ``os.environ.get("X")``, ``os.getenv("X")``, ``os.environ["X"]``,
+    ``"X" in os.environ``, ``os.environ.setdefault("X", ...)``, the same on a mapping given for
+    the environment (``env.get("X")``, ``(env or {}).get("X")``), hosts' ``places.var("X")``,
+    and each of them with a module constant for the name (``os.environ.get(CUTOFF_MARGIN_VAR)``,
+    ``os.environ.get(models.CUTOFF_MARGIN_VAR)``). A bare constant is the one its own module
+    defines, ``models.NAME`` the one a module named ``models`` defines; one that is not there
+    (imported, say) counts with the value of each module that defines it.
     """
-    trees = [ast.parse(source) for source in sources]
-    constants = {
-        target.id: node.value.value
-        for tree in trees
-        for node in tree.body
-        if isinstance(node, (ast.Assign, ast.AnnAssign))
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
-        if isinstance(target, ast.Name)
+    trees = {module: ast.parse(source) for module, source in modules.items()}
+    constants: dict[str, dict[str, object]] = {
+        module: {
+            target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, ast.Constant)
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            if isinstance(target, ast.Name)
+        }
+        for module, tree in trees.items()
     }
 
-    def name(node: ast.expr) -> str | None:
-        value = node.value if isinstance(node, ast.Constant) else None
-        if isinstance(node, ast.Name):
-            value = constants.get(node.id)
+    def lookup(constant: str, homes: Iterable[str]) -> set[object]:
+        here = {constants[m][constant] for m in homes if constant in constants[m]}
+        return here or {c[constant] for c in constants.values() if constant in c}
+
+    def names(node: ast.expr, module: str) -> set[str]:
+        values: set[object] = set()
+        if isinstance(node, ast.Constant):
+            values = {node.value}
+        elif isinstance(node, ast.Name):
+            values = lookup(node.id, [module])
         elif isinstance(node, ast.Attribute):  # models.CUTOFF_MARGIN_VAR
-            value = constants.get(node.attr)
-        return value if isinstance(value, str) and _ENV_NAME.fullmatch(value) else None
+            base = node.value
+            named = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", "")
+            values = lookup(node.attr, [m for m in constants if m.rsplit(".", 1)[-1] == named])
+        return {v for v in values if isinstance(v, str) and _ENV_NAME.fullmatch(v)}
 
     def environment(node: ast.expr) -> bool:
         if isinstance(node, ast.IfExp):
@@ -124,15 +143,15 @@ def _env_reads(sources: Iterable[str]) -> set[str]:
         last = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", "")
         return last in ("environ", "env")
 
-    found = set()
-    for tree in trees:
+    found: set[str] = set()
+    for module, tree in trees.items():
         for node in ast.walk(tree):
             key: ast.expr | None = None
             if isinstance(node, ast.Call) and node.args:
                 func = node.func
                 called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
                 on_env = isinstance(func, ast.Attribute) and environment(func.value)
-                if called in ("getenv", "var") or (on_env and called in ("get", "pop")):
+                if called in ("getenv", "var") or (on_env and called in _MAPPING_READS):
                     key = node.args[0]
             elif isinstance(node, ast.Subscript) and environment(node.value):
                 key = node.slice
@@ -142,9 +161,8 @@ def _env_reads(sources: Iterable[str]) -> set[str]:
                 and environment(node.comparators[0])
             ):
                 key = node.left
-            read = name(key) if key is not None else None
-            if read:
-                found.add(read)
+            if key is not None:
+                found |= names(key, module)
     return found
 
 
@@ -157,8 +175,8 @@ def _env_table(text: str) -> set[str]:
 
 def test_reference_lists_environment_variables_read_by_the_code() -> None:
     documented = _env_table(_text("docs/reference.md"))
-    sources = [p.read_text(encoding="utf-8") for p in sorted(SRC.rglob("*.py"))]
-    names = _env_reads(sources) | set(ENV_VARS)
+    modules = {_module_name(p): p.read_text(encoding="utf-8") for p in SRC.rglob("*.py")}
+    names = _env_reads(modules) | set(ENV_VARS)
     # Provider keys are read through a variable (os.environ.get(key_env)): add them.
     names.update(key for _, key in OPENAI_COMPATIBLE.values() if key)
     assert not names - documented, f"no row for {sorted(names - documented)}"
@@ -171,6 +189,7 @@ def test_the_environment_check_finds_each_way_of_reading_a_variable() -> None:
 import os
 MARGIN_VAR = "SINCE_CUTOFF_CONSTANT"
 TYPED_VAR: str = "SINCE_CUTOFF_TYPED"
+KEY = "SINCE_CUTOFF_OWN"
 a = os.environ.get("SINCE_CUTOFF_GET")
 b = os.getenv("SINCE_CUTOFF_GETENV", "")
 c = os.environ["SINCE_CUTOFF_ITEM"]
@@ -180,11 +199,22 @@ f = (os.environ if env is None else env).get("SINCE_CUTOFF_MAPPING")
 g = (env or {}).get("SINCE_CUTOFF_OR"), self.env.get("SINCE_CUTOFF_ATTRIBUTE")
 h = places.var("SINCE_CUTOFF_VAR")
 i = settings.get("NOT_THE_ENVIRONMENT"), os.environ.get("lowercase"), os.environ.get(name)
-j = os.environ.get(models.MODULE_VAR), environ.get("SINCE_CUTOFF_BARE"), getenv(MODULE_VAR)
+j = os.environ.get(models.KEY), environ.get("SINCE_CUTOFF_BARE"), getenv(NAME_VAR)
+k = os.environ.get(KEY), os.environ.setdefault("SINCE_CUTOFF_SETDEFAULT", "1")
 """
-    other_module = 'MODULE_VAR = "SINCE_CUTOFF_MODULE"\n'
-    assert _env_reads([source, other_module]) == {
+    # KEY is a different variable in each module: a bare KEY is the reading module's own,
+    # models.KEY is models', and neither is the last module's, in either order. NAME_VAR is
+    # defined only in models, as if imported from there.
+    modules = {
+        "pkg.cli": source,
+        "pkg.models": 'KEY = "SINCE_CUTOFF_MODULE"\nNAME_VAR = "SINCE_CUTOFF_MODULE_NAME"\n',
+        "pkg.other": 'KEY = "SINCE_CUTOFF_ELSEWHERE"\n',
+    }
+    expected = {
         "SINCE_CUTOFF_MODULE",
+        "SINCE_CUTOFF_MODULE_NAME",
+        "SINCE_CUTOFF_OWN",
+        "SINCE_CUTOFF_SETDEFAULT",
         "SINCE_CUTOFF_BARE",
         "SINCE_CUTOFF_CONSTANT",
         "SINCE_CUTOFF_TYPED",
@@ -197,6 +227,10 @@ j = os.environ.get(models.MODULE_VAR), environ.get("SINCE_CUTOFF_BARE"), getenv(
         "SINCE_CUTOFF_ATTRIBUTE",
         "SINCE_CUTOFF_VAR",
     }
+    assert _env_reads(modules) == expected
+    assert _env_reads(dict(reversed(modules.items()))) == expected
+    assert _module_name(SRC / "providers" / "__init__.py") == "since_cutoff.providers"
+    assert _module_name(SRC / "models.py") == "since_cutoff.models"
     table = "## Environment variables\n\n| G | V | R | E |\n|---|---|---|---|\n"
     assert _env_table(table + "| a | `ONE`, `TWO` | `THREE` | `FOUR` |\n\n## Files") == {
         "ONE",
