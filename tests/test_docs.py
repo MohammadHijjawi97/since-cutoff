@@ -4,7 +4,9 @@
 - the scan output and the note on the README's first screen are what the code writes;
 - "What 'verified' means" names every evidence tag as notes.py writes it;
 - no English page says "verified" on its own;
-- every link to a heading of a README or docs page finds that heading.
+- every link to a heading of a README or docs page finds that heading;
+- docs/reference.md has a row for every environment variable the code reads, and none for one
+  it does not.
 
 Only README.md ships in the sdist, so a page that is not there is skipped.
 """
@@ -12,7 +14,9 @@ Only README.md ships in the sdist, so a page that is not there is skipped.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -35,6 +39,7 @@ from since_cutoff.providers import OPENAI_COMPATIBLE
 from since_cutoff.report import NOTES_READY
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src" / "since_cutoff"
 REPO_URL = "https://github.com/MohammadHijjawi97/since-cutoff"
 READMES = ("README.md", "README.zh-CN.md", "README.es.md", "README.fr.md")
 PAGES = (
@@ -70,16 +75,126 @@ def _text(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# Rows of docs/reference.md for variables since-cutoff does not read by name: Python's urllib
+# and ssl read the proxy and certificate settings, and run removes CLAUDE_CODE_ENTRYPOINT from
+# the environment of its `claude` subprocess.
+NOT_READ_BY_NAME = {
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CLAUDE_CODE_ENTRYPOINT",
+}
+_ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+
+
+def _env_reads(sources: Iterable[str]) -> set[str]:
+    """The environment variables the code reads by name: ``os.environ.get("X")``,
+    ``os.getenv("X")``, ``os.environ["X"]``, ``"X" in os.environ``, the same on a mapping given
+    for the environment (``env.get("X")``, ``(env or {}).get("X")``), hosts' ``places.var("X")``,
+    and each of them with a module constant for the name (``os.environ.get(CUTOFF_MARGIN_VAR)``).
+    """
+    trees = [ast.parse(source) for source in sources]
+    constants = {
+        target.id: node.value.value
+        for tree in trees
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        if isinstance(target, ast.Name)
+    }
+
+    def name(node: ast.expr) -> str | None:
+        value = node.value if isinstance(node, ast.Constant) else None
+        if isinstance(node, ast.Name):
+            value = constants.get(node.id)
+        return value if isinstance(value, str) and _ENV_NAME.fullmatch(value) else None
+
+    def environment(node: ast.expr) -> bool:
+        if isinstance(node, ast.IfExp):
+            return environment(node.body) or environment(node.orelse)
+        if isinstance(node, ast.BoolOp):
+            return any(environment(value) for value in node.values)
+        last = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", "")
+        return last in ("environ", "env")
+
+    found = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            key: ast.expr | None = None
+            if isinstance(node, ast.Call) and node.args:
+                func = node.func
+                called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                on_env = isinstance(func, ast.Attribute) and environment(func.value)
+                if called in ("getenv", "var") or (on_env and called in ("get", "pop")):
+                    key = node.args[0]
+            elif isinstance(node, ast.Subscript) and environment(node.value):
+                key = node.slice
+            elif (
+                isinstance(node, ast.Compare)
+                and isinstance(node.ops[0], (ast.In, ast.NotIn))
+                and environment(node.comparators[0])
+            ):
+                key = node.left
+            read = name(key) if key is not None else None
+            if read:
+                found.add(read)
+    return found
+
+
+def _env_table(text: str) -> set[str]:
+    """The variables in the Variable column of the page's environment variables table."""
+    section = text.split("## Environment variables", 1)[1].split("\n## ", 1)[0]
+    rows = [line.split("|") for line in section.splitlines() if line.startswith("| ")]
+    return {name for row in rows[1:] for name in re.findall(r"`([A-Z][A-Z0-9_]+)`", row[2])}
+
+
 def test_reference_lists_environment_variables_read_by_the_code() -> None:
-    text = _text("docs/reference.md")
-    names = set(ENV_VARS)
-    # Provider keys are selected indirectly, so literal environ reads alone miss them.
+    documented = _env_table(_text("docs/reference.md"))
+    sources = [p.read_text(encoding="utf-8") for p in sorted(SRC.rglob("*.py"))]
+    names = _env_reads(sources) | set(ENV_VARS)
+    # Provider keys are read through a variable (os.environ.get(key_env)): add them.
     names.update(key for _, key in OPENAI_COMPATIBLE.values() if key)
-    pattern = re.compile(r"""(?:\.get\(\s*|environ\[\s*)["']([A-Z][A-Z0-9_]+)["']""")
-    for path in (ROOT / "src" / "since_cutoff").rglob("*.py"):
-        names.update(pattern.findall(path.read_text(encoding="utf-8")))
-    documented = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", text))
-    assert not names - documented, sorted(names - documented)
+    assert not names - documented, f"no row for {sorted(names - documented)}"
+    stale = documented - names - NOT_READ_BY_NAME
+    assert not stale, f"rows for variables the code does not read: {sorted(stale)}"
+
+
+def test_the_environment_check_finds_each_way_of_reading_a_variable() -> None:
+    source = """
+import os
+MARGIN_VAR = "SINCE_CUTOFF_CONSTANT"
+TYPED_VAR: str = "SINCE_CUTOFF_TYPED"
+a = os.environ.get("SINCE_CUTOFF_GET")
+b = os.getenv("SINCE_CUTOFF_GETENV", "")
+c = os.environ["SINCE_CUTOFF_ITEM"]
+d = "SINCE_CUTOFF_IN" in os.environ
+e = os.environ.get(MARGIN_VAR), os.getenv(TYPED_VAR)
+f = (os.environ if env is None else env).get("SINCE_CUTOFF_MAPPING")
+g = (env or {}).get("SINCE_CUTOFF_OR"), self.env.get("SINCE_CUTOFF_ATTRIBUTE")
+h = places.var("SINCE_CUTOFF_VAR")
+i = settings.get("NOT_THE_ENVIRONMENT"), os.environ.get("lowercase"), os.environ.get(name)
+"""
+    assert _env_reads([source]) == {
+        "SINCE_CUTOFF_CONSTANT",
+        "SINCE_CUTOFF_TYPED",
+        "SINCE_CUTOFF_GET",
+        "SINCE_CUTOFF_GETENV",
+        "SINCE_CUTOFF_ITEM",
+        "SINCE_CUTOFF_IN",
+        "SINCE_CUTOFF_MAPPING",
+        "SINCE_CUTOFF_OR",
+        "SINCE_CUTOFF_ATTRIBUTE",
+        "SINCE_CUTOFF_VAR",
+    }
+    table = "## Environment variables\n\n| G | V | R | E |\n|---|---|---|---|\n"
+    assert _env_table(table + "| a | `ONE`, `TWO` | `THREE` | `FOUR` |\n\n## Files") == {
+        "ONE",
+        "TWO",
+    }
 
 
 def _options() -> dict[str, set[str]]:

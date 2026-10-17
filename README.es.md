@@ -837,6 +837,8 @@ no necesita red: falla cuando las notas no coinciden con el lockfile.
 
 ### Otros sistemas de CI
 
+Para configurar la CI, consulta la [referencia de variables de entorno, archivos y códigos de salida](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/reference.md) (en inglés).
+
 ```bash
 # resumen en Markdown para cualquier CI; código de salida 3 si tu código usa una API modificada en la forma antigua
 since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on old-form
@@ -966,6 +968,8 @@ sustitutos con su origen, y su nota con `tags`, `applies_to` y `checks`) y, desp
 reservadas; `verified` se mantiene y significa lo mismo que `checks.example_type_checks`).
 
 ## Qué ejecuta, qué envía y qué guarda
+
+La [referencia](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/reference.md) (en inglés) enumera las variables de entorno que lee y los archivos que lee y escribe.
 
 - **No ejecuta código de los paquetes ni código escrito por el modelo.** Los paquetes se leen de
   forma estática (griffe con la inspección desactivada; solo se extraen archivos `.py`/`.pyi`,

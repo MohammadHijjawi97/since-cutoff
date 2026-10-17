@@ -849,6 +849,8 @@ au fichier de verrouillage.
 
 ### Autres CI
 
+Pour configurer la CI, voir la [référence des variables d'environnement, fichiers et codes de sortie](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/reference.md) (en anglais).
+
 ```bash
 # résumé Markdown pour n'importe quelle CI ; code de sortie 3 si votre code utilise une API modifiée sous l'ancienne forme
 since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on old-form
@@ -985,6 +987,8 @@ mesuré le test sur les tâches réservées ; `verified` est conservé et signi
 `checks.example_type_checks`).
 
 ## Ce qu'il exécute, envoie et stocke
+
+La [référence](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/docs/reference.md) (en anglais) liste les variables d'environnement qu'il lit et les fichiers qu'il lit et écrit.
 
 - **N'exécute aucun code de paquet ni aucun code écrit par le modèle.** Les paquets sont lus de
   façon statique (griffe avec l'inspection désactivée ; seuls les fichiers `.py`/`.pyi` sont
