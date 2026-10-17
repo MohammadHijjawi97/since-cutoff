@@ -284,12 +284,131 @@ def test_conda_environment_yml_pip_pins(tmp_path, caplog):
     # A direct reference is not looked up on PyPI by name.
     [pkg] = [d for d in project.dependencies if d.name == "pkg"]
     assert pkg.non_pypi == "git+https://github.com/x/pkg.git"
-    # Options (an include is not followed), local paths and bare URLs are not packages.
-    assert not {"flask", "extra", "r", "y", "local-package"} & set(v)
+    # An include is followed; its packages are labelled with the environment file.
+    assert v["flask"] == ("3.1.1", True, "pinned")
+    assert pins(project)["flask"] == "environment.yml"
+    # Local paths and bare URLs are not packages.
+    assert not {"extra", "r", "y", "local-package"} & set(v)
     # Conda packages are not Python dependencies from PyPI.
     assert "pandas" not in v and "python" not in v
-    assert "environment.yml: 2 conda packages are not read" in caplog.text
-    assert "environment.yml: '-r extra.txt' in the pip block is not read" in caplog.text
+    assert "environment.yml: 2 conda packages are not read, as they do not" in caplog.text
+    assert "environment.yml: './local-package' in the pip block is not read" in caplog.text
+    assert project.warnings == []
+
+
+def test_a_quoted_comment_in_the_pip_block_is_a_comment(tmp_path):
+    # Quoted, `#` is part of the YAML string; pip still reads `  # ...` as a comment.
+    write(
+        tmp_path,
+        "environment.yml",
+        """
+        dependencies:
+          - pip:
+            - "anthropic==1.8.0  # the version the API notes are for"
+            - 'rich==13.7.1 # pinned'
+            - "x  # note"
+        """,
+    )
+    project = load_project(tmp_path)
+    assert versions(project) == {
+        "anthropic": ("1.8.0", True, "pinned"),
+        "rich": ("13.7.1", True, "pinned"),
+        "x": (None, True, "unpinned"),
+    }
+
+
+def test_a_file_the_pip_block_includes_is_read_relative_to_the_environment_file(tmp_path):
+    # The pip block installs only through an include, here of a file that is not
+    # requirements*.txt and so not read on its own; the include's own includes are relative
+    # to it, as in any requirements file.
+    write(
+        tmp_path,
+        "environment.yml",
+        """
+        dependencies:
+          - python=3.12
+          - pip:
+            - -r envs/pip.txt
+            - --requirement envs/test.txt
+        """,
+    )
+    write(tmp_path, "envs/pip.txt", "-r base.txt\nanthropic==1.8.0\n")
+    write(tmp_path, "envs/base.txt", "rich==13.7.1\n")
+    write(tmp_path, "envs/test.txt", "pytest>=8\n")
+    project = load_project(tmp_path)
+    assert versions(project) == {
+        "anthropic": ("1.8.0", True, "pinned"),
+        "pytest": (None, True, "unpinned"),
+        "rich": ("13.7.1", True, "pinned"),
+    }
+    assert pins(project) == {
+        "anthropic": "environment.yml",
+        "pytest": None,
+        "rich": "environment.yml",
+    }
+    assert project.version_source == "environment.yml, latest on PyPI for 1 unpinned"
+    assert project.warnings == []
+
+
+def test_a_file_the_pip_block_includes_that_does_not_exist_is_one_warning(tmp_path):
+    write(
+        tmp_path,
+        "environment.yml",
+        """
+        dependencies:
+          - pip:
+            - -r requirements-x.txt
+            - rich==13.7.1
+            - -r requirements-x.txt  # named twice, warned about once
+            - -r https://example.com/requirements.txt
+        """,
+    )
+    project = load_project(tmp_path)
+    assert versions(project) == {"rich": ("13.7.1", True, "pinned")}
+    assert project.warnings == [
+        "the pip block of environment.yml includes requirements-x.txt, which does not exist"
+    ]
+
+
+def test_a_pip_block_that_only_includes_a_missing_file_says_so(tmp_path):
+    write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n    - -r requirements-x.txt\n")
+    with pytest.raises(ProjectError) as error:
+        load_project(tmp_path)
+    assert str(error.value).endswith(
+        " environment.yml has no package in its pip block, and its conda packages are not read: "
+        "they do not come from PyPI. The pip block of environment.yml includes "
+        "requirements-x.txt, which does not exist."
+    )
+
+
+def test_includes_that_go_round_in_a_circle_are_read_once(tmp_path):
+    # a.txt and b.txt include each other, and b.txt the environment file, which is not read as
+    # a requirements file: the line of its description would be a requirement.
+    write(
+        tmp_path,
+        "environment.yml",
+        """
+        description: |
+          attrs==21.1.0
+        dependencies:
+          - pip:
+            - -r a.txt
+            - -r b.txt
+            - -r c.txt
+        """,
+    )
+    write(tmp_path, "a.txt", "-r b.txt\nanthropic==1.8.0\n")
+    write(tmp_path, "b.txt", "-r a.txt\n-r environment.yml\nrich==13.7.1\n")
+    # An include of a name the system cannot hold (which Python 3.10 refuses to resolve) is
+    # skipped like a missing one.
+    (tmp_path / "c.txt").write_bytes(b"-r d\x00e.txt\nhttpx==0.28.1\n")
+    project = load_project(tmp_path)
+    assert versions(project) == {
+        "anthropic": ("1.8.0", True, "pinned"),
+        "httpx": ("0.28.1", True, "pinned"),
+        "rich": ("13.7.1", True, "pinned"),
+    }
+    assert project.warnings == []
 
 
 def test_conda_environment_yaml_also_works(tmp_path):
@@ -334,7 +453,8 @@ def test_a_pip_pin_missing_from_the_venv_is_labelled_with_the_environment_file(t
     assert project.version_source == ".venv, environment.yml for 1 not in it"
 
 
-def test_a_requirements_file_the_pip_block_includes_is_read_on_its_own(tmp_path):
+def test_a_requirements_file_the_pip_block_includes_keeps_its_own_label(tmp_path):
+    # requirements.txt is read on its own too, first: its pin keeps its name.
     write(tmp_path, "requirements.txt", "attrs==25.1.0\n")
     write(
         tmp_path,
@@ -382,16 +502,20 @@ def test_a_conda_environment_without_a_pip_list_has_no_dependencies(tmp_path, te
 
 
 def test_the_entries_of_a_conda_environment_are_not_expanded(tmp_path, caplog):
-    # Aliases nested nine deep: an entry that is a list of 9**9 strings, which reading the
-    # entries as text would build. Only a string is a conda package.
+    # Aliases nested four deep: an entry that is a list of 9**4 strings. Nested nine deep, a
+    # reader that turned the entries into text would build 9**9 and never finish; four deep it
+    # finishes at once, and counts 2 conda packages (or 6562), not the 1 there is.
     lines = ['a0: &a0 ["x", "x", "x", "x", "x", "x", "x", "x", "x"]']
-    lines += [f"a{i}: &a{i} [{', '.join([f'*a{i - 1}'] * 9)}]" for i in range(1, 9)]
-    lines.append('dependencies: ["python=3.12", *a8, {pip: ["rich==13.7.1"]}]')
+    lines += [f"a{i}: &a{i} [{', '.join([f'*a{i - 1}'] * 9)}]" for i in range(1, 4)]
+    lines.append('dependencies: ["python=3.12", *a3, {pip: ["rich==13.7.1"]}]')
     write(tmp_path, "environment.yml", "\n".join(lines) + "\n")
     with caplog.at_level("DEBUG", logger="since_cutoff.project"):
         project = load_project(tmp_path)
     assert versions(project) == {"rich": ("13.7.1", True, "pinned")}
-    assert "environment.yml: 1 conda packages are not read" in caplog.text
+    assert (
+        "environment.yml: 1 conda package is not read, as it does not come from PyPI: "
+        "python=3.12\n" in caplog.text
+    )
 
 
 @pytest.mark.parametrize(

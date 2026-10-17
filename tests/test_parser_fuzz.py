@@ -69,8 +69,8 @@ TEXT = st.builds(
 )  # the encoders of UTF-16 and UTF-32 write a byte order mark, as Notepad does
 
 
-# YAML nested deeper than the parser's recursion goes; a date that is none, which the YAML
-# loader raises a ValueError for.
+# YAML nested deeper than the parser's recursion goes; a date that does not exist (2026-13-01),
+# which the YAML loader raises a ValueError for.
 @example("environment.yml", b"[" * 2000, None)
 @example("environment.yml", b"dependencies: 2026-13-01\n", None)
 @given(

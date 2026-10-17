@@ -40,6 +40,7 @@ HEAVY = (
     "concurrent.futures.process",
     "multiprocessing",
     "griffe",
+    "yaml",
 )
 # status --hook reads the notes block (notes, apidiff) and the deps hash (engine, through
 # sync), but prints without rich and never renders a report.
@@ -50,6 +51,7 @@ NOT_FOR_STATUS = (
     "rich",
     "rich.console",
     "rich.progress",
+    "yaml",
 )
 # Records, for each module, the module (and line) whose import statement loaded it first, so
 # that a failure names who imports a heavy module: the import machinery's frames are skipped.

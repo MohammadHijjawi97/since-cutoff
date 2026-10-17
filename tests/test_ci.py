@@ -448,9 +448,38 @@ def test_pre_commit_hook_runs_when_dependencies_change(path: str, hit: bool) -> 
     assert "- id: since-cutoff-scan" in manifest
     assert "entry: since-cutoff scan" in manifest
     assert "pass_filenames: false" in manifest
-    files = re.search(r"^\s*files: '(.+)'$", manifest, re.M)
-    assert files is not None
-    assert bool(re.search(files.group(1), path)) is hit
+    # Every hook: scan, and sync and status, which also run when AGENTS.md or CLAUDE.md does.
+    files = re.findall(r"^\s*files: '(.+)'$", manifest, re.M)
+    assert len(files) == manifest.count("\n- id: ") == 3
+    assert [bool(re.search(pattern, path)) for pattern in files] == [hit] * 3
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    """A glob of hashFiles or a workflow's ``paths:``: ``**/`` any directories, ``*`` any
+    characters but ``/``."""
+    parts = re.split(r"(\*\*/|\*)", pattern)
+    wild = {"**/": "(?:.*/)?", "*": "[^/]*"}
+    return re.compile("".join(wild.get(p) or re.escape(p) for p in parts))
+
+
+@pytest.mark.parametrize("name", ["environment.yml", "environment.yaml"])
+def test_the_action_cache_and_the_readme_workflows_watch_conda_environment_files(
+    name: str,
+) -> None:
+    # The Action's cache key hashes the files the versions come from, and the workflow in each
+    # README runs when one of them changes, at the root or in a directory.
+    action = _read("action.yml")
+    key = re.search(r"hashFiles\(([^)]*)\)", action)
+    assert key is not None
+    globs = re.findall(r"'([^']+)'", key.group(1))
+    for path in (name, f"envs/{name}"):
+        assert any(_glob(g).fullmatch(path) for g in globs), (path, globs)
+        assert not any(_glob(g).fullmatch(f"{path}.bak") for g in globs)
+    for readme in ("README.md", "README.es.md", "README.fr.md", "README.zh-CN.md"):
+        [paths] = re.findall(r"^\s+paths: \[(.+)\]$", _read(readme), re.M)
+        globs = re.findall(r'"([^"]+)"', paths)
+        for path in (name, f"envs/{name}"):
+            assert any(_glob(g).fullmatch(path) for g in globs), (readme, path, globs)
 
 
 def _check_versions() -> Any:

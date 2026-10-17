@@ -192,7 +192,7 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
     local = {name: reason for name, reason in found.local.items() if name not in workspace}
     lock = _Lock()
     version_source = ""
-    notices: list[str] = []
+    notices = list(found.warnings)
     lockfile = next((root / n for n in LOCKFILES if (root / n).is_file()), None)
     if lockfile is None:
         pylocks = sorted(root.glob("pylock.*.toml"))
@@ -230,7 +230,7 @@ def load_project(root: Path, *, python: str | None = None) -> Project:
     if not direct_names and installed:
         direct_names = set(installed)
     if not direct_names and not local:
-        raise ProjectError(_no_dependencies(root))
+        raise ProjectError(_no_dependencies(root, found.warnings))
 
     deps: list[Dependency] = []
     for key in sorted(
@@ -300,10 +300,11 @@ def _mixed_source(main: str, deps: list[Dependency], pinned_in: dict[str, str]) 
     return ", ".join(parts)
 
 
-def _no_dependencies(root: Path) -> str:
+def _no_dependencies(root: Path, notices: list[str]) -> str:
     """The error for a project without dependencies it can read, naming what it can read and
-    the setup.py or setup.cfg it does not (running setup.py would run the project's code), and
-    the conda packages of an environment.yml without a pip block."""
+    the setup.py or setup.cfg it does not (running setup.py would run the project's code), the
+    conda packages of an environment.yml without a pip block, and what the scan would have
+    warned about (a file the pip block includes that does not exist)."""
     text = (
         f"no dependencies found in {root}. since-cutoff reads pyproject.toml, requirements*.txt, "
         "Pipfile, the pip block of a conda environment.yml, a lockfile (uv.lock, poetry.lock, "
@@ -315,6 +316,7 @@ def _no_dependencies(root: Path) -> str:
             f" {conda_env.name} has no package in its pip block, and its conda packages are not "
             "read: they do not come from PyPI."
         )
+    text += "".join(f" {n[:1].upper()}{n[1:]}." for n in notices)
     legacy = [name for name in ("setup.py", "setup.cfg") if (root / name).is_file()]
     if legacy:
         text += (
@@ -586,6 +588,9 @@ class _Declared(NamedTuple):
     indirect: set[str]
     # Whether a requirements file is pip-compile output, which pins the whole tree.
     compiled: bool
+    # What the scan should say about the files read: a file that the pip block of
+    # environment.yml includes and that does not exist.
+    warnings: list[str]
 
 
 def _declared_dependencies(root: Path, python: str | None = None) -> _Declared:
@@ -644,10 +649,18 @@ def _declared_dependencies(root: Path, python: str | None = None) -> _Declared:
             is_direct = roles is None or roles.get(canonicalize_name(req.name), True)
             add(req, req_file.relative_to(root).as_posix(), is_direct)
 
+    notices: list[str] = []
     conda_env = _conda_env_file(root)
     if conda_env is not None:
-        for req in _conda_pip(conda_env):
+        # The packages of a file the pip block includes are labelled with the environment
+        # file, as those a requirements file includes are with the requirements file.
+        reqs, missing = _conda_pip(conda_env)
+        for req in reqs:
             add(req, conda_env.name)
+        notices += [
+            f"the pip block of {conda_env.name} includes {name}, which does not exist"
+            for name in missing
+        ]
 
     out: dict[str, str | None] = {}
     pinned_in: dict[str, str] = {}
@@ -670,7 +683,7 @@ def _declared_dependencies(root: Path, python: str | None = None) -> _Declared:
             allowed &= r.specifier
         if str(allowed):
             ranges[key] = str(allowed)
-    return _Declared(out, local, pinned_in, ranges, set(found) - direct, compiled)
+    return _Declared(out, local, pinned_in, ranges, set(found) - direct, compiled, notices)
 
 
 # The Python that environment markers are evaluated for when the project names none: newer
@@ -813,7 +826,10 @@ def _requirement_files(root: Path) -> list[Path]:
 def parse_requirements(path: Path, _seen: set[Path] | None = None) -> list[Requirement]:
     """Parse a pip requirements file, following ``-r`` includes. Unsupported lines are skipped."""
     seen = _seen if _seen is not None else set()
-    path = path.resolve()
+    try:
+        path = path.resolve()
+    except (OSError, ValueError):  # a name the system cannot hold: ``-r a<NUL>b`` on 3.10
+        return []
     if path in seen or not path.is_file():
         return []
     seen.add(path)
@@ -823,13 +839,22 @@ def parse_requirements(path: Path, _seen: set[Path] | None = None) -> list[Requi
         line = re.sub(r"(^|\s+)#.*$", "", raw).strip()  # pip's comment rule
         if not line:
             continue
-        if line.startswith(("-r ", "--requirement ", "-r\t")):
-            out += parse_requirements(path.parent / line.split(None, 1)[1].strip(), seen)
+        include = _included_file(line)
+        if include is not None:
+            out += parse_requirements(path.parent / include, seen)
             continue
         req = _requirement_line(line)
         if req is not None:
             out.append(req)
     return out
+
+
+def _included_file(line: str) -> str | None:
+    """The file a line of a requirements file includes, as written (``-r base.txt``,
+    ``--requirement base.txt``), or None for any other line."""
+    if line.startswith(("-r ", "--requirement ", "-r\t")):
+        return line.split(None, 1)[1].strip()
+    return None
 
 
 def _requirement_line(line: str) -> Requirement | None:
@@ -849,13 +874,17 @@ def _conda_env_file(root: Path) -> Path | None:
     return next((root / name for name in CONDA_ENV_FILES if (root / name).is_file()), None)
 
 
-def _conda_pip(path: Path) -> list[Requirement]:
+def _conda_pip(path: Path) -> tuple[list[Requirement], list[str]]:
     """The requirements in the pip block of a conda environment file (``- pip:`` under
-    ``dependencies:``), each line read as a line of a requirements file.
+    ``dependencies:``), each line read as a line of a requirements file, and the files it
+    includes that do not exist, as written.
 
-    The conda packages around it (``python=3.12``, ``numpy=1.26``) are not read: they come
-    from conda's channels, not PyPI. Nor are options, which are not followed (``-r
-    extra.txt``, ``-e .``), local paths and lines that are no requirement (a bare
+    An include (``-r requirements-x.txt``) is followed relative to the environment file, next
+    to which conda writes the block for pip to read, and the file is read like a requirements
+    file, its own includes too; an include of a file already read, the environment file among
+    them, is not read again. The conda packages around it (``python=3.12``, ``numpy=1.26``)
+    are not read: they come from conda's channels, not PyPI. Nor are other options (``-e .``),
+    an include from a URL, local paths and lines that are no requirement (a bare
     ``git+https://...`` URL). A document that is no mapping, or has no pip block, holds none;
     a file that is not YAML is refused like a broken lockfile.
     """
@@ -867,6 +896,8 @@ def _conda_pip(path: Path) -> list[Requirement]:
         # ValueError: a scalar its tag cannot hold (``2026-13-01``, ``!!int x``).
         raise ProjectError(f"could not parse {path.name}: {_yaml_problem(exc)}") from exc
     out: list[Requirement] = []
+    missing: list[str] = []
+    seen = {path.resolve()}
     conda: list[str] = []
     for entry in _array(_table(data).get("dependencies")):
         if not isinstance(entry, dict):
@@ -879,6 +910,13 @@ def _conda_pip(path: Path) -> list[Requirement]:
             if not isinstance(raw, str):
                 continue
             line = re.sub(r"(^|\s+)#.*$", "", raw).strip()  # pip's comment rule
+            include = _included_file(line)
+            if include is not None and "://" not in include:
+                if (path.parent / include).is_file():
+                    out += parse_requirements(path.parent / include, seen)
+                elif include not in missing:
+                    missing.append(include)
+                continue
             req = _requirement_line(line) if line else None
             if req is not None:
                 out.append(req)
@@ -886,13 +924,15 @@ def _conda_pip(path: Path) -> list[Requirement]:
                 log.debug("%s: %r in the pip block is not read", path.name, line)
     if conda:
         log.debug(
-            "%s: %d conda packages are not read, as they do not come from PyPI: %s%s",
+            "%s: %d conda %s not read, as %s not come from PyPI: %s%s",
             path.name,
             len(conda),
+            "package is" if len(conda) == 1 else "packages are",
+            "it does" if len(conda) == 1 else "they do",
             ", ".join(conda[:10]),
             ", ..." if len(conda) > 10 else "",
         )
-    return out
+    return out, missing
 
 
 def _yaml_problem(exc: Exception) -> str:

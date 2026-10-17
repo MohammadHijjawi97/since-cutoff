@@ -25,11 +25,16 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    project's code); a project with nothing else gets an error that says so.
    The version source in the reports names every place the versions come from.
    - A conda environment file's `pip:` block is read as a requirements file: pins, ranges,
-     extras and direct references (`pkg @ git+https://...`, not looked up on PyPI). Its conda
-     packages (`python=3.12`, `numpy=1.26`) are not read, as they do not come from PyPI, and
-     neither are options (`-r extra.txt` is not followed; a `requirements*.txt` is read on its
-     own) or local paths. A version pinned there is labelled `environment.yml`, also when a
-     `.venv` provides the others.
+     extras and direct references (`pkg @ git+https://...`, not looked up on PyPI), and the
+     files it includes (`-r requirements-x.txt`, relative to the environment file, as conda
+     has pip read it), with a warning for one that does not exist. Its conda packages
+     (`python=3.12`, `numpy=1.26`) are not read, as they do not come from PyPI, and neither
+     are other options (`-e .`) or local paths. A version pinned there or in a file it
+     includes is labelled `environment.yml` (the pins of a file that `requirements.txt`
+     includes are labelled `requirements.txt`), also when a `.venv` provides the others. An
+     environment file that is not YAML stops the scan with an error (`could not parse
+     environment.yml: ...`), also when a lockfile provides the versions, as a `pyproject.toml`
+     that is not TOML does.
    - A lockfile the project is not set up for (a `poetry.lock` or `pdm.lock` next to a
      `pyproject.toml` without that tool's table or build backend, a `Pipfile.lock` without a
      `Pipfile`) is ignored, with a warning, when its versions disagree with the pinned
