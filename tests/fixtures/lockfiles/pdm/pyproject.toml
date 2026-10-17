@@ -1,0 +1,63 @@
+[build-system]
+requires = ["pdm-backend", "pdm-build-locked"]
+build-backend = "pdm.backend"
+
+[project]
+# PEP 621 project metadata
+# See https://www.python.org/dev/peps/pep-0621/
+name = "pdm"
+description = "A modern Python package and dependency manager supporting the latest PEP standards"
+dynamic = ["version"]
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "argcomplete>=3.6.3",
+    "blinker",
+    "packaging>22.0",
+    "platformdirs",
+    "rich>=12.3.0",
+    "virtualenv>=20",
+    "unearth>=0.17.5",
+    "findpython>=0.7.0,<1.0.0a0",
+    "tomli>=1.1.0; python_version < \"3.11\"",
+    "hishel[httpx]>=1.0.0",
+    "httpx[socks]<1,>0.20",
+    "httpcore>=1.0.6",
+    "certifi>=2024.8.30",
+    "id>=1.5.0"
+]
+
+[project.optional-dependencies]
+pytest = [
+    "pytest",
+]
+copier = ["copier>=8.0.0"]
+cookiecutter = ["cookiecutter"]
+keyring = ["keyring"]
+template = [
+    "pdm[copier,cookiecutter]",
+]
+all = [
+    "pdm[keyring,template]",
+]
+
+[project.scripts]
+pdm = "pdm.core:main"
+
+[dependency-groups]
+test = [
+    "pdm[pytest]",
+    "pytest-cov",
+]
+tox = [
+    "tox",
+    "tox-pdm>=0.5",
+]
+doc = [
+    "zensical>=0.0.28; python_version >= '3.10'",
+    "mkdocstrings[python]>=0.18",
+    "setuptools>=62.3.3",
+]
+workflow = [
+    "parver>=0.3.1",
+]

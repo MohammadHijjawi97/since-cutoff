@@ -1,0 +1,15 @@
+# Production dependencies for pypistats.org
+# To update: pip-compile requirements.in
+# To install: pip install -r requirements.txt
+
+google-cloud-bigquery>=1.17
+flask>=1.1
+flask-sqlalchemy>=2.4
+flask-migrate>=2.5
+requests>=2.22
+celery>=4.3
+celery-redbeat>=2.0  # Redis-based beat scheduler
+redis>=3.3
+flask-limiter>=1.2.1
+flower>=0.9.5
+greenlet>=1.0  # Required by SQLAlchemy

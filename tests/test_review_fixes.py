@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import json
 import zipfile
@@ -40,7 +41,7 @@ from since_cutoff.notes import (
     remove_block,
     template_bullet,
 )
-from since_cutoff.project import load_project, parse_requirements
+from since_cutoff.project import load_project, parse_requirements, scan_file
 from since_cutoff.providers import check_spec
 from since_cutoff.pypi import SourceTree, _extract_zip, _refine_namespaces, _safe_target
 from since_cutoff.report import headline, write_outputs
@@ -309,6 +310,20 @@ def test_archive_members_cannot_escape(tmp_path, member):
     assert _safe_target(tmp_path, member) is None
 
 
+def test_extraction_resolves_each_directory_once(tmp_path, monkeypatch):
+    # Resolving every member's path took half of a wheel's extraction time on Windows.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(50):
+            zf.writestr(f"pkg/sub/m{i}.py", "x = 1\n")
+    calls = []
+    resolve = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: calls.append(self) or resolve(self))
+    _extract_zip(buf.getvalue(), tmp_path, strip_first=False)
+    assert len(list((tmp_path / "pkg/sub").iterdir())) == 50
+    assert len(calls) == 2  # the destination and pkg/sub
+
+
 def test_oversized_members_are_skipped(tmp_path):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -323,6 +338,30 @@ def test_namespace_packages_resolve_to_the_real_package(tmp_path):
         tmp_path, {"google/cloud/storage/__init__.py": "", "google/cloud/storage/blob.py": ""}
     )
     assert _refine_namespaces(tmp_path, ["google"]) == ["google.cloud.storage"]
+
+
+def test_a_shared_namespace_is_not_the_package_that_has_modules_in_it(tmp_path):
+    # google-cloud-core ships google/cloud/client.py, in the google.cloud namespace that
+    # google-cloud-bigquery shares: `from google.cloud import bigquery` is not a use of it.
+    core = write_tree(
+        tmp_path / "core",
+        {
+            "google/cloud/client.py": "",
+            "google/cloud/exceptions.py": "",
+            "google/cloud/_helpers.py": "",
+            "google/api_core/__init__.py": "",
+        },
+    )
+    names = _refine_namespaces(core, ["google"])
+    assert names == ["google.api_core", "google.cloud.client", "google.cloud.exceptions"]
+    # The names of a tree extracted by an earlier version are refined the same way.
+    assert _refine_namespaces(core, ["google.api_core", "google.cloud"]) == names
+    bigquery = scan_file(ast.parse("from google.cloud import bigquery\n"))
+    assert not bigquery.imports(names)
+    assert scan_file(ast.parse("from google.cloud import exceptions\n")).imports(names)
+    # A top-level namespace directory with modules is still the package.
+    write_tree(tmp_path / "flat", {"flat/core.py": ""})
+    assert _refine_namespaces(tmp_path / "flat", ["flat"]) == ["flat"]
 
 
 def test_invalid_and_local_versions(cache):
@@ -374,7 +413,7 @@ def test_git_path_and_workspace_dependencies_are_not_looked_up_on_pypi(tmp_path)
     deps = {d.name: d for d in load_project(tmp_path).dependencies}
     assert "common" not in deps  # workspace member: the project's own code
     assert deps["mylib"].non_pypi == "path"
-    assert deps["tool"].non_pypi == "direct URL"
+    assert deps["tool"].non_pypi == "git+https://example.org/tool.git"
     assert deps["rich"].non_pypi is None
 
 

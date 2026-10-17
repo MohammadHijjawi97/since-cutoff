@@ -4,23 +4,274 @@ Ranking favours changes that are most likely to bite this project: symbols the p
 code already touches, hard breaks over soft ones, top-level exports over deep internals, and
 changes that recur across many call sites. Near-duplicates are probed once, and the budget is
 shared round-robin across packages so one huge migration cannot crowd out everything else.
+
+What the code touches is judged per package, from the files that import it
+(:meth:`since_cutoff.project.Project.code_use`): ``files`` below is that list, empty for a
+package the code does not import.
 """
 
 from __future__ import annotations
 
+import argparse
+import datetime
+import io
+import logging
 import math
-from collections.abc import Iterable
+import pathlib
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import replace
+from typing import Any, NamedTuple, Protocol
 
-from since_cutoff.apidiff import KIND_PRIORITY, APIChange
+from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
+    DEPRECATED,
+    KIND_CHANGED,
+    KIND_PRIORITY,
+    MOVED,
+    PARAM_KEYWORD_ONLY,
+    PARAM_POSITIONAL_ONLY,
+    PARAM_REMOVED,
+    PARAM_REQUIRED,
+    RECEIVERS_SCHEMA,
+    REMOVED,
+    APIChange,
+    griffe_version,
+    is_beta_segment,
+    keyword_parameters,
+    load_api,
+    receiver_map,
+)
+from since_cutoff.cache import DiskCache, stable_hash
+from since_cutoff.errors import PackageIndexError
+from since_cutoff.notes import library_replacement
+from since_cutoff.project import ApiTypes, FileUse, Project, typed
+from since_cutoff.pypi import PyPI
+
+log = logging.getLogger(__name__)
+
+# How used_names found a change in the project's code (see match): through one of its paths;
+# or, for a change from a diff made before DIFF_SCHEMA 12 (no import paths), by its package
+# and name only, which the "your code uses" mark then says; or, for a method or attribute read
+# on a value the file shows nothing of (FileUse.loose), by the member's name alone, when that
+# name is one changed API's in all the packages the code imports or reaches and not a common
+# Python name (NAME_ONLY; tagged "[name match]", and left out of every report, the notes,
+# --fail-on and --annotate unless asked: engine.Settings.include_name_matches).
+PATH_MATCH = "path"
+NAME_MATCH = "name"
+NAME_ONLY = "name_only"
+MATCHED_BY_NAME = "matched by name"
+NAME_MATCH_TAG = "[name match]"
+# Member names too common in Python to stand for one package's API on their own (NAME_ONLY):
+# those of dict, list, set and str, of numbers and arrays (``sum``, ``floor``), of files, of
+# queries and sessions (``fetch``, ``execute``, ``commit``), and of every client.
+COMMON_NAMES = frozenset(
+    {
+        "abs",
+        "add",
+        "all",
+        "any",
+        "append",
+        "apply",
+        "bool",
+        "call",
+        "ceil",
+        "clear",
+        "close",
+        "commit",
+        "connect",
+        "copy",
+        "count",
+        "create",
+        "decode",
+        "delete",
+        "diff",
+        "dump",
+        "dumps",
+        "encode",
+        "execute",
+        "explain",
+        "extend",
+        "fetch",
+        "fetchall",
+        "fetchone",
+        "filter",
+        "find",
+        "first",
+        "flatten",
+        "floor",
+        "format",
+        "get",
+        "group",
+        "head",
+        "index",
+        "insert",
+        "items",
+        "iter",
+        "join",
+        "keys",
+        "last",
+        "len",
+        "load",
+        "loads",
+        "map",
+        "match",
+        "max",
+        "mean",
+        "merge",
+        "min",
+        "next",
+        "open",
+        "parse",
+        "pop",
+        "put",
+        "query",
+        "read",
+        "remove",
+        "render",
+        "replace",
+        "reset",
+        "round",
+        "run",
+        "save",
+        "search",
+        "select",
+        "send",
+        "set",
+        "sort",
+        "split",
+        "start",
+        "stop",
+        "strip",
+        "submit",
+        "sum",
+        "tail",
+        "update",
+        "validate",
+        "values",
+        "wait",
+        "where",
+        "write",
+        # Names that arrays, configs and parsed arguments have as often as any one package.
+        "labels",
+        "rank",
+        "shape",
+        "to_dict",
+        "to_json",
+        "verbose",
+        "view",
+    }
+)
+# The members of the built-in and standard-library types code holds most often: on a value the
+# file shows nothing of, ``union`` is far more likely a set's than polars' ``Enum.union``, and
+# ``fromisoformat`` a datetime's than pandas' ``Timestamp.fromisoformat``. From this Python's
+# own types, at import.
+BUILTIN_MEMBERS = frozenset(
+    name
+    for kind in (
+        dict,
+        list,
+        str,
+        set,
+        frozenset,
+        bytes,
+        bytearray,
+        int,
+        float,
+        complex,
+        tuple,
+        datetime.date,
+        datetime.datetime,
+        datetime.time,
+        datetime.timedelta,
+        pathlib.Path,
+        re.Pattern,
+        re.Match,
+        logging.Logger,
+        io.TextIOWrapper,
+        argparse.Namespace,
+        argparse.ArgumentParser,
+    )
+    for name in dir(kind)
+    if not name.startswith("_")
+)
+
+# How the project's code uses a changed API (form): as the release at the cutoff allowed and
+# the pinned one no longer does, or only uses the API (the line is fine today, but an assistant
+# editing it may add the old form). A static name match: nothing is run.
+OLD_FORM = "old_form"
+USES_API = "uses_api"
+FORM_LABELS = {OLD_FORM: "old form", USES_API: "uses this API"}
+# What a use of a change is (Use.kind), most specific first: the changed parameter passed to its
+# callable; a call of it (or of its class); a read of it on its class or an instance; a name the
+# file imports or reads on a module.
+USE_KEYWORD = "keyword"
+USE_CALL = "call"
+USE_MEMBER = "member"
+USE_REFERENCE = "reference"
+# A file that imports a distribution the package switched away from (DEPENDENCY_SWITCHED):
+# ``names`` is that module, then the switched names the file reads on it (``httpx.Client``),
+# the switched parameters it passes a value of it to (``OpenAI(http_client)``) and the switched
+# types of it it catches around the package's calls (``except httpx.HTTPError``).
+USE_DEPENDENCY = "dependency"
+# How dependency_names writes a caught exception: ``except httpx.HTTPError``.
+CATCHES = "except "
+_USE_ORDER = {USE_KEYWORD: 0, USE_CALL: 1, USE_MEMBER: 2, USE_REFERENCE: 3, USE_DEPENDENCY: 0}
+# Changes whose use is never the old form yet: a static match cannot tell whether a call
+# passes a now-required, keyword-only or positional-only parameter the right way.
+_NEVER_OLD_FORM = (PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
+
+
+class Use(NamedTuple):
+    """Where the project's code uses a change (:func:`uses`).
+
+    File-level for now: ``line`` and ``column`` (1-based and 0-based) stay None until the scan
+    records where in the file each name is used (issue #8, ``FileUse.sites``); the reports
+    show ``app/main.py`` until then, and ``app/main.py:7`` with them.
+    """
+
+    file: str  # relative to the project root, with "/" ("" when unknown)
+    line: int | None
+    column: int | None
+    kind: str  # USE_*
+    names: tuple[str, ...]  # as used_names gives them: (callable,) or (callable, parameter)
+    how: str = PATH_MATCH  # PATH_MATCH; NAME_MATCH (no import paths); NAME_ONLY (see above)
+    form: str = USES_API  # OLD_FORM when this use is the old form of the change (form())
+
+    @property
+    def where(self) -> str:
+        """``app/main.py``, ``app/main.py:7`` once lines are known."""
+        return f"{self.file}:{self.line}" if self.line is not None else self.file
+
+
+# Where a change made by collapse() keeps the changes it merged (as PackageScan keeps its
+# collapsed changes): not a field, so not in to_dict() or results.json.
+_MERGED = "_merged"
 
 _NOISE_NAMES = {"__version__", "__all__", "version", "VERSION"}
+# Module metadata, including what version files generated by setuptools-scm or hatch-vcs define.
+_METADATA_NAMES = {"__version__", "__all__", "__version_tuple__", "version_tuple", "VERSION_TUPLE"}
+# Modules that application code rarely imports directly.
+_SIDE_SEGMENTS = {"cli", "commands", "test", "testing", "experimental"}
+# Integration and implementation layers: type-checker plugins (pydantic.mypy), compatibility
+# shims, protocol adapters (polars.interchange) and per-backend code (sqlalchemy.dialects).
+_INTERNAL_SEGMENTS = {
+    "compat",
+    "connectors",
+    "dialects",
+    "interchange",
+    "internal",
+    "internals",
+    "mypy",
+    "plugin",
+    "plugins",
+}
 
 
-def score(change: APIChange, identifiers: set[str]) -> float:
+def score(change: APIChange, files: Sequence[FileUse] = ()) -> float:
     s = 10.0 - 1.5 * KIND_PRIORITY.get(change.kind, 6)
-    if change.name in identifiers or (change.parameter and change.parameter in identifiers):
-        s += 6.0
-    if change.owner and change.owner in identifiers:
+    s += 3.0 * usage(change, files)
+    if change.owner and any(_names_class(change, f) for f in files):
         s += 2.0
     depth = change.path.count(".")
     s += max(0.0, 3.0 - 0.75 * depth)
@@ -31,7 +282,10 @@ def score(change: APIChange, identifiers: set[str]) -> float:
         s += 0.5
     if change.name in _NOISE_NAMES or (change.name.isupper() and change.owner):
         s -= 4.0  # enum members and constants rarely matter
-    if any(seg in ("cli", "commands", "testing", "experimental") for seg in change.path.split(".")):
+    segments = change.path.split(".")[1:-1]  # modules (and owner), not the package or name
+    if any(seg in _INTERNAL_SEGMENTS for seg in segments):
+        s -= 3.0
+    elif any(seg in _SIDE_SEGMENTS for seg in segments):
         s -= 2.0
     if (
         change.path.count(".") == 1
@@ -43,21 +297,795 @@ def score(change: APIChange, identifiers: set[str]) -> float:
     return s
 
 
-def rank(changes: Iterable[APIChange], identifiers: set[str]) -> list[APIChange]:
-    return sorted(changes, key=lambda c: (-score(c, identifiers), c.path, c.parameter or ""))
+def rank(changes: Iterable[APIChange], files: Sequence[FileUse] = ()) -> list[APIChange]:
+    return sorted(changes, key=lambda c: (-score(c, files), c.path, c.parameter or ""))
+
+
+def collapse(changes: Iterable[APIChange]) -> list[APIChange]:
+    """One entry per change, most useful first.
+
+    The same change is often reachable under several public paths (``pkg.f`` and
+    ``pkg.module.f``); it is listed once, under its shortest path (a move before a removal of
+    the same name: it says more), with the others counted as similar. Module metadata such as
+    ``__version__`` is dropped. The moves of a subpackage's modules to one new parent are one
+    change, the package's move (:func:`package_moves`).
+    """
+    ordered = sorted(
+        changes, key=lambda c: (-score(c), c.path.count("."), c.path, c.parameter or "")
+    )
+    grouped: dict[int, APIChange] = {}
+    for package_move, members in package_moves(ordered):
+        grouped.update((id(m), package_move) for m in members)
+    firsts: dict[str, APIChange] = {}
+    merged: dict[str, list[APIChange]] = {}
+    for c in ordered:
+        if c.name in _METADATA_NAMES:
+            continue
+        whole = grouped.get(id(c))
+        if whole is not None:
+            # The package's move stands for it, where its first member would have stood. The
+            # code is matched against the package's own path too (``from pkg.fast import x``
+            # reaches ``pkg.fast``), not only against each member's.
+            firsts.setdefault(whole.concept_key, whole)
+            merged.setdefault(whole.concept_key, [whole]).extend(_merged(c))
+            continue
+        key = c.concept_key
+        rep = firsts.get(key)
+        if rep is None:
+            firsts[key] = replace(c, also=list(c.also))
+            merged[key] = []
+        elif c.kind == MOVED and rep.kind != MOVED:
+            # A move says more than a removal of the same name (mcp 2's ``FastMCP`` under
+            # ``mcp.server`` became ``MCPServer``; under the ``mcp.server.fastmcp`` shim it is
+            # only gone): it is the entry, in the removal's place.
+            moved = replace(c, also=list(c.also), occurrences=c.occurrences + rep.occurrences)
+            moved.also = [*moved.also, rep.path, *rep.also][:5]
+            firsts[key] = moved
+        else:
+            rep.occurrences += c.occurrences
+            rep.also = [*rep.also, c.path, *c.also][:5]  # to show: "also removed under ..."
+            if c.alias_of and not rep.alias_of:
+                # The same name bound to a method, reached under another path: the entry
+                # says which method, and what the library says of it, as that path does.
+                rep.alias_of = c.alias_of
+                if not rep.hint and c.hint:
+                    rep.hint, rep.hint_source, rep.hint_file = c.hint, c.hint_source, c.hint_file
+                    rep.library_names = list(c.library_names or [])
+        merged[key] += _merged(c)
+    _merge_aliases(firsts, merged)
+    for key, rep in firsts.items():
+        # The project's code is matched against each merged change (used_names), and the
+        # collapsed change lists every path of them all, whatever ``also`` shows.
+        rep.__dict__[_MERGED] = merged[key]
+        if any(c.import_paths is not None for c in merged[key]):
+            every = {p for c in merged[key] for p in paths(c)}
+            rep.import_paths = sorted(every, key=lambda p: (p.count("."), p))
+    return list(firsts.values())
+
+
+def _merge_aliases(firsts: dict[str, APIChange], merged: dict[str, list[APIChange]]) -> None:
+    """One entry for a module-level name bound to a method and for the method itself, when
+    both went (APIChange.alias_of; huggingface_hub 2 removed ``HfApi.duplicate_space`` and the
+    module-level ``duplicate_space = api.duplicate_space`` with it): the name's entry, which
+    the diff gave the method's deprecation text, stands for both, with the method's paths
+    among its other paths, and the method's own removal is no second API to note."""
+    by_path: dict[str, str] = {}  # a merged change's path -> the key of its entry
+    for key, changes in merged.items():
+        for c in changes or [firsts[key]]:
+            by_path.setdefault(c.path, key)
+            for p in c.import_paths or ():
+                by_path.setdefault(p, key)
+    for key in list(firsts):
+        rep = firsts.get(key)
+        if rep is None or not rep.alias_of or rep.kind != REMOVED:
+            continue
+        other = by_path.get(rep.alias_of)
+        if other is None or other == key or other not in firsts:
+            continue
+        method = firsts[other]
+        if method.kind != REMOVED or not method.owner or method.name != rep.name:
+            continue
+        rep.occurrences += method.occurrences
+        rep.also = [*rep.also, method.path, *method.also][:5]
+        merged[key] = [*(merged[key] or [rep]), *(merged[other] or [method])]
+        del firsts[other], merged[other]
+
+
+def _merged(change: APIChange) -> list[APIChange]:
+    """The changes :func:`collapse` merged into ``change``, or ``[change]``."""
+    return list(change.__dict__.get(_MERGED) or [change])
+
+
+# A subpackage counts as moved whole when this many of its modules moved to the same new parent
+# (mcp 2 moved the six modules of ``mcp.server.fastmcp`` to ``mcp.server.mcpserver``), or when
+# every module that left it went there and at least two did; in both cases only when the diff
+# saw nothing public left in it (``move_evidence["left_behind"]`` is 0 on each module's move).
+PACKAGE_MOVE_MODULES = 3
+
+
+def package_moves(changes: Iterable[APIChange]) -> list[tuple[APIChange, list[APIChange]]]:
+    """The whole-package moves among ``changes``: for each subpackage whose modules moved,
+    under their names, to one new parent, one change that says so (kind MOVED, path the
+    subpackage, ``moved_to`` the new parent, ``move_evidence`` ``{"compared": "package",
+    "kept": n, "of": n, "modules": m}``, tagged ``[diff + move checked]`` in the notes), with
+    the moves it stands for: the modules', and those of the classes, functions and values
+    that moved from the subpackage to the new parent alongside them. The individual moves stay
+    in the diff (results.json); :func:`collapse` shows the package's move instead.
+
+    A subpackage counts when :data:`PACKAGE_MOVE_MODULES` of its modules moved there, or when
+    at least two did and no module of it was removed or moved elsewhere; and only when the
+    diff saw that the subpackage has no public name left in the new version (each module's
+    ``move_evidence["left_behind"]`` is 0: the package is gone, or a module with no API, as
+    mcp 2's ``mcp/server/fastmcp.py``). The moves alone cannot tell: a module that stayed
+    makes no change, and ``from pkg.a import w`` still works then, so the modules that left
+    are listed each on its own. The modules' own moves were each checked by the diff (a
+    module keeps at least half of its public names: ``apidiff._Differ.find_moved``), so the
+    package's is as sure as the surest of them. A diff made before DIFF_SCHEMA 16 did not
+    record what was left behind: no group from it.
+    """
+    by_parents: dict[tuple[str, str], list[APIChange]] = {}
+    left: dict[str, set[str]] = {}  # subpackage -> where each module of it that left went
+    itself: dict[str, list[APIChange]] = {}  # subpackage -> the changes to the subpackage
+    for c in changes:
+        if c.owner or c.kind not in (MOVED, REMOVED) or c.name in _METADATA_NAMES:
+            continue
+        if _is_module(c) and "." in c.path:
+            itself.setdefault(c.path, []).append(c)
+        old_parent = c.path.rsplit(".", 1)[0]
+        if "." not in c.path or "." not in old_parent:
+            continue  # a top-level package does not move
+        if c.kind == REMOVED:
+            if _is_module(c):
+                left.setdefault(old_parent, set()).add("")
+            continue
+        new_parent, _, new_name = (c.moved_to or "").rpartition(".")
+        if not new_parent or new_name != c.name or new_parent == old_parent:
+            continue
+        if _is_module(c):
+            left.setdefault(old_parent, set()).add(new_parent)
+        by_parents.setdefault((old_parent, new_parent), []).append(c)
+    out: list[tuple[APIChange, list[APIChange]]] = []
+    for (old_parent, new_parent), members in sorted(by_parents.items()):
+        modules = [m for m in members if _is_module(m)]
+        whole = len(modules) >= PACKAGE_MOVE_MODULES or (
+            len(modules) >= 2 and left.get(old_parent) == {new_parent}
+        )
+        emptied = all((m.move_evidence or {}).get("left_behind") == 0 for m in modules)
+        if not (whole and emptied):
+            continue
+        first = members[0]
+        group = APIChange(
+            package=first.package,
+            from_version=first.from_version,
+            to_version=first.to_version,
+            kind=MOVED,
+            path=old_parent,
+            name=old_parent.rsplit(".", 1)[-1],
+            moved_to=new_parent,
+            old_signature=f"module {old_parent}",
+            new_signature=f"module {new_parent}",
+            import_paths=sorted(
+                {p for m in members for p in paths(m)} | {old_parent},
+                key=lambda p: (p.count("."), p),
+            ),
+            move_evidence={
+                "compared": "package",
+                "kept": len(members),
+                "of": len(members),
+                "modules": len(modules),
+            },
+        )
+        # The subpackage's own removal (or move), when the diff reports one, is part of it.
+        out.append((group, [*members, *itself.get(old_parent, [])]))
+    return out
+
+
+def _is_module(change: APIChange) -> bool:
+    """A change to a module (or package) itself, not to an object in one."""
+    if change.owner:
+        return False
+    if (change.move_evidence or {}).get("compared") in ("module", "package"):
+        return True
+    return (change.old_signature or "").startswith("module ")
+
+
+def other_paths_text(change: APIChange, *, example: bool = True) -> str:
+    """The other public paths of the same change (see :func:`collapse`): ``also removed under
+    12 other paths, e.g. `setuptools.command.alias.alias.ensure_string_list` ``, or "".
+
+    Not "similar": that would read like a replacement, and it names another removed path.
+    """
+    n = change.occurrences - 1
+    if n < 1:
+        return ""
+    verb = {REMOVED: "removed", MOVED: "moved", DEPRECATED: "deprecated"}.get(
+        change.kind, "changed"
+    )
+    e_g = f", e.g. `{change.also[0]}`" if example and change.also else ""
+    return f"also {verb} under {n} other path{'' if n == 1 else 's'}{e_g}"
+
+
+def used_names(change: APIChange, files: Sequence[FileUse]) -> tuple[str, ...]:
+    """The names of a change that the project's code uses, judged file by file.
+
+    ``()``, ``(callable,)`` or ``(callable, parameter)``, from the files that import the
+    change's package (``files``). A module-level name counts when a file imports it, or reads
+    it on an imported module, under one of the change's paths (:func:`paths`, re-exports
+    included: ``from huggingface_hub import hf_hub_download`` for a change to
+    ``huggingface_hub.file_download.hf_hub_download``): ``copier.asdict`` is not the
+    ``asdict`` of ``from dataclasses import asdict``. A method or attribute counts when a file
+    reads it on its class (under one of those paths), on what the file shows is an instance of
+    the class (``app = Starlette(...)`` and ``app.routes``, ``self.routes`` in a subclass; and
+    what the packages' own annotations show is one, ``df = pd.read_csv(...)`` and
+    ``df.applymap``, ``llm = ChatOpenAI(...)`` and ``llm.predict`` of its base class:
+    :func:`type_project`), or on an attribute named after the class (``client.messages.create``
+    for ``Messages.create``); not on any value (``self.middleware`` of the project's own
+    class). A constructor counts when a file calls the class. A changed parameter counts only
+    when it is passed by keyword to its callable: ``resume_download=`` passed to
+    ``hf_hub_download`` says nothing about ``snapshot_download(resume_download=...)``.
+
+    A change from a diff made before DIFF_SCHEMA 12 has no import paths; for it, a path of the
+    same package with the same last name counts too (:func:`match` says "name"). Last, a
+    method or attribute read on a value the file shows nothing of counts by its name alone
+    when :func:`type_project` kept that name (FileUse.loose: one changed API's, in all the
+    packages the code imports or reaches, and not a common Python name): :func:`match` says
+    NAME_ONLY, and the reports tag the use "[name match]".
+    """
+    return _best(change, files)[0]
+
+
+def match(change: APIChange, files: Sequence[FileUse]) -> str | None:
+    """How :func:`used_names` found the change in the project's code: PATH_MATCH (through one
+    of its paths), NAME_MATCH (only by its package and name, for a change without import
+    paths), NAME_ONLY (a member's name alone, on a value the file shows nothing of), or None
+    when the code does not use it."""
+    return _best(change, files)[1]
+
+
+def paths(change: APIChange) -> list[str]:
+    """Every path of a change that the project's code may import or read it under: its own,
+    the other paths it was merged with (all of them, where ``also`` keeps 5 to show) and the
+    re-exports the diff recorded (APIChange.import_paths)."""
+    return list(dict.fromkeys((change.path, *change.also, *(change.import_paths or ()))))
+
+
+def _best(change: APIChange, files: Sequence[FileUse]) -> tuple[tuple[str, ...], str | None]:
+    """The most names any one file uses, and how they were matched (a path before a name).
+
+    A collapsed change is matched as each of the changes it merged (a sync/async twin, a
+    beta mirror, the same class under another module), each with its own owner and paths.
+    """
+    if not files:
+        return (), None
+    merged = _with_paths(change)
+    found = [_in_file(merged, f) for f in files]
+    for how in (PATH_MATCH, NAME_MATCH, NAME_ONLY):
+        best: tuple[str, ...] = ()
+        for _, names, matched in found:
+            if matched == how and _weight(change, names) > _weight(change, best):
+                best = names
+        if best:
+            return best, how
+    return (), None
+
+
+def _weight(change: APIChange, names: tuple[str, ...]) -> tuple[bool, int]:
+    """How much a file's names of a change say: more names, and for a switched dependency
+    the old form first (a file that hands ``httpx`` objects over, before one that reads more
+    of ``httpx`` for itself)."""
+    handed = change.kind == DEPENDENCY_SWITCHED and form(change, names) == OLD_FORM
+    return handed, len(names)
+
+
+def _with_paths(change: APIChange) -> list[tuple[APIChange, frozenset[str]]]:
+    """The changes a (collapsed) change stands for, each with its paths (:func:`paths`)."""
+    return [(c, frozenset(paths(c))) for c in _merged(change)]
+
+
+def _in_file(
+    merged: list[tuple[APIChange, frozenset[str]]], f: FileUse
+) -> tuple[APIChange | None, tuple[str, ...], str | None]:
+    """The names of a change that one file uses, the merged change they are of, and how they
+    were matched: through a path (PATH_MATCH); else, for a change without import paths, by its
+    package and name (NAME_MATCH); else, for a member read on a value the file shows nothing
+    of, by its name alone (NAME_ONLY, :func:`_loose_names`)."""
+    best: tuple[APIChange | None, tuple[str, ...]] = (None, ())
+    for c, by_path in merged:
+        names = _used_in(c, f, by_path)
+        if len(names) > len(best[1]):
+            best = (c, names)
+    if best[1]:
+        return best[0], best[1], PATH_MATCH
+    for c, _ in merged:
+        if c.import_paths is not None:
+            continue  # the diff recorded its paths: the name alone is not enough
+        names = _used_in(c, f, frozenset(_same_name(c, f)))
+        if len(names) > len(best[1]):
+            best = (c, names)
+    if best[1]:
+        return best[0], best[1], NAME_MATCH
+    for c, _ in merged:
+        names = _loose_names(c, f)
+        if len(names) > len(best[1]):
+            best = (c, names)
+    return best[0], best[1], NAME_ONLY if best[1] else None
+
+
+def _loose_names(change: APIChange, f: FileUse) -> tuple[str, ...]:
+    """The names of a member change that a file uses on a value it shows nothing of
+    (FileUse.loose, kept by :func:`type_project` for the names that are one changed API's):
+    ``(name,)``, or ``(name, keyword)`` when the file also passes the changed parameter (or one
+    only a deprecated call form takes: :func:`_keywords`) to a call of that name."""
+    if not change.owner or change.kind == DEPENDENCY_SWITCHED or change.name not in f.loose:
+        return ()
+    passed = next((w for w in _keywords(change) if (change.name, w) in f.keywords), None)
+    if passed:
+        return (change.name, passed)
+    return (change.name,)
+
+
+def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
+    """Where the project's code uses a change: one :class:`Use` per file that uses it (the
+    most names that file uses, as :func:`used_names` counts them), most specific first (a
+    keyword, a call, a member, a reference), then by file.
+
+    File-level for now (``Use.line`` is None): recording each site's line and column is
+    issue #8, after which each file can give several uses, still most specific first.
+    """
+    if not files:
+        return []
+    merged = _with_paths(change)
+    found = []
+    for f in files:
+        c, names, how = _in_file(merged, f)
+        if c is not None and how is not None:
+            kind = _use_kind(c, f, names)
+            shape = form(change, names, kind)
+            if shape == OLD_FORM and kind in (USE_MEMBER, USE_REFERENCE) and _same_kind(c, f):
+                shape = USES_API
+            found.append(Use(f.file, None, None, kind, names, how, shape))
+    return ordered(found)
+
+
+# What a function has as an attribute (``__name__``, ``__doc__``), and what only a function
+# has, not a class: for a class that became a function, or the reverse (same_call_shape).
+_FUNCTION_ATTRS = frozenset(dir(lambda: None))
+_FUNCTION_ONLY = _FUNCTION_ATTRS - frozenset(dir(type))
+
+
+def _same_kind(change: APIChange, f: FileUse) -> bool:
+    """Whether a read of a class that became a function (or the reverse) without a call is
+    valid with the new kind too: a bare reference (``ctx = option_context``) is; a subclass,
+    an ``isinstance()`` or ``issubclass()`` of it, or an attribute only the old kind has, is
+    not."""
+    if not same_call_shape(change):
+        return False
+    own = set(paths(change))
+    read = {attr for owner, attr in f.members if owner in own}
+    if change.new_kind == "function":
+        return not own & f.type_refs and read <= _FUNCTION_ATTRS
+    return not read & _FUNCTION_ONLY
+
+
+def ordered(found: Iterable[Use]) -> list[Use]:
+    """Uses (of one change, or of all the changes of one API) each once, most specific first,
+    then by file and line."""
+    return sorted(
+        dict.fromkeys(found),
+        key=lambda u: (_USE_ORDER.get(u.kind, 9), u.file, u.line or 0, u.names),
+    )
+
+
+def _use_kind(change: APIChange, f: FileUse, names: tuple[str, ...]) -> str:
+    if change.kind == DEPENDENCY_SWITCHED:
+        return USE_DEPENDENCY
+    if len(names) == 2:
+        return USE_KEYWORD
+    if names[0] in f.calls:
+        return USE_CALL
+    return USE_MEMBER if change.owner else USE_REFERENCE
+
+
+def form(change: APIChange, names: tuple[str, ...], kind: str | None = None) -> str:
+    """Whether code that uses these names of a change (:func:`used_names`) uses it in the
+    old form (OLD_FORM) or only uses the API (USES_API); ``kind`` is the use's (USE_*), when
+    known.
+
+    Old form: it reads or imports what was removed, moved (its old path) or changed kind, uses
+    what is deprecated, or passes a removed or deprecated parameter by keyword to its callable.
+    A class that became a function, or the reverse (:func:`same_call_shape`), is called the
+    same way: a call of it is "uses this API" unless it passes a keyword the new signature
+    does not take; a read of it without a call (a subclass, an ``isinstance()``: USE_REFERENCE
+    or USE_MEMBER) is the old form, since a function is no type and a class no function;
+    :func:`uses`, which sees the file, keeps a bare reference (``ctx = option_context``) as
+    "uses this API" (:func:`_same_kind`).
+    A parameter that is now required, keyword-only or positional-only is always "uses this
+    API": whether a call passes it the new way is not something a name match can tell. A
+    function whose deprecation covers one of its call forms (an ``@overload``) only is in the
+    old form where the call passes a parameter only that form takes (APIChange.call_form_only),
+    and "uses this API" otherwise.
+
+    A switched dependency (:func:`dependency_names`) is in the old form where the file hands
+    a value of the old distribution, by keyword or by position, to a switched parameter of a
+    switched constructor, function, or classmethod or staticmethod on its class
+    (``OpenAI(http_client=httpx.Client())``, ``hf_raise_for_status(httpx.get(url))``,
+    ``FastMCP.from_openapi(spec, client=httpx.AsyncClient())``), or catches one of its
+    switched types around the package's calls; reading its names (``httpx.Client``) or
+    importing it is "uses this API": the file may use it for itself. A switched keyword
+    without the old distribution (``OpenAI(timeout=30)``) is no use of it at all.
+    """
+    if change.kind == DEPENDENCY_SWITCHED:
+        handed = any("(" in n or n.startswith(CATCHES) for n in names[1:])
+        return OLD_FORM if handed else USES_API
+    if not names or change.kind in _NEVER_OLD_FORM:
+        return USES_API
+    if same_call_shape(change) and kind in (USE_MEMBER, USE_REFERENCE):
+        return OLD_FORM
+    if change.parameter or change.call_form or same_call_shape(change):
+        return OLD_FORM if len(names) == 2 else USES_API
+    return OLD_FORM
+
+
+def same_call_shape(change: APIChange) -> bool:
+    """A kind change between a class and a function (pandas 3's ``option_context``): a call
+    of it is the same code either way, so a call site is the old form only when it passes a
+    keyword the new signature does not take (:func:`_used_in` adds it to the names)."""
+    return change.kind == KIND_CHANGED and {change.old_kind, change.new_kind} == {
+        "class",
+        "function",
+    }
+
+
+def _same_name(change: APIChange, f: FileUse) -> list[str]:
+    """Paths the file reaches in the change's package that end in the change's name (the
+    name of its class, for a member), as paths of the change."""
+    root = change.path.split(".", 1)[0]
+    last = change.owner or change.name
+    found = [p for p in f.paths if p.split(".", 1)[0] == root and p.rsplit(".", 1)[-1] == last]
+    return sorted(f"{p}.{change.name}" for p in found) if change.owner else sorted(found)
+
+
+def _used_in(change: APIChange, f: FileUse, by_path: frozenset[str]) -> tuple[str, ...]:
+    """The names of ``change`` that file ``f`` uses, through the paths ``by_path``.
+
+    A changed parameter counts only when the file passes it to this very callable: to a call
+    the file shows is of one of those paths (FileUse.keyword_paths), or, for a method matched
+    by its attribute name (``client.messages.create``), to a call at the end of such a chain
+    (FileUse.keyword_chains). ``temperature=`` passed to another library's ``create`` in the
+    same file is not the old form of ``Messages.create``."""
+    if change.kind == DEPENDENCY_SWITCHED:
+        return dependency_names(change, f)
+    owner, name = change.owner, change.name
+    # The keywords that make a call the old form: the changed parameter, or those only a
+    # deprecated call form takes (APIChange.call_form_only).
+    wanted = _keywords(change)
+    passed: str | None = None
+    if not owner:
+        found = sorted(f.paths & by_path, key=lambda p: (p.rsplit(".", 1)[-1] != name, p))
+        if not found:
+            return ()
+        # The name the file imports it under (a package may re-export it under another).
+        callable_name = found[0].rsplit(".", 1)[-1]
+        passed = next((w for w in wanted if any((p, w) in f.keyword_paths for p in by_path)), None)
+        if same_call_shape(change):
+            refused = _refused_keywords(change, f, by_path)
+            return (callable_name, refused[0]) if refused else (callable_name,)
+    elif name == "__init__":
+        named = {path.rsplit(".", 1)[0] for path in by_path} & f.paths
+        if not named:
+            return ()
+        # The class called under any of its names: ``AsyncClient`` for a change merged with
+        # its sync twin's, ``HubClient`` where a package re-exports ``Client`` under that name.
+        others = sorted(c.rsplit(".", 1)[-1] for c in named)
+        called = [c for c in dict.fromkeys([owner, *others]) if c in f.calls]
+        if not called:
+            return ()
+        classes = {path.rsplit(".", 1)[0] for path in by_path}
+        through = sorted((c, w) for w in wanted for c in classes if (c, w) in f.keyword_paths)
+        passed = through[0][1] if through else None
+        callable_name = through[0][0].rsplit(".", 1)[-1] if through else called[0]
+    else:
+        if name.startswith("__") or name not in f.attributes:
+            return ()
+        on_class = any((path.rsplit(".", 1)[0], name) in f.members for path in by_path)
+        by_pair = _pair_chains(change, f)
+        if not (on_class or by_pair):
+            return ()
+        callable_name = name
+        passed = next(
+            (
+                w
+                for w in wanted
+                if (on_class and any((p, w) in f.keyword_paths for p in by_path))
+                or any((chain, w) in f.keyword_chains for chain in by_pair)
+            ),
+            None,
+        )
+    if passed:
+        return (callable_name, passed)
+    return (callable_name,)
+
+
+def _refused_keywords(change: APIChange, f: FileUse, by_path: frozenset[str]) -> list[str]:
+    """The keywords a file passes to a callable, under any of its paths, that the new
+    signature does not take (none when it takes ``**kwargs``, or is not recorded whole)."""
+    accepted = keyword_parameters(change.new_signature)
+    if accepted is None:
+        return []
+    return sorted(k for p, k in f.keyword_paths if p in by_path and k not in accepted)
+
+
+def _keywords(change: APIChange) -> tuple[str, ...]:
+    """The keywords a call passes in the old form of ``change``: its parameter (not ``*args``
+    or ``**kwargs``), or, for a function deprecated in one call form only, the parameters that
+    form alone takes."""
+    parameter = change.parameter
+    if parameter:
+        return () if parameter.startswith(("*", "__")) else (parameter,)
+    return tuple(change.call_form_only or ())
+
+
+def dependency_names(change: APIChange, f: FileUse) -> tuple[str, ...]:
+    """What a file that imports the package does with the distribution the package switched
+    away from (DEPENDENCY_SWITCHED): ``()`` when it does not import it; else its module, then
+    the switched names it reads on it (``httpx.Client``, ``httpx.Timeout``: APIChange
+    .dependency's ``names``), then each switched parameter of a switched constructor, function,
+    or classmethod or staticmethod on its class (``calls``) it passes a value that reads the
+    old distribution to, by keyword or by position (``OpenAI(http_client)`` for
+    ``OpenAI(http_client=httpx.Client())``, or for ``c`` after ``c = httpx.Client()``:
+    FileUse.keyword_modules; ``hf_raise_for_status(response)`` for
+    ``hf_raise_for_status(httpx.get(url))``: FileUse.positional_modules), then each switched
+    type of it it catches around a call of the package (``except httpx.HTTPError``:
+    FileUse.handled). Only the file's own names are read: what a variable holds is known only
+    from what the file assigns it, and ``OpenAI(timeout=30.0)`` next to an unrelated
+    ``httpx.get`` hands over nothing."""
+    d = change.dependency or {}
+    old = [str(m) for m in d.get("old_modules") or ()]
+    imported = [m for m in old if m in f.paths]
+    if not imported:
+        return ()
+    names = {str(n) for n in d.get("names") or ()}
+    caught = sorted(
+        {
+            exception
+            for exception, module in f.handled
+            if module in _package_modules(change)
+            and exception.rsplit(".", 1)[-1] in names
+            and any(exception.startswith(m + ".") for m in imported)
+        }
+    )
+    reads = sorted(
+        p
+        for p in f.paths
+        if p.rsplit(".", 1)[-1] in names
+        and any(p.startswith(m + ".") for m in imported)
+        and p not in caught
+    )
+    calls: set[tuple[str, str]] = set()
+    by_position: dict[tuple[str, int], str] = {}
+    for c in d.get("calls") or ():
+        if len(c) >= 2:
+            calls.add((str(c[0]), str(c[1])))
+            # ``[path, parameter, position]``; a diff made earlier in schema 19 has no position.
+            if len(c) > 2 and isinstance(c[2], int) and not isinstance(c[2], bool):
+                by_position[(str(c[0]), c[2])] = str(c[1])
+    tops = {m.split(".")[0] for m in imported}
+    handed = {(path, keyword) for path, keyword, module in f.keyword_modules if module in tops}
+    handed |= {
+        (path, by_position[(path, i)])
+        for path, i, module in f.positional_modules
+        if module in tops and (path, i) in by_position
+    }
+    passes = sorted({f"{_call_name(path)}({keyword})" for path, keyword in handed & calls})
+    return (imported[0], *reads, *passes, *(CATCHES + e for e in caught))
+
+
+def _call_name(path: str) -> str:
+    """How a switched call is named: ``OpenAI`` for ``openai.OpenAI``, ``FastMCP.from_openapi``
+    for a classmethod on its class (a lower-case name after a capitalised one)."""
+    parts = path.split(".")
+    if len(parts) > 2 and parts[-2][:1].isupper() and not parts[-1][:1].isupper():
+        return ".".join(parts[-2:])
+    return parts[-1]
+
+
+def _package_modules(change: APIChange) -> set[str]:
+    """The top-level modules of a change's package: ``huggingface_hub``."""
+    return {p.split(".")[0] for p in (change.path, *(change.import_paths or ())) if p}
+
+
+def _pair_chains(change: APIChange, f: FileUse) -> list[str]:
+    """The chains of the file that reach a method or attribute by the attribute named after
+    its class (``client.messages.create`` for ``Messages.create``), with ``beta`` in them
+    when the change is to an SDK's beta mirror (APIChange.in_beta) and without it otherwise:
+    ``client.beta.messages.create`` is not ``Messages.create`` of ``resources.messages``."""
+    pair = f"{(change.owner or '').lower()}.{change.name}"
+    if pair not in f.pairs:
+        return []
+    found = []
+    for chain in f.chains:
+        parts = chain.split(".")
+        beta = any(is_beta_segment(p) for p in parts[:-2])
+        if ".".join(parts[-2:]) == pair and beta == change.in_beta:
+            found.append(chain)
+    return found
+
+
+def _names_class(change: APIChange, f: FileUse) -> bool:
+    """Whether the file imports (or reads on an imported module) the class that owns a
+    method or attribute change, under one of the change's paths."""
+    return any(path.rsplit(".", 1)[0] in f.paths for c in _merged(change) for path in paths(c))
+
+
+def usage(change: APIChange, files: Sequence[FileUse] = ()) -> int:
+    """How directly the project's code touches a change.
+
+    2: it names exactly what changed (the changed name, or a callable and its changed
+    parameter); 1: it names the callable but not the changed parameter; 0: neither. For a
+    switched dependency: 2 in the old form, 1 when a file only imports or reads the old one.
+    """
+    names = used_names(change, files)
+    if not names:
+        return 0
+    if change.kind == DEPENDENCY_SWITCHED:
+        return 2 if form(change, names) == OLD_FORM else 1
+    return 2 if len(names) == 2 or not change.parameter else 1
+
+
+def used_name(change: APIChange, files: Sequence[FileUse]) -> str | None:
+    """The most specific name of the change that the project's code uses, if any."""
+    names = used_names(change, files)
+    return names[-1] if names else None
+
+
+def uses_text(change: APIChange, files: Sequence[FileUse]) -> str | None:
+    """The names for a "your code uses ..." mark, as Markdown code (None if it uses none),
+    with ", matched by name" when only the package and name matched, and "[name match]" when
+    only a member's name did, on a value the file shows nothing of (:func:`match`)."""
+    names, how = _best(change, files)
+    if not names:
+        return None
+    if change.kind == DEPENDENCY_SWITCHED:  # what it reads and passes, else the import
+        shown = [f"`{n}`" for n in names[1:] or names]
+        return ", ".join(shown[:-1]) + f" and {shown[-1]}" if len(shown) > 1 else shown[0]
+    text = " and ".join(f"`{n}`" for n in names)
+    if how == NAME_MATCH:
+        return f"{text}, {MATCHED_BY_NAME}"
+    return f"{text} {NAME_MATCH_TAG}" if how == NAME_ONLY else text
+
+
+def project_rank(change: APIChange, files: Sequence[FileUse]) -> tuple[int, bool, float, str]:
+    """Sort key for one package's changes as seen from a project.
+
+    What the code uses comes first (a callable and its changed parameter before the callable
+    alone), then hard breaks before deprecations, then the score.
+    """
+    return (
+        -usage(change, files),
+        change.kind == DEPRECATED,
+        -score(change, files),
+        change.path,
+    )
+
+
+# What an assistant writing new code against a package is most likely to run into, most first
+# (:func:`tier`): the ranking of ``sync --scope imported`` and of the changes ``scan --all`` lists
+# per package.
+TIER_IMPORT_PATH = 0  # a module or package moved; a name the package exported at its top level
+TIER_REPLACEMENT = 1  # a replacement the library names, a rename or a checked move
+TIER_REMOVED = 2  # a public class, function, value or module removed
+TIER_MEMBER = 3  # a method's or function's parameters, a class's members
+TIER_REST = 4  # deprecations, kind changes and the rest
+_PARAMETER_KINDS = (PARAM_REMOVED, PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
+
+
+def tier(change: APIChange) -> int:
+    """How likely an assistant writing new code against the package is to run into a change,
+    as a tier (``TIER_*``, lower first), whatever the project's code uses:
+
+    0. an import path that no longer works, wholesale: a module or package that moved, or a
+       name the package exported at its top level (``pkg.Thing``) that was removed or moved;
+    1. a change whose replacement is known: the library's own text names one (``[diff +
+       library]``), or the diff found the object under another name or path (``[diff + move
+       checked]``);
+    2. a public class, function, value or module removed at module level; and a name that is
+       only no longer re-exported (the object is still there, in a module below the one it was
+       imported from: langgraph 1's ``langgraph.pregel.merge_configs`` is
+       ``langgraph.pregel.main.merge_configs``), after those (:func:`within_tier`);
+    3. a change to a member: a parameter removed or now required, keyword-only or
+       positional-only, a method or attribute removed;
+    4. the rest: deprecations (they still work), kind changes.
+
+    A switched dependency is tier 0, ahead of the moves (:func:`within_tier`): it concerns
+    every object of the old distribution that code hands the package, its client included.
+    """
+    if change.kind == DEPENDENCY_SWITCHED:
+        return TIER_IMPORT_PATH
+    top_level = not change.owner and any(p.count(".") == 1 for p in paths(change))
+    if change.kind == MOVED:
+        if _is_module(change) or top_level:
+            return TIER_IMPORT_PATH
+        return TIER_REMOVED if dropped_reexport(change) else TIER_REPLACEMENT
+    if change.kind == REMOVED and top_level:
+        return TIER_IMPORT_PATH
+    if library_replacement(change) is not None:
+        return TIER_REPLACEMENT
+    if change.kind == REMOVED:
+        return TIER_MEMBER if change.owner else TIER_REMOVED
+    if change.kind in _PARAMETER_KINDS:
+        return TIER_MEMBER
+    return TIER_REST
+
+
+def dropped_reexport(change: APIChange) -> bool:
+    """A move whose target is in a module below the one the object was reached in: the object
+    is where it was defined, only the package no longer re-exports it (langgraph 1 dropped
+    ``langgraph.pregel``'s re-exports of its ``main`` module's helpers). Not a package's move,
+    and not an object that moved out of a module (``anthropic.types.beta.DeletedFile`` to
+    ``anthropic.types.DeletedFile``)."""
+    if change.kind != MOVED or not change.moved_to or _is_module(change):
+        return False  # a module moved deeper is moved: ``import pkg.a.x`` no longer works
+    return change.moved_to.startswith(change.module + ".") and change.moved_to.count(
+        "."
+    ) > change.path.count(".")
+
+
+def is_value(change: APIChange) -> bool:
+    """A change to a module-level value or type alias, not to a class, function or module: a
+    constant (``anthropic.HUMAN_PROMPT``), a re-exported type (``anthropic.ProxiesTypes``).
+    The diff's signature of one is its bare name, or ``name: annotation``; a name bound to a
+    method (APIChange.alias_of) is a callable, whatever its signature."""
+    if change.owner or change.alias_of or _is_module(change) or change.parameter:
+        return False
+    if (change.move_evidence or {}).get("compared") == "value":
+        return True
+    signature = change.old_signature or change.new_signature or ""
+    return signature == change.name or signature.startswith(f"{change.name}:")
+
+
+def within_tier(change: APIChange) -> int:
+    """The order inside a :func:`tier`, lower first: classes, functions and modules (0), then
+    a name only no longer re-exported (1, :func:`dropped_reexport`), then values and type
+    aliases (2, :func:`is_value`): ``from anthropic import HUMAN_PROMPT`` breaks too, but the
+    module that moved out of ``anthropic.types.beta`` matters more to new code. A switched
+    dependency comes before all of them (-1)."""
+    if change.kind == DEPENDENCY_SWITCHED:
+        return -1
+    if is_value(change):
+        return 2
+    return 1 if dropped_reexport(change) else 0
+
+
+def imported_rank(
+    change: APIChange, files: Sequence[FileUse]
+) -> tuple[int, int, int, bool, float, str]:
+    """Sort key for one package's changes as ``sync --scope imported`` and ``scan --all`` list
+    them: what the code uses first (as :func:`project_rank`), then by :func:`tier` and
+    :func:`within_tier`, then hard breaks before deprecations, then the score."""
+    return (
+        -usage(change, files),
+        tier(change),
+        within_tier(change),
+        change.kind == DEPRECATED,
+        -score(change, files),
+        change.path,
+    )
 
 
 def select(
     changes_by_package: dict[str, list[APIChange]],
-    identifiers: set[str],
+    files_by_package: Mapping[str, Sequence[FileUse]],
     budget: int,
 ) -> list[APIChange]:
-    """Pick up to ``budget`` changes, one per concept, spread round-robin across packages."""
+    """Pick up to ``budget`` changes, one per concept, spread round-robin across packages.
+
+    ``files_by_package``: the files of the project's code that import each package.
+    """
     queues: dict[str, list[APIChange]] = {}
     for package, changes in changes_by_package.items():
         seen: set[str] = set()
         queue: list[APIChange] = []
-        for c in rank(changes, identifiers):
+        for c in rank(changes, files_by_package.get(package, ())):
             if c.concept_key in seen:
                 continue
             seen.add(c.concept_key)
@@ -65,10 +1093,120 @@ def select(
         if queue:
             queues[package] = queue
     # Packages whose best change scores highest go first in each round.
-    order = sorted(queues, key=lambda p: -score(queues[p][0], identifiers))
+    order = sorted(queues, key=lambda p: -score(queues[p][0], files_by_package.get(p, ())))
     picked: list[APIChange] = []
     while len(picked) < budget and any(queues.values()):
         for package in order:
             if queues[package] and len(picked) < budget:
                 picked.append(queues[package].pop(0))
     return picked
+
+
+# ------------------------------------------------ receiver typing (Engine.scan)
+class Scanned(Protocol):
+    """What :func:`type_project` reads of a package the scan looked at (engine.PackageScan)."""
+
+    name: str
+    locked: str | None
+    import_names: list[str]
+    changes: list[APIChange]
+    imported: bool | None
+
+
+def type_project(
+    project: Project, scans: Iterable[Scanned], pypi: PyPI, store: DiskCache
+) -> Project:
+    """The project with its files typed from the pinned releases' own annotations
+    (:func:`since_cutoff.project.typed`), for :func:`used_names`: a copy; the project given
+    keeps the files as the scan read them.
+
+    The releases read are those whose source tree the scan has: every package newer than its
+    release at the cutoff (the diff read its pinned tree), and a package the model knows whose
+    pinned tree an earlier run left in the cache (nothing is downloaded for this). Each tree's
+    :func:`apidiff.receiver_map` is kept in ``store`` per release and griffe. A tree griffe
+    cannot read types nothing.
+
+    The names kept for the name-only tier (FileUse.loose; :data:`NAME_ONLY`) are the member
+    names that are one changed API's in all the changed packages the code imports or reaches
+    (FileUse.reaches: a file's loose names are matched against both), and not
+    :data:`COMMON_NAMES`.
+    """
+    scans = list(scans)
+    maps: list[dict[str, Any]] = []
+    for s in scans:
+        if not s.locked:
+            continue
+        tree = _tree(pypi, s.name, s.locked, cached_only=not s.import_names)
+        if tree is None:
+            continue
+        for import_name in tree.import_names:
+            key = stable_hash(
+                "receivers", RECEIVERS_SCHEMA, griffe_version(), s.name, s.locked, import_name
+            )
+            found = store.get("receivers", key)
+            if found is None:
+                try:
+                    found = receiver_map(load_api(import_name, tree.root))
+                except Exception as exc:  # griffe fails in many ways on unusual code
+                    log.debug("cannot type from %s %s: %s", s.name, s.locked, exc)
+                    found = {}
+                store.set("receivers", key, found)
+            if isinstance(found, dict) and found:
+                maps.append(found)
+    api = ApiTypes(maps)
+    owners = changed_owners(scans, api)
+    files = [typed(f, api, (), owners) for f in project.files]
+    used = [s for s in scans if s.imported or any(f.reaches_any(s.import_names) for f in files)]
+    keep = unique_member_names(used)
+    if keep:
+        files = [typed(f, api, keep, owners) for f in project.files]
+    return replace(project, files=files)
+
+
+def changed_owners(scans: Iterable[Scanned], api: ApiTypes) -> dict[str, set[str]]:
+    """For each member name a diff changed, the classes it changed it on (canonical paths):
+    what :func:`since_cutoff.project.typed` reads a member up to, so that ``llm.predict`` on a
+    ``ChatOpenAI`` is ``BaseChatModel.predict`` and not also ``BaseLanguageModel.predict``,
+    which the diff reports on its own."""
+    owners: dict[str, set[str]] = {}
+    for s in scans:
+        for c in s.changes:
+            if c.owner and c.kind != DEPENDENCY_SWITCHED:
+                owners.setdefault(c.name, set()).update(
+                    api.canon(p.rsplit(".", 1)[0]) for p in paths(c)
+                )
+    return owners
+
+
+def _tree(pypi: PyPI, name: str, version: str, *, cached_only: bool) -> Any:
+    """The extracted sources of a release, or None: never a download when ``cached_only``."""
+    if cached_only and not pypi.is_cached(name, version):
+        return None
+    try:
+        return pypi.source(name, version)
+    except PackageIndexError:
+        return None
+
+
+def unique_member_names(scans: Iterable[Scanned]) -> frozenset[str]:
+    """The member names that one changed API of these packages has, and no other changed API
+    of theirs (a module-level ``melt`` removed next to ``DataFrame.melt`` makes the name two
+    APIs'); never a dunder, one of :data:`COMMON_NAMES` or a member of a built-in or standard
+    library type (:data:`BUILTIN_MEMBERS`). :func:`type_project` gives it the
+    changed packages the code imports or reaches."""
+    apis: dict[str, set[str]] = {}
+    for s in scans:
+        for c in collapse(s.changes):
+            if c.kind == DEPENDENCY_SWITCHED or c.name.startswith("__"):
+                continue
+            apis.setdefault(c.name, set()).add(f"{s.name}:{c.api_key}")
+            if not c.owner:
+                apis[c.name].add("module-level")
+    return frozenset(
+        name
+        for name, keys in apis.items()
+        if len(keys) == 1
+        and name not in COMMON_NAMES
+        and name not in BUILTIN_MEMBERS
+        and not name.startswith("_")
+    )

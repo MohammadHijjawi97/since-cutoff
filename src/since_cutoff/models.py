@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import calendar
+import difflib
 import json
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from importlib import resources
 from typing import Any
 
@@ -28,7 +29,22 @@ PROVIDER_ALIASES = {
     "gemini": "google",
     "xai": "xai",
     "mistral": "mistral",
+    "alibaba": "alibaba",
+    "qwen": "alibaba",
+    "dashscope": "alibaba",
+    "moonshotai": "moonshotai",
+    "moonshot": "moonshotai",
+    "kimi": "moonshotai",
+    "zai": "zai",
+    "zhipu": "zai",
+    "glm": "zai",
+    "llama": "llama",
+    # models.dev has a provider "meta" of its own, Meta's Muse Spark models: a maker, and not
+    # an alias of "llama", Meta's Llama API.
+    "meta": "meta",
 }
+# The model makers themselves: preferred over resellers that list the same model id.
+FIRST_PARTY = frozenset(PROVIDER_ALIASES.values())
 
 
 @dataclass(frozen=True)
@@ -59,6 +75,29 @@ def parse_cutoff(value: str) -> date:
     return date(year, month, calendar.monthrange(year, month)[1])
 
 
+# How many days before the training cutoff the comparison release must have been published
+# (``--cutoff-margin``). A model's training data lags its stated cutoff, so it knows the last
+# weeks before the cutoff least: llama-index-core 0.13.0, which removed ``ReActAgent.from_tools``
+# and ``FunctionCallingAgent``, was uploaded on 2025-07-30, the day before claude-sonnet-4-5's
+# cutoff, and a scan without a margin compared from it and reported none of that.
+DEFAULT_CUTOFF_MARGIN = 30
+CUTOFF_MARGIN_VAR = "SINCE_CUTOFF_CUTOFF_MARGIN"
+
+
+def parse_margin(value: str) -> int:
+    """``--cutoff-margin`` / ``SINCE_CUTOFF_CUTOFF_MARGIN``: a whole number of days, 0 or more."""
+    text = value.strip()
+    if not re.fullmatch(r"\d+", text):
+        raise ValueError(f"not a number of days: {value!r} (expected 0 or a positive whole number)")
+    return int(text)
+
+
+def compare_date(cutoff: date, margin: int = DEFAULT_CUTOFF_MARGIN) -> date:
+    """The day the comparison release must have been published by: ``margin`` days before the
+    training cutoff (the cutoff itself with a margin of 0)."""
+    return cutoff - timedelta(days=max(0, margin))
+
+
 def _maybe_date(value: Any) -> date | None:
     if not value or not isinstance(value, str):
         return None
@@ -68,23 +107,57 @@ def _maybe_date(value: Any) -> date | None:
         return None
 
 
+# Amazon Bedrock ids: an optional region, the model maker, the maker's id and a version.
+_BEDROCK_ID = re.compile(
+    r"(?:[a-z-]+\.)?(?:anthropic|openai|meta|mistral|amazon|cohere|deepseek|qwen)\."
+    r"(.+?)(?:-v\d+(?::\d+)?)?"
+)
+
+
+def bare_model_id(model_id: str) -> str:
+    """A model id as its maker spells it, lowercased: without a router prefix
+    (``openrouter/anthropic/``), Amazon Bedrock's region, maker and version
+    (``us.anthropic.claude-sonnet-4-5-20250929-v1:0``), a Vertex AI date
+    (``claude-sonnet-4-5@20250929``) or a context-size tag (``[1m]``)."""
+    mid = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())
+    mid = mid.rsplit("/", 1)[-1]
+    bedrock = _BEDROCK_ID.fullmatch(mid)
+    if bedrock:
+        mid = bedrock.group(1)
+    return mid.split("@", 1)[0]
+
+
+# A dated snapshot: Anthropic's "-20250929", OpenAI's "-2025-04-14".
+_SNAPSHOT_DATE = re.compile(r"-(?:\d{8}|\d{4}-\d{2}-\d{2})$")
+
+
 def normalize_model_id(model_id: str) -> list[str]:
-    """Candidate spellings of a model id, most specific first."""
+    """Candidate spellings of a model id, most specific first.
+
+    Each spelling's own variants are among them too, so "claude-sonnet-4.6-20260101" leads
+    to "claude-sonnet-4-6", with its dots as dashes and without its date.
+    """
     mid = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())  # "claude-opus-4-6[1m]"
     if "/" in mid:  # openrouter style "anthropic/claude-sonnet-4.5"
         mid = mid.split("/", 1)[1]
-    candidates = [mid]
     no_tag = mid.split(":", 1)[0]  # ollama style "qwen3:32b"
-    candidates.append(no_tag)
-    for c in list(candidates):
-        candidates.append(c.replace(".", "-"))
-        candidates.append(re.sub(r"-\d{8}$", "", c))  # dated snapshot suffix
-        candidates.append(re.sub(r"-latest$", "", c))
-    seen: list[str] = []
-    for c in candidates:
-        if c and c not in seen:
-            seen.append(c)
-    return seen
+    bare = bare_model_id(model_id)  # Bedrock, Vertex AI, nested router prefixes
+    candidates = list(dict.fromkeys([mid, no_tag, bare]))
+    for c in candidates:  # the list grows while it is read: variants of variants
+        for variant in (
+            c.replace(".", "-"),
+            _SNAPSHOT_DATE.sub("", c),
+            re.sub(r"-latest$", "", c),
+        ):
+            if variant not in candidates:
+                candidates.append(variant)
+    return [c for c in candidates if c]
+
+
+def listing_note(info: ModelInfo) -> str:
+    """Whose listing a cutoff is from (:meth:`ModelRegistry.lookup`) when it is not the model
+    maker's own: ``deepinfra's listing``, for the model line; empty for a maker's."""
+    return "" if info.provider in FIRST_PARTY else f"{info.provider}'s listing"
 
 
 class ModelRegistry:
@@ -136,18 +209,59 @@ class ModelRegistry:
         return out
 
     def lookup(self, model_id: str, provider: str | None = None) -> ModelInfo | None:
-        """Find a model by id, preferring the given provider, then any provider with a cutoff."""
+        """Find a model by id, among the listings of its spellings (:func:`normalize_model_id`,
+        most specific first), each matched by the listing's id as written or by its *bare* id
+        (:func:`bare_model_id`: Amazon Bedrock's ``qwen.qwen3-coder-480b-a35b-v1:0``,
+        Cloudflare's ``@cf/meta/llama-3.2-3b-instruct``, OpenRouter's
+        ``aion-labs/aion-rp-llama-3.1-8b``):
+
+        1. the given provider's own listing, also under its own spelling
+           (``cloudflare-workers-ai`` and ``@cf/meta/...``), when it has a cutoff;
+        2. else the model maker's own listing (:data:`FIRST_PARTY`) with a cutoff, of the most
+           specific spelling it lists: the model (``claude-sonnet-4``) for a dated snapshot
+           without a cutoff (``claude-sonnet-4-20250514``), before a reseller's dated listing;
+        3. else, among the listings of all its spellings that have a cutoff, the one with the
+           earliest: gateways and resellers disagree on a model the maker lists without a
+           cutoff yet (issue #87), and an earlier cutoff gives more notes, the safe side; so
+           the answer does not depend on which route's spelling is asked for.
+
+        A listing without a cutoff is the answer only when none has one (for the error that
+        says so). Which listing it is: :func:`listing_note`.
+        """
         pref = PROVIDER_ALIASES.get(provider or "", provider)
         if "/" in model_id and not pref:
             pref = PROVIDER_ALIASES.get(model_id.split("/", 1)[0], model_id.split("/", 1)[0])
         models = self.all_models()
-        for cand in normalize_model_id(model_id):
-            hits = [m for m in models if m.id.lower() == cand]
-            if not hits:
-                continue
-            hits.sort(key=lambda m: (m.provider != pref, m.knowledge is None, m.provider))
-            return hits[0]
-        return None
+        candidates = normalize_model_id(model_id)
+        by_id: dict[str, list[ModelInfo]] = {}
+        by_bare: dict[str, list[ModelInfo]] = {}
+        for m in models:
+            by_id.setdefault(m.id.lower(), []).append(m)
+            by_bare.setdefault(bare_model_id(m.id), []).append(m)
+
+        def listed(cand: str) -> list[ModelInfo]:
+            exact = by_id.get(cand, [])
+            return exact + [m for m in by_bare.get(cand, []) if m not in exact]
+
+        as_written = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())
+        spellings = [listed(c) for c in dict.fromkeys([as_written, *candidates])]
+
+        def earliest(hits: list[ModelInfo]) -> ModelInfo:
+            return min(hits, key=lambda m: (m.knowledge or date.max, m.provider, m.id))
+
+        first: ModelInfo | None = None
+        for keep in (lambda m: m.provider == pref, lambda m: m.provider in FIRST_PARTY):
+            for hits in spellings:
+                kept = [m for m in hits if keep(m)]
+                dated = [m for m in kept if m.knowledge is not None]
+                if dated:
+                    return earliest(dated)
+                first = first or (kept[0] if kept else None)
+        every = [m for hits in spellings for m in hits]
+        dated = [m for m in every if m.knowledge is not None]
+        if dated:
+            return earliest(dated)
+        return first or (every[0] if every else None)
 
     def latest_in_family(self, provider: str, family_word: str, today: date) -> ModelInfo | None:
         """Resolve aliases such as ``sonnet`` to the newest released model of that family."""
@@ -168,11 +282,22 @@ class ModelRegistry:
         cands.sort(key=lambda m: (m.release_date or date.min, m.id))
         return cands[-1]
 
+    def close_matches(self, query: str, n: int = 8) -> list[str]:
+        """Known model ids (with a cutoff) that look like ``query``, for "did you mean"."""
+        ids = sorted({m.id for m in self.all_models() if m.knowledge})
+        wanted = normalize_model_id(query)
+        close = difflib.get_close_matches(wanted[0], ids, n=n, cutoff=0.6)
+        contained = [i for i in ids if any(w and w in i.lower() for w in wanted)]
+        return list(dict.fromkeys([*close, *contained]))[:n]
+
     def require(self, model_id: str, provider: str | None = None) -> ModelInfo:
         info = self.lookup(model_id, provider)
         if info is None:
+            close = self.close_matches(model_id) if model_id else []
+            hint = f" Close matches: {', '.join(close)}." if close else ""
             raise ModelLookupError(
-                f"unknown model '{model_id}'. Pass its training cutoff explicitly, e.g. --cutoff 2025-07"
+                f"unknown model '{model_id}'.{hint} Pass its training cutoff explicitly, "
+                "e.g. --cutoff 2025-07"
             )
         if info.knowledge is None:
             raise ModelLookupError(

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="520" viewBox="0 0 640 520" role="img" aria-labelledby="title desc" xml:lang="es">
+<title id="title">since-cutoff: tu modelo de IA para programar aprendió tus bibliotecas antes de que cambiaran</title>
+<desc id="desc">Claude Opus 4.6, evaluado en un único proyecto de ejemplo con since-cutoff 0.1.0: en 7 de 16 cambios de API sondeados usó un nombre o un parámetro que ya se había eliminado. Con las notas, los aciertos en 20 tareas reservadas pasaron del 5 % al 65 %. Pruébalo: uvx since-cutoff scan (sin llamadas al modelo, sin clave de API).</desc>
+<style>
+    .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
+    .text { fill: #f0f6fc; }
+    .muted { fill: #9198a1; }
+    .accent { fill: #f0883e; }
+    .red { fill: #ff7b72; }
+    .green { fill: #56d364; }
+    .b { font-weight: 700; }
+    .sb { font-weight: 600; }
+  </style>
+<clipPath id="card"><rect x="0.5" y="0.5" width="639" height="519" rx="16"/></clipPath>
+<rect x="0.5" y="0.5" width="639" height="519" rx="16" fill="#0d1117" stroke="#3d444d"/>
+<rect x="0" y="0" width="640" height="6" fill="#f0883e" clip-path="url(#card)"/>
+<g transform="translate(25 29) scale(0.0546875)"><circle cx="256" cy="256" r="148" fill="none" stroke="#f0883e" stroke-width="44"/><path d="M256 168v88l62 38" fill="none" stroke="#f0f6fc" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="60" y="50" font-size="20" class="mono b accent">since-cutoff</text>
+<text x="28" y="96" font-size="30" class="sans b text">Tu modelo de IA para programar</text>
+<text x="28" y="134" font-size="30" class="sans b text">aprendió tus bibliotecas</text>
+<text x="28" y="172" font-size="30" class="sans b text">antes de que cambiaran.</text>
+<text x="28" y="210" font-size="18" class="sans muted">Claude Opus 4.6 en un solo proyecto (since-cutoff 0.1.0):</text>
+<rect x="28" y="228" width="584" height="95" rx="10" fill="#151b23" stroke="#3d444d"/>
+<text x="48" y="290.5" font-size="42" class="sans b"><tspan class="red">7</tspan><tspan class="text"> de 16</tspan></text>
+<text x="300" y="257.15" font-size="19" class="sans text">cambios de API sondeados</text>
+<text x="300" y="282.15" font-size="19" class="sans text">en los que usó un nombre o</text>
+<text x="300" y="307.15" font-size="19" class="sans text">un parámetro ya eliminado</text>
+<rect x="28" y="335" width="584" height="95" rx="10" fill="#151b23" stroke="#3d444d"/>
+<text x="48" y="397.5" font-size="42" class="sans b"><tspan class="red">5%</tspan><tspan class="muted" font-weight="400"> → </tspan><tspan class="green">65%</tspan></text>
+<text x="300" y="376.65" font-size="19" class="sans text">de aciertos en 20 tareas</text>
+<text x="300" y="401.65" font-size="19" class="sans text">reservadas, sin → con notas</text>
+<rect x="28" y="444" width="584" height="52" rx="8" fill="#010409" stroke="#3d444d"/>
+<text x="46" y="477" font-size="21" class="mono"><tspan class="muted">$ </tspan><tspan class="text b">uvx since-cutoff scan</tspan></text>
+<text x="596" y="466" font-size="15" class="sans muted" text-anchor="end">sin llamadas al modelo,</text>
+<text x="596" y="484" font-size="15" class="sans muted" text-anchor="end">sin clave de API</text>
+</svg>

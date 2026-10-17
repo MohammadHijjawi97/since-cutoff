@@ -1,13 +1,27 @@
 from __future__ import annotations
 
+import ast
 import json
 import textwrap
 from pathlib import Path
 
+import packaging.markers
 import pytest
+from packaging.markers import Marker
+from packaging.specifiers import Specifier
+from packaging.version import InvalidVersion, Version
 
+from since_cutoff import project as project_module
 from since_cutoff.errors import ProjectError
-from since_cutoff.project import load_project, parse_lockfile, parse_requirements, scan_sources
+from since_cutoff.project import (
+    ApiTypes,
+    load_project,
+    parse_lockfile,
+    parse_requirements,
+    scan_file,
+    scan_sources,
+    typed,
+)
 
 
 def write(root: Path, name: str, text: str) -> Path:
@@ -181,7 +195,10 @@ def test_python_version_and_imports(tmp_path):
     project = load_project(tmp_path)
     assert project.python_version == "3.11"
     assert project.imported_modules == {"anthropic", "huggingface_hub"}
-    assert {"hf_hub_download", "resume_download", "create", "messages"} <= project.identifiers
+    [main] = project.code_use(["huggingface_hub"])
+    assert "huggingface_hub.hf_hub_download" in main.paths  # imported as `d`
+    assert ("hf_hub_download", "resume_download") in main.keywords
+    assert "messages.create" in main.pairs
 
 
 def test_python_version_file_wins(tmp_path):
@@ -201,13 +218,38 @@ def test_scan_sources_skips_virtualenvs(tmp_path):
     assert scan_sources(tmp_path)[0] == {"os"}
 
 
+def test_imports_of_namespace_packages_match_the_distribution(tmp_path):
+    write(tmp_path, "requirements.txt", "google-genai\ngoogle-cloud-storage\nrequests\n")
+    write(
+        tmp_path,
+        "app.py",
+        """
+        from google import genai
+        import azure.identity.aio as aio
+        import requests.adapters
+        from . import local
+        """,
+    )
+    project = load_project(tmp_path)
+    assert project.imported_modules == {"google", "azure", "requests"}
+    # Only the namespace members the code imports count, not every google-* distribution.
+    assert project.imports(["google.genai"])
+    assert not project.imports(["google.cloud.storage"])
+    assert project.imports(["azure.identity"]) and not project.imports(["azure.storage.blob"])
+    assert project.imports(["requests"]) and not project.imports(["httpx", "local"])
+
+
 def test_unknown_lockfile_content_is_reported(tmp_path):
     write(tmp_path, "uv.lock", "this is = = not toml")
     with pytest.raises(ProjectError, match=r"could not parse uv\.lock"):
         parse_lockfile(tmp_path / "uv.lock")
 
 
-def test_conda_environment_yml_pip_pins(tmp_path):
+def pins(project) -> dict[str, str | None]:
+    return {d.name: d.pinned_in for d in project.dependencies}
+
+
+def test_conda_environment_yml_pip_pins(tmp_path, caplog):
     write(
         tmp_path,
         "environment.yml",
@@ -219,36 +261,89 @@ def test_conda_environment_yml_pip_pins(tmp_path):
           - pip:
             - anthropic==1.8.0
             - "huggingface_hub==0.30.2"
-            - requests>=2
+            - requests>=2  # any 2.x
             - my-extra[socks]==1.1.1
+            - pkg @ git+https://github.com/x/pkg.git
             - -r extra.txt
             - git+https://github.com/x/y.git
             - ./local-package
         """,
     )
-    project = load_project(tmp_path)
+    write(tmp_path, "extra.txt", "flask==3.1.1\n")
+    with caplog.at_level("DEBUG", logger="since_cutoff.project"):
+        project = load_project(tmp_path)
     v = versions(project)
-    assert project.version_source == "environment.yml"
-    assert v["anthropic"] == ("1.8.0", True, "environment.yml")
-    assert v["huggingface-hub"] == ("0.30.2", True, "environment.yml")
-    assert v["my-extra"] == ("1.1.1", True, "environment.yml")
-    # unpinned / non-PyPI pip lines are not usable
-    assert "requests" not in v
-    assert "extra" not in v
-    assert "local-package" not in v
-    # conda-native entries are not treated as Python dependencies
-    assert "pandas" not in v
-    assert "python" not in v
+    assert project.version_source == "environment.yml, latest on PyPI for 1 unpinned"
+    assert v["anthropic"] == ("1.8.0", True, "pinned")
+    assert v["huggingface-hub"] == ("0.30.2", True, "pinned")
+    assert v["my-extra"] == ("1.1.1", True, "pinned")
+    assert pins(project)["anthropic"] == "environment.yml"
+    # An unpinned line is declared like one in requirements.txt: its range is looked up.
+    [requests] = [d for d in project.dependencies if d.name == "requests"]
+    assert (requests.version, requests.specifier) == (None, ">=2")
+    # A direct reference is not looked up on PyPI by name.
+    [pkg] = [d for d in project.dependencies if d.name == "pkg"]
+    assert pkg.non_pypi == "git+https://github.com/x/pkg.git"
+    # Options (an include is not followed), local paths and bare URLs are not packages.
+    assert not {"flask", "extra", "r", "y", "local-package"} & set(v)
+    # Conda packages are not Python dependencies from PyPI.
+    assert "pandas" not in v and "python" not in v
+    assert "environment.yml: 2 conda packages are not read" in caplog.text
+    assert "environment.yml: '-r extra.txt' in the pip block is not read" in caplog.text
 
 
 def test_conda_environment_yaml_also_works(tmp_path):
+    write(tmp_path, "environment.yaml", "name: app\ndependencies:\n  - pip:\n    - rich==13.7.1\n")
+    project = load_project(tmp_path)
+    assert versions(project)["rich"] == ("13.7.1", True, "pinned")
+    assert pins(project)["rich"] == "environment.yaml"
+    assert project.version_source == "environment.yaml"
+    # environment.yml, conda's default name, is the one read when both are there.
+    write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n    - attrs==25.1.0\n")
+    assert set(versions(load_project(tmp_path))) == {"attrs"}
+
+
+def test_a_pip_pin_next_to_an_empty_venv_is_labelled_with_the_environment_file(tmp_path):
+    (tmp_path / ".venv").mkdir()
+    write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n    - anthropic==1.8.0\n")
+    project = load_project(tmp_path)
+    assert versions(project) == {"anthropic": ("1.8.0", True, "pinned")}
+    assert pins(project) == {"anthropic": "environment.yml"}
+    assert project.version_source == "environment.yml"
+    assert project.versions_word == "environment.yml"
+
+
+def test_a_pip_pin_missing_from_the_venv_is_labelled_with_the_environment_file(tmp_path):
     write(
         tmp_path,
-        "environment.yaml",
-        "name: app\ndependencies:\n  - pip:\n    - rich==13.7.1\n",
+        "environment.yml",
+        "dependencies:\n  - pip:\n    - rich==13.7.1\n    - anthropic==1.8.0\n",
     )
-    v = versions(load_project(tmp_path))
-    assert v["rich"] == ("13.7.1", True, "environment.yaml")
+    write(tmp_path, ".venv/pyvenv.cfg", "home = /usr\n")
+    write(
+        tmp_path / ".venv" / "lib" / "python3.12" / "site-packages",
+        "rich-14.0.0.dist-info/METADATA",
+        "Metadata-Version: 2.1\nName: rich\nVersion: 14.0.0\n\nbody\n",
+    )
+    project = load_project(tmp_path)
+    assert versions(project) == {
+        "anthropic": ("1.8.0", True, "pinned"),
+        "rich": ("14.0.0", True, "installed"),
+    }
+    assert pins(project) == {"anthropic": "environment.yml", "rich": None}
+    assert project.version_source == ".venv, environment.yml for 1 not in it"
+
+
+def test_a_requirements_file_the_pip_block_includes_is_read_on_its_own(tmp_path):
+    write(tmp_path, "requirements.txt", "attrs==25.1.0\n")
+    write(
+        tmp_path,
+        "environment.yml",
+        "dependencies:\n  - pip:\n    - -r requirements.txt\n    - rich==13.7.1\n",
+    )
+    project = load_project(tmp_path)
+    assert pins(project) == {"attrs": "requirements.txt", "rich": "environment.yml"}
+    assert project.version_source == "environment.yml, requirements.txt"
 
 
 def test_conda_environment_without_pip_pins_is_a_clear_error(tmp_path):
@@ -257,19 +352,562 @@ def test_conda_environment_without_pip_pins_is_a_clear_error(tmp_path):
         "environment.yml",
         "name: app\ndependencies:\n  - python=3.12\n  - numpy=1.26\n",
     )
-    with pytest.raises(ProjectError, match=r"conda environment\.yml"):
+    with pytest.raises(ProjectError) as error:
+        load_project(tmp_path)
+    assert "reads pyproject.toml, requirements*.txt, Pipfile, the pip block of a conda " in str(
+        error.value
+    )
+    assert str(error.value).endswith(
+        " environment.yml has no package in its pip block, and its conda packages are not read: "
+        "they do not come from PyPI."
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "just text\n",
+        "- a list\n",
+        "dependencies: 3\n",
+        "dependencies:\n  - pip:\n",
+        "dependencies:\n  - pip: rich==13.7.1\n",
+        "dependencies:\n  - pip:\n    - 3\n    - [rich==13.7.1]\n",
+    ],
+)
+def test_a_conda_environment_without_a_pip_list_has_no_dependencies(tmp_path, text):
+    write(tmp_path, "environment.yml", text)
+    with pytest.raises(ProjectError, match="no dependencies found"):
         load_project(tmp_path)
 
 
-def test_conda_environment_malformed_yml_is_reported(tmp_path):
-    write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n   - unpinned\n - bad\n")
-    with pytest.raises(ProjectError, match=r"could not parse environment\.yml"):
+def test_the_entries_of_a_conda_environment_are_not_expanded(tmp_path, caplog):
+    # Aliases nested nine deep: an entry that is a list of 9**9 strings, which reading the
+    # entries as text would build. Only a string is a conda package.
+    lines = ['a0: &a0 ["x", "x", "x", "x", "x", "x", "x", "x", "x"]']
+    lines += [f"a{i}: &a{i} [{', '.join([f'*a{i - 1}'] * 9)}]" for i in range(1, 9)]
+    lines.append('dependencies: ["python=3.12", *a8, {pip: ["rich==13.7.1"]}]')
+    write(tmp_path, "environment.yml", "\n".join(lines) + "\n")
+    with caplog.at_level("DEBUG", logger="since_cutoff.project"):
+        project = load_project(tmp_path)
+    assert versions(project) == {"rich": ("13.7.1", True, "pinned")}
+    assert "environment.yml: 1 conda packages are not read" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        (
+            "dependencies:\n  - pip:\n   - unpinned\n - bad\n",
+            "expected <block end>, but found '<block sequence start>' (line 3, column 4)",
+        ),
+        ("created: 2026-13-01\n", "month must be in 1..12"),
+        ("dependencies: !!int x\n", "invalid literal for int() with base 10: 'x'"),
+    ],
+)
+def test_conda_environment_malformed_yml_is_reported(tmp_path, text, problem):
+    write(tmp_path, "environment.yml", text)
+    with pytest.raises(ProjectError) as error:
         load_project(tmp_path)
+    assert str(error.value) == f"could not parse environment.yml: {problem}"
 
 
 def test_lockfile_wins_over_conda_environment(tmp_path):
     write(tmp_path, "requirements.txt", "attrs\n")
     write(tmp_path, "environment.yml", "dependencies:\n  - pip:\n    - attrs==21.1.0\n")
     write(tmp_path, "pylock.toml", '[[packages]]\nname = "attrs"\nversion = "25.1.0"\n')
-    v = versions(load_project(tmp_path))
-    assert v["attrs"] == ("25.1.0", True, "pylock.toml")
+    project = load_project(tmp_path)
+    assert versions(project)["attrs"] == ("25.1.0", True, "pylock.toml")
+    assert project.warnings == [
+        "1 versions in pylock.toml disagree with the pinned requirements (attrs 25.1.0 vs "
+        "==21.1.0); the versions from pylock.toml are checked"
+    ]
+
+
+# A poetry.lock from 2020 next to pip-compile's requirements.txt (pypistats.org): the project
+# no longer uses Poetry, so the lock's versions and lock-only packages must not count.
+_STALE_POETRY_LOCK = """
+[[package]]
+name = "flask"
+version = "1.1.2"
+[[package]]
+name = "zipp"
+version = "3.1.0"
+"""
+
+
+def test_a_stale_lock_the_project_is_not_set_up_for_is_ignored(tmp_path):
+    write(tmp_path, "pyproject.toml", '[project]\nname = "site"\nversion = "11"\n')
+    write(tmp_path, "poetry.lock", _STALE_POETRY_LOCK)
+    write(tmp_path, "requirements.txt", "flask==3.1.1\n")
+    project = load_project(tmp_path)
+    assert versions(project) == {"flask": ("3.1.1", True, "pinned")}  # no lock-only zipp
+    assert project.version_source == "requirements.txt"
+    assert project.transitive is False
+    assert project.warnings == [
+        "ignored poetry.lock: the project is not set up for Poetry, and 1 of its versions "
+        "disagree with the pinned requirements (flask 1.1.2 vs ==3.1.1)"
+    ]
+
+
+def test_a_lock_the_project_uses_wins_over_pins_with_a_warning(tmp_path):
+    write(
+        tmp_path,
+        "pyproject.toml",
+        '[project]\nname = "site"\nversion = "1"\n[build-system]\n'
+        'requires = ["poetry-core>=2"]\nbuild-backend = "poetry.core.masonry.api"\n',
+    )
+    write(tmp_path, "poetry.lock", _STALE_POETRY_LOCK)
+    write(tmp_path, "requirements.txt", "flask==3.1.1\nattrs==25.1.0\n")
+    project = load_project(tmp_path)
+    v = versions(project)
+    assert v["flask"] == ("1.1.2", True, "poetry.lock")
+    assert v["attrs"] == ("25.1.0", True, "pinned")
+    assert project.warnings == [
+        "1 versions in poetry.lock disagree with the pinned requirements (flask 1.1.2 vs "
+        "==3.1.1); the versions from poetry.lock are checked"
+    ]
+    # Versions from more than one place are all named.
+    assert project.version_source == "poetry.lock, requirements.txt for 1 not in it"
+
+
+def test_pip_compile_output_pins_the_tree_and_marks_the_direct_ones(tmp_path):
+    write(tmp_path, "requirements.in", "celery>=4.3\nflask\n")
+    write(
+        tmp_path,
+        "requirements.txt",
+        """
+        #
+        # This file is autogenerated by pip-compile with Python 3.13
+        # by the following command:
+        #
+        #    pip-compile --generate-hashes --output-file=requirements.txt requirements.in
+        #
+        amqp==5.3.1 \\
+            --hash=sha256:43b3319e1b4e7d1251833a93d672b4af1e40f3d632d479b98661a95f117880a2
+            # via kombu
+        celery==5.5.3 \\
+            --hash=sha256:0b5761a07057acee94694464ca482416b959568904c9dfa41ce8413a7d65d525
+            # via
+            #   -r requirements.in
+            #   flower
+        flask==3.1.1 \\
+            --hash=sha256:07aae2bb5eaf77993ef57e357491839f5fd9f4dc281593a81a9e4d79a24f295c
+            # via -r requirements.in
+        kombu==5.5.4 \\
+            --hash=sha256:a12ed0557c238897d8e518f1d1fdf84bd1516c5e305af2dacd85c2015115feb8
+            # via
+            #   celery
+            #   flower
+
+        # The following packages are considered to be unsafe in a requirements file:
+        setuptools==80.9.0 \\
+            --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922
+            # via flower
+        """,
+    )
+    # pip-compile before 5.0 wrote the annotation on the requirement's line.
+    write(tmp_path, "requirements-dev.txt", "black==20.8b1  # via -r requirements-dev.in\n")
+    write(tmp_path, "requirements-old.txt", "click==7.1.2  # via black, flask\n")
+    project = load_project(tmp_path)
+    direct = {d.name for d in project.dependencies if d.direct}
+    assert direct == {"celery", "flask", "black"}
+    assert {d.name for d in project.dependencies} >= {"amqp", "kombu", "setuptools", "click"}
+    # It pins the transitive dependencies too, so --all-deps has them.
+    assert project.transitive is True
+
+
+def test_hand_written_requirements_are_all_direct(tmp_path):
+    write(tmp_path, "requirements.txt", "flask==3.1.1  # the web framework\nkombu\n")
+    project = load_project(tmp_path)
+    assert all(d.direct for d in project.dependencies) and project.transitive is False
+
+
+def test_scan_sources_keeps_the_projects_syntax_warnings_to_itself(tmp_path, recwarn):
+    write(tmp_path, "app.py", 'import re\nWORD = re.compile("\\W+")\n')
+    assert scan_sources(tmp_path).modules == {"re"}
+    assert not [w for w in recwarn if "escape" in str(w.message)]
+
+
+def test_a_list_or_string_where_a_table_belongs_is_read_as_missing(tmp_path):
+    # Hand-edited files that pip, uv and Poetry would reject: the scan reads what it can.
+    write(
+        tmp_path,
+        "pyproject.toml",
+        """
+        dependency-groups = ["pytest"]
+        [project]
+        name = "app"
+        dependencies = "requests"
+        optional-dependencies = ["httpx"]
+        [tool]
+        poetry = ["flask"]
+        """,
+    )
+    write(tmp_path, "requirements.txt", "attrs==23.1.0\n")
+    # "requests" is not six one-letter dependencies (r, e, q, u, s, t).
+    assert versions(load_project(tmp_path)) == {"attrs": ("23.1.0", True, "pinned")}
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "error"),
+    [
+        ("uv.lock", 'version = 1\npackage = { name = "attrs" }\n', None),
+        (
+            "uv.lock",
+            '[[package]]\nname = "app"\nsource = { editable = "." }\ndependencies = ["attrs"]\n',
+            None,
+        ),
+        ("poetry.lock", "[[package]]\nname = 1\nversion = 2\n", None),
+        ("pylock.toml", 'packages = "attrs"\n', None),
+        ("Pipfile.lock", '["attrs"]', "could not parse Pipfile.lock: not a JSON object"),
+        ("Pipfile.lock", '{"default": ["attrs"]}', None),
+    ],
+)
+def test_a_lockfile_laid_out_unlike_its_tool_is_read_or_refused_cleanly(
+    tmp_path, name, text, error
+):
+    # What a lockfile holds in the wrong shape counts as missing, and the requirements file
+    # pins attrs. Only a Pipfile.lock that is no JSON object at all is refused, in one line.
+    write(tmp_path, name, text)
+    write(tmp_path, "requirements.txt", "attrs==23.1.0\n")
+    if error:
+        with pytest.raises(ProjectError) as info:
+            load_project(tmp_path)
+        assert str(info.value) == error
+        return
+    project = load_project(tmp_path)
+    assert versions(project) == {"attrs": ("23.1.0", True, "pinned")}
+    assert project.version_source == f"{name}, requirements.txt for 1 not in it"
+
+
+def test_a_uv_lock_fork_whose_markers_cannot_be_compared_counts(tmp_path):
+    write(
+        tmp_path,
+        "uv.lock",
+        """
+        version = 1
+        [[package]]
+        name = "numpy"
+        version = "2.2.6"
+        resolution-markers = ["python_version ~= 'abc'"]
+        [[package]]
+        name = "numpy"
+        version = "2.3.1"
+        resolution-markers = [1, "python_full_version >= '3.11'"]
+        """,
+    )
+    # For Python 3.10: the first fork may apply, the second (a stray 1 aside) does not.
+    assert versions(load_project(tmp_path, python="3.10"))["numpy"][0] == "2.2.6"
+
+
+@pytest.mark.parametrize("packaging_release", ["installed", "25"])
+def test_markers_on_the_kernel_version_do_not_break_the_scan_on_linux(
+    tmp_path, monkeypatch, packaging_release
+):
+    # packaging before 26 compares these as versions, and "6.5.0-1025-azure" is not one: it
+    # raised InvalidVersion, which ended the scan. Packaging 26 finds them False instead, so
+    # for the "25" run the comparison raises as it did in packaging 22 to 25.
+    linux = {"platform_release": "6.5.0-1025-azure", "platform_version": "#1 SMP PREEMPT"}
+    for module in (project_module, packaging.markers):
+        real = module.default_environment
+        monkeypatch.setattr(module, "default_environment", lambda real=real: {**real(), **linux})
+    if packaging_release == "25":
+        contains = Specifier.contains
+
+        def contains_versions_only(self, item, prereleases=None):
+            Version(str(item))  # InvalidVersion: '6.5.0-1025-azure'
+            return contains(self, item, prereleases)
+
+        monkeypatch.setattr(Specifier, "contains", contains_versions_only)
+        with pytest.raises(InvalidVersion):  # the simulation is faithful
+            Marker("platform_release >= '5'").evaluate()
+
+    write(
+        tmp_path / "reqs",
+        "requirements.txt",
+        "attrs==23.1.0; platform_release >= '5'\nidna==3.7; platform_version >= '1'\n",
+    )
+    assert set(versions(load_project(tmp_path / "reqs"))) == {"attrs", "idna"}
+    write(  # and a uv.lock fork on the kernel's version
+        tmp_path / "lock",
+        "uv.lock",
+        """
+        version = 1
+        [[package]]
+        name = "numpy"
+        version = "2.2.6"
+        resolution-markers = ["python_full_version < '3.11'"]
+        [[package]]
+        name = "numpy"
+        version = "2.3.1"
+        resolution-markers = ["python_full_version >= '3.11' and platform_release >= '5'"]
+        """,
+    )
+    assert versions(load_project(tmp_path / "lock", python="3.12"))["numpy"][0] == "2.3.1"
+
+
+def test_project_code_python_itself_cannot_parse_is_skipped(tmp_path):
+    # Generated code: 5000 strings joined with "+" are too deep for the parser of Python 3.13
+    # (a RecursionError); 3.10 reads them.
+    generated = "import attrs\nTABLE = " + " + ".join(['"x"'] * 5000) + "\n"
+    try:
+        ast.parse(generated)
+    except (RecursionError, MemoryError):
+        readable = False
+    else:
+        readable = True
+    write(tmp_path, "requirements.txt", "requests==2.32.3\n")
+    write(tmp_path, "generated.py", generated)
+    # Too deep for every Python's parser (a MemoryError: "too complex to parse").
+    write(tmp_path, "nested.py", "import yarl\nX = " + "-" * 10_000 + "1\n")
+    write(tmp_path, "app.py", "import requests\n")
+    project = load_project(tmp_path)
+    assert project.imported_modules == ({"attrs", "requests"} if readable else {"requests"})
+
+
+# ------------------------------------------------------- receiver typing (0.6)
+def test_scan_file_records_what_the_receivers_are_assigned_and_annotated(tmp_path):
+    use = scan_file(
+        ast.parse(
+            textwrap.dedent(
+                """
+                import re
+                import pandas as pd
+                from frames import Frame as F
+                from .models import Store
+
+                def load(path) -> pd.DataFrame:
+                    df = pd.read_csv(path, sep=";")
+                    df.groupby("k", axis=0).count()
+                    sub = df.head()
+                    sub.T.applymap(str)
+                    data = {}
+                    m = re.match("a", path)
+                    with F() as f:
+                        f.melt(id_vars="a")
+                    return df
+
+                class App:
+                    frame: "F | None" = None
+
+                    def make(self, df: F) -> F:
+                        self.frame = F()
+                        return self.frame.T
+
+                    def go(self):
+                        return self.make(None)
+                """
+            )
+        ),
+        "app.py",
+    )
+    assert dict(use.bound) == {"re": "re", "pd": "pandas", "F": "frames.Frame"}
+    # The file's own classes and functions, and a relative import: a value of theirs is the
+    # project's own, not a package's left untyped.
+    assert use.defined == {"load", "App", "make", "go", "Store"}
+    assert use.accesses >= {
+        "pd.read_csv",
+        "df.groupby",
+        "df.groupby().count",
+        "df.head",
+        "sub.T",
+        "sub.T.applymap",
+        "f.melt",
+        "re.match",
+        "self.frame",
+        "self.frame.T",
+    }
+    # A value that is no chain (a literal) is ``?``: the name is known not to be a package's.
+    assert use.assigned == {
+        ("df", "pd.read_csv()"),
+        ("sub", "df.head()"),
+        ("data", "?"),
+        ("m", "re.match()"),
+        ("f", "F()"),
+        ("frame", "?"),
+        ("self.frame", "F()"),
+    }
+    # Annotations: parameters, variables (a string one parsed), the file's own functions'
+    # returns (``load()``) and methods' as read on ``self`` in their class (``self.make()``),
+    # never under the method's bare name (``make()``).
+    assert use.annotated == {
+        ("load()", "pd.DataFrame"),
+        ("frame", "F"),
+        ("df", "F"),
+        ("self.make()", "F"),
+    }
+    assert use.chain_keywords >= {
+        ("pd.read_csv", "sep"),
+        ("df.groupby", "axis"),
+        ("f.melt", "id_vars"),
+    }
+    assert use.reaches == frozenset() and use.loose == frozenset()  # typed() sets them
+
+
+def test_typed_reads_the_values_from_the_packages_own_annotations():
+    api = ApiTypes(
+        [
+            {
+                "classes": {
+                    "pandas.DataFrame": "pandas.core.frame.DataFrame",
+                    "pandas.core.frame.DataFrame": "pandas.core.frame.DataFrame",
+                    "pandas.core.generic.NDFrame": "pandas.core.generic.NDFrame",
+                    "pandas.core.groupby.generic.DataFrameGroupBy": "pandas.core.groupby.generic.DataFrameGroupBy",
+                },
+                "bases": {"pandas.core.frame.DataFrame": ["pandas.core.generic.NDFrame"]},
+                "returns": {
+                    "pandas.read_csv": "pandas.core.frame.DataFrame|pandas.io.parsers.readers.TextFileReader",
+                    "pandas.core.frame.DataFrame.groupby": "pandas.core.groupby.generic.DataFrameGroupBy",
+                    "pandas.core.generic.NDFrame.head": "Self",
+                },
+                "attrs": {"pandas.core.frame.DataFrame.T": "pandas.core.frame.DataFrame"},
+                # What each class declares itself in the pinned release, as pandas 3 has it:
+                # ``sum`` on both; ``applymap`` and ``swapaxes`` are gone.
+                "members": {
+                    "pandas.core.frame.DataFrame": ["groupby", "T", "sum"],
+                    "pandas.core.generic.NDFrame": ["head", "sum"],
+                },
+            },
+            {
+                # langchain-openai's shape: ``ChatOpenAI`` derives from langchain-core's class,
+                # which the package names as it imports it (not canonically).
+                "classes": {"lc_openai.ChatOpenAI": "lc_openai.chat.ChatOpenAI"},
+                "bases": {"lc_openai.chat.ChatOpenAI": ["lc_core.language_models.BaseChatModel"]},
+                "returns": {},
+                "attrs": {},
+            },
+            {
+                "classes": {
+                    "lc_core.language_models.BaseChatModel": "lc_core.language_models.chat.BaseChatModel"
+                },
+                "bases": {
+                    "lc_core.language_models.chat.BaseChatModel": ["lc_core.base.BaseLanguageModel"]
+                },
+                "returns": {},
+                "attrs": {},
+            },
+        ]
+    )
+    assert api.canon("lc_openai.ChatOpenAI") == "lc_openai.chat.ChatOpenAI"
+    assert api.ancestors("lc_openai.chat.ChatOpenAI") == [
+        "lc_core.language_models.chat.BaseChatModel",
+        "lc_core.base.BaseLanguageModel",
+    ]
+    assert api.paths_of("lc_core.language_models.chat.BaseChatModel") == [
+        "lc_core.language_models.chat.BaseChatModel",
+        "lc_core.language_models.BaseChatModel",
+    ]
+    assert api.member("pandas.core.frame.DataFrame", "head", call=True) == {
+        "pandas.core.frame.DataFrame"
+    }
+    assert api.defines("pandas.core.frame.DataFrame", "sum")
+    assert not api.defines("pandas.core.frame.DataFrame", "swapaxes")
+    assert api.modules == {"pandas", "lc_openai", "lc_core"}
+    f = scan_file(
+        ast.parse(
+            textwrap.dedent(
+                """
+                import re
+                import pandas as pd
+                from lc_openai import ChatOpenAI
+                from .models import Store
+
+                def load(path) -> pd.DataFrame:
+                    return pd.read_csv(path)
+
+                def f(path, other, data: "pd.DataFrame | None"):
+                    df = pd.read_csv(path)
+                    df.applymap(str)
+                    df.groupby("k", axis=0).count()
+                    df.head().T.swapaxes(0, 1)
+                    df.sum()
+                    data.applymap(str)
+                    other.melt(id_vars="a")
+                    m = re.match("a", path)
+                    m.group(0)
+                    items = []
+                    items.count(1)
+                    llm = ChatOpenAI(model="x")
+                    llm.predict("q")
+                    own = load(path)
+                    own.melt(id_vars="a")
+                    loc = Local()
+                    loc.collect()
+                    store = Store()
+                    store.collect()
+                    text = str(path)
+                    text.collect()
+
+                class Local:
+                    def collect(self):
+                        return self
+
+                class Mine(ChatOpenAI):
+                    def go(self):
+                        self.predict("q", stop=["x"])
+
+                    def make(self) -> "pd.DataFrame":
+                        return load("x")
+
+                    def raw(self):
+                        return load("x")
+
+                    def run(self):
+                        self.make().pivot()
+                        made = self.raw()
+                        made.collect()
+                """
+            )
+        ),
+        "main.py",
+    )
+    owners = {"predict": {"lc_core.language_models.chat.BaseChatModel"}}
+    keep = {"melt", "group", "count", "applymap", "predict", "collect"}
+    t = typed(f, api, keep=keep, owners=owners)
+    added = t.members - f.members
+    frame = {"pandas.DataFrame", "pandas.core.frame.DataFrame", "pandas.core.generic.NDFrame"}
+    # ``df``: a DataFrame (or pandas' TextFileReader, the other return of read_csv), with its
+    # base; a chain through ``groupby``; ``head()`` returns Self and ``T`` a DataFrame.
+    assert {c for c, a in added if a == "applymap"} == frame | {
+        "pandas.io.parsers.readers.TextFileReader"
+    }
+    assert ("pandas.core.groupby.generic.DataFrameGroupBy", "count") in added
+    assert {c for c, a in added if a == "swapaxes"} == frame
+    # ``sum``: DataFrame defines it itself, so the member is not its base NDFrame's (pandas 3
+    # made ``NDFrame.sum``'s parameters keyword-only; ``DataFrame.sum`` still takes them by
+    # position); TextFileReader is the other class ``df`` may be.
+    assert {c for c, a in added if a == "sum"} == {
+        "pandas.DataFrame",
+        "pandas.core.frame.DataFrame",
+        "pandas.io.parsers.readers.TextFileReader",
+    }
+    # The file's own functions' returns: ``load()`` and ``self.make()``.
+    assert {c for c, a in added if a == "melt"} == frame
+    assert {c for c, a in added if a == "pivot"} == frame
+    # ``llm``: a ChatOpenAI and, through another package, a BaseChatModel, but not the base
+    # of that (``owners`` says ``BaseChatModel`` lost ``predict``: the nearest class counts).
+    # ``self.make`` and ``self.raw`` are ``Mine``'s own methods: not widened to the bases.
+    assert {c for c, a in t.members if a == "predict"} == {
+        "lc_openai.ChatOpenAI",
+        "lc_openai.chat.ChatOpenAI",
+        "lc_core.language_models.BaseChatModel",
+        "lc_core.language_models.chat.BaseChatModel",
+    }
+    assert ("lc_core.language_models.chat.BaseChatModel.predict", "stop") in t.keyword_paths
+    assert ("pandas.DataFrame.groupby", "axis") in t.keyword_paths
+    assert t.reaches == {
+        "lc_core",
+        "lc_core.language_models",
+        "lc_core.language_models.BaseChatModel",
+        "lc_core.language_models.chat",
+        "lc_core.language_models.chat.BaseChatModel",
+    }
+    # ``other.melt``: a bare name the file shows nothing of. ``m`` is re's and ``items`` a
+    # list; ``data`` and ``df`` are typed; ``loc``, ``store``, ``text`` and ``made`` are the
+    # file's own class's, a relative import's, a builtin's and the file's own method's.
+    assert t.loose == {"melt"}
+    # Nothing to type from: the file as scanned, but for the names kept; ``df`` is pandas',
+    # a package no map covers, so it is not a value left untyped either.
+    assert typed(f, ApiTypes()) == f
+    assert typed(f, ApiTypes(), keep={"melt", "applymap"}).loose == {"melt"}

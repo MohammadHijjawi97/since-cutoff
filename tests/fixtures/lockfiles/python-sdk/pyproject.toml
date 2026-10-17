@@ -1,0 +1,71 @@
+[project]
+name = "mcp"
+dynamic = ["version", "dependencies"]
+description = "Model Context Protocol SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+[project.optional-dependencies]
+rich = ["rich>=13.9.4"]
+cli = ["typer>=0.16.0", "python-dotenv>=1.0.0"]
+
+[project.scripts]
+mcp = "mcp.cli:app [cli]"
+
+[tool.uv]
+default-groups = ["dev", "docs"]
+required-version = ">=0.9.5"
+
+[dependency-groups]
+dev = [
+    # We add mcp[cli] so `uv sync` considers the extras.
+    "mcp[cli]",
+    "mcp-example-stories",
+    # pydantic-settings is used only by examples (simple-auth, mcpserver/text_me);
+    # keep it reachable for pyright, which covers examples/servers.
+    "pydantic-settings>=2.5.2",
+    "tomli>=2.0; python_version < '3.11'",
+    "pyright>=1.1.400",
+    "pytest>=8.4.0",
+    "ruff>=0.8.5",
+    "coverage[toml]>=7.10.7,<=7.13",
+    "strict-no-cover",
+]
+docs = [
+    "zensical==0.0.50",
+    "griffelib==2.1.0",
+]
+translate = ["anthropic>=0.121.0"]
+codegen = ["datamodel-code-generator==0.57.0"]
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = [
+    "anyio>=4.10; python_version >= '3.14'",
+    "anyio>=4.9; python_version < '3.14'",
+    "httpx2>=2.5.0",
+    "mcp-types=={{ version }}",
+    "pydantic>=2.12.0",
+    "starlette>=0.48.0; python_version >= '3.14'",
+    "starlette>=0.27; python_version < '3.14'",
+    "uvicorn>=0.31.1; sys_platform != 'emscripten'",
+    "jsonschema>=4.20.0",
+    "pywin32>=311; sys_platform == 'win32'",
+    "pyjwt[crypto]>=2.10.1",
+    "typing-extensions>=4.13.0",
+]
+
+[tool.uv.workspace]
+members = ["src/mcp-types", "examples", "examples/clients/*", "examples/servers/*", "examples/snippets"]
+
+[tool.uv.sources]
+mcp = { workspace = true }
+mcp-example-stories = { workspace = true }
+mcp-types = { workspace = true }
+strict-no-cover = { git = "https://github.com/pydantic/strict-no-cover" }

@@ -1,0 +1,123 @@
+"""Golden API diffs of real release pairs: tests/fixtures/diffs, recorded from PyPI with
+scripts/record_diff_fixtures.py.
+
+Each pair here has breaking changes its own changelog documents, and the tests assert those,
+plus what the source shows where the changelog says less, and the notes an agent gets. They
+read the recorded diffs, so a change to the notes fails here. A change in since-cutoff's diff
+or in griffe that shifts what a real pair reports fails the network test that diffs every pair
+again from PyPI (test_dependency_switch.py, or ``record_diff_fixtures.py --check``). (mcp's
+and openai's fixtures are read by test_ranking.py and test_dependency_switch.py.)
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from since_cutoff.apidiff import (
+    DEPENDENCY_SWITCHED,
+    DEPRECATED,
+    DIFF_SCHEMA,
+    MOVED,
+    PARAM_REMOVED,
+    PARAM_REQUIRED,
+    REMOVED,
+    TIER_INTERNAL,
+    TIER_PUBLIC,
+    APIChange,
+)
+from since_cutoff.notes import diff_note
+
+FIXTURES = Path(__file__).parent / "fixtures" / "diffs"
+# The fixtures ship in the sdist: a bigger diff keeps only some kinds (a fixture's "kinds").
+# mcp's 121 changes, each with its tier and its call_form_only (DIFF_SCHEMA 21), are 152 KB.
+MAX_FIXTURE_BYTES = 160 * 1024
+
+
+def _changes(name: str) -> dict[tuple[str, str, str], APIChange]:
+    data = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+    changes = map(APIChange.from_dict, data["changes"])
+    return {(c.kind, c.path, c.parameter or ""): c for c in changes}
+
+
+@pytest.mark.parametrize("path", sorted(FIXTURES.glob("*.json")), ids=lambda p: p.stem)
+def test_every_fixture_is_current_and_small(path: Path) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["schema"] == DIFF_SCHEMA, "re-record it: python scripts/record_diff_fixtures.py"
+    assert path.stat().st_size <= MAX_FIXTURE_BYTES
+    assert path.stem.startswith(f"{data['package']}-{data['from_version']}-{data['to_version']}")
+    # Every change says whether its API is public or internal (DIFF_SCHEMA 21).
+    assert {c["tier"] for c in data["changes"]} <= {TIER_PUBLIC, TIER_INTERNAL}
+
+
+def test_the_tier_of_real_changes() -> None:
+    """httpx 0.28's parameters all belong to its exported API; click 8.2 deprecated the
+    documented ``OptionParser`` (public) next to its ``parser`` module's helpers (internal);
+    mcp's ``FastMCP`` move is public, a constant of ``client.streamable_http`` is not."""
+    assert {c.tier for c in _changes("httpx-0.27.2-0.28.1").values()} == {TIER_PUBLIC}
+    switch = _changes("openai-2.44.0-3.19.2-switch")[(DEPENDENCY_SWITCHED, "openai", "")]
+    assert switch.tier == TIER_PUBLIC
+    click = _changes("click-8.1.8-8.2.0")
+    assert click[(DEPRECATED, "click.parser.OptionParser", "")].tier == TIER_PUBLIC
+    assert click[(DEPRECATED, "click.parser.split_opt", "")].tier == TIER_INTERNAL
+    # ``ParamType.get_metavar(ctx)``: the 13 types that inherit it are paths to it too.
+    metavar = click[(PARAM_REQUIRED, "click.types.ParamType.get_metavar", "ctx")]
+    assert metavar.occurrences == 14 and "click.Path.get_metavar" in (metavar.import_paths or [])
+    mcp = _changes("mcp-1.28.1-2.2.0")
+    assert mcp[(MOVED, "mcp.server.FastMCP", "")].tier == TIER_PUBLIC
+    assert mcp[(REMOVED, "mcp.client.streamable_http.ACCEPT", "")].tier == TIER_INTERNAL
+
+
+HTTPX_FUNCTIONS = ("request", "stream", "get", "options", "head", "post", "put", "patch", "delete")
+
+
+def test_httpx_0_28_removed_proxies_and_app() -> None:
+    """httpx 0.28.0's changelog: "The deprecated `proxies` argument has now been removed." and
+    "The deprecated `app` argument has now been removed." It calls `cert` deprecated: `Client`
+    still takes it, with a warning, but the top-level functions no longer do."""
+    changes = _changes("httpx-0.27.2-0.28.1")
+    client = "httpx.Client.__init__"
+    for parameter in ("proxies", "app"):
+        change = changes[(PARAM_REMOVED, client, parameter)]
+        assert change.also == ["httpx.AsyncClient.__init__"]
+    for function in HTTPX_FUNCTIONS:
+        assert (PARAM_REMOVED, f"httpx.{function}", "proxies") in changes
+        assert (PARAM_REMOVED, f"httpx.{function}", "cert") in changes
+    assert (PARAM_REMOVED, client, "cert") not in changes
+    assert {kind for kind, _, _ in changes} == {PARAM_REMOVED}  # 0.28 removed no names
+    # httpx 0.27.2's own warning names the replacements: "Use 'proxy' or 'mounts' instead."
+    assert diff_note([changes[(PARAM_REMOVED, client, "proxies")]]).line == (
+        "`Client()` no longer accepts `proxies`; do not pass it. Use `proxy` or `mounts` "
+        "instead of `proxies`. [diff + library]"
+    )
+    # For `app` the sentence says more than the name ("Use the explicit style ..."): it is
+    # quoted, and `WSGITransport` is the replacement it states.
+    assert diff_note([changes[(PARAM_REMOVED, client, "app")]]).line == (
+        "`Client()` no longer accepts `app`; do not pass it. On `app`, httpx 0.27.2 said: "
+        "\"Use the explicit style 'transport=WSGITransport(app=...)' instead.\" [diff + library]"
+    )
+
+
+def test_click_8_2_removed_helpoption_and_mix_stderr_and_deprecated_the_old_parser() -> None:
+    """click 8.2.0's changelog: "Removes `HelpOption`", "Removes the `mix_stderr` parameter in
+    `CliRunner`", and `BaseCommand`, `MultiCommand`, `OptionParser` and the `parser` module
+    are deprecated (a module ``__getattr__`` still serves them, with a warning)."""
+    changes = _changes("click-8.1.8-8.2.0")
+    assert (REMOVED, "click.HelpOption", "") in changes
+    # ``catch_exceptions: bool = True`` took its place, but is a new parameter, as click's
+    # docstring says: not a rename to suggest.
+    mix_stderr = changes[(PARAM_REMOVED, "click.testing.CliRunner.__init__", "mix_stderr")]
+    assert (mix_stderr.renamed, mix_stderr.suggestions) == (False, [])
+    assert "catch_exceptions" not in diff_note([mix_stderr]).line
+    deprecated = {path for kind, path, _ in changes if kind == DEPRECATED}
+    assert {"click.BaseCommand", "click.MultiCommand", "click.OptionParser"} <= deprecated
+    assert {"click.parser.OptionParser", "click.parser.split_arg_string"} <= deprecated
+    assert diff_note([changes[(DEPRECATED, "click.BaseCommand", "")]]).line == (
+        "`click.BaseCommand` is deprecated; avoid it in new code. Use `click.Command` instead. "
+        "[diff + library]"
+    )
+    # Not in the changelog, in the source: these methods now take the context.
+    for method in ("click.core.Parameter.make_metavar", "click.types.ParamType.get_metavar"):
+        assert (PARAM_REQUIRED, method, "ctx") in changes

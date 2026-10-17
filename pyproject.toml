@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "since-cutoff"
 dynamic = ["version"]
-description = "Find which of your exact dependency versions your coding agent writes wrong, and fix it with a small, verified AGENTS.md note."
+description = "Find which dependency APIs your code uses changed after your coding model's training cutoff, and write short AGENTS.md notes from the API diff, each with its source."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,6 +19,8 @@ keywords = [
     "agents-md",
     "knowledge-cutoff",
     "api-changes",
+    "mcp",
+    "mcp-server",
     "static-analysis",
 ]
 classifiers = [
@@ -35,13 +37,18 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "basedpyright>=1.20",
     "griffe>=1.14",
+    "mcp>=2.0",
     "packaging>=23.0",
     "pyyaml>=6.0",
     "rich>=13.7",
     "tomli>=2.0; python_version < '3.11'",
 ]
+
+[project.optional-dependencies]
+# `since-cutoff run` type-checks the model's answers with basedpyright, which brings its own
+# Node.js: 180 MB that scan, sync, status, the MCP server, the Action and the hooks never use.
+run = ["basedpyright>=1.20"]
 
 [project.urls]
 Homepage = "https://github.com/MohammadHijjawi97/since-cutoff"
@@ -52,7 +59,14 @@ Changelog = "https://github.com/MohammadHijjawi97/since-cutoff/blob/main/CHANGEL
 since-cutoff = "since_cutoff.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11"]
+dev = [
+    "basedpyright>=1.20",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
 
 [tool.hatch.version]
 path = "src/since_cutoff/__init__.py"
@@ -75,6 +89,8 @@ markers = [
 line-length = 100
 target-version = "py310"
 src = ["src", "tests"]
+# The example project is scanned by since-cutoff, not linted: it keeps its imports as they are.
+extend-exclude = ["examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "C4"]

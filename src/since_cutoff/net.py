@@ -23,6 +23,12 @@ class HTTPError(Exception):
         super().__init__(f"{url}: {self.reason}")
 
     @property
+    def transient(self) -> bool:
+        """A failure that retrying later may fix (no response, 429, 5xx): what
+        :func:`request` retries, as opposed to an answer such as 404."""
+        return self.status is None or self.status in _TRANSIENT_STATUS
+
+    @property
     def reason(self) -> str:
         """A short, human-readable description (no raw urllib reprs)."""
         if self.status is None:
@@ -32,6 +38,18 @@ class HTTPError(Exception):
             return f"network error ({text or 'no response'})"
         snippet = " ".join(self.body.split())[:200]
         return f"HTTP {self.status}" + (f": {snippet}" if snippet else "")
+
+
+class ResponseTooLarge(HTTPError):
+    """The response went past ``max_bytes`` (see :func:`request`)."""
+
+    @property
+    def transient(self) -> bool:
+        return False
+
+    @property
+    def reason(self) -> str:
+        return self.body
 
 
 def request(
@@ -53,7 +71,7 @@ def request(
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data: bytes = resp.read() if max_bytes is None else resp.read(max_bytes)
                 if max_bytes is not None and len(data) >= max_bytes:
-                    raise HTTPError(url, None, f"response larger than {max_bytes} bytes")
+                    raise ResponseTooLarge(url, None, f"response of {max_bytes} bytes or more")
                 return data
         except urllib.error.HTTPError as exc:
             text = exc.read().decode("utf-8", "replace")
@@ -66,12 +84,9 @@ def request(
                 time.sleep(min(delay, 30.0))
                 continue
             raise last from exc
-        except (
-            urllib.error.URLError,
-            TimeoutError,
-            ConnectionError,
-            http.client.HTTPException,
-        ) as exc:
+        except (OSError, http.client.HTTPException) as exc:
+            # URLError, timeouts, resets, and TLS errors while the body is read (ssl.SSLError,
+            # which urllib does not wrap in a URLError once the response has begun).
             reason = getattr(exc, "reason", None) or exc
             last = HTTPError(url, None, str(reason))
             if attempt < retries - 1:
