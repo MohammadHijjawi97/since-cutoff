@@ -51,6 +51,15 @@ inputs:
     description: Add the Markdown summary to the job summary.
     required: false
     default: "true"
+  pr-comment:
+    description: >-
+      On pull_request events, post the Markdown summary as one comment on the pull request (one
+      per working-directory), and edit that comment on later runs. The job needs
+      `permissions: pull-requests: write`. For a pull request from a fork (whose token cannot
+      write on pull_request, and which pull_request_target should not let write), the step
+      prints a notice instead.
+    required: false
+    default: "false"
   cache:
     description: >-
       Cache PyPI metadata, package sources and API diffs between runs (saved also when
@@ -211,6 +220,123 @@ runs:
       with:
         path: ${{ runner.temp }}/since-cutoff-cache
         key: ${{ steps.cache.outputs.cache-primary-key }}
+
+    # One comment per pull request and working-directory, found again by its marker and edited
+    # on each run. Before "Report the result", so that a failing scan still updates it.
+    - name: Comment on the pull request
+      if: ${{ !cancelled() && inputs.pr-comment == 'true' && steps.scan.outputs.exit-code != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_ENTERPRISE_TOKEN: ${{ github.token }}
+        SC_MARKDOWN: ${{ steps.scan.outputs.markdown }}
+        SC_STEP_SUMMARY: ${{ inputs.step-summary }}
+        SC_WORKDIR: ${{ inputs.working-directory }}
+        SC_PR: ${{ github.event.pull_request.number }}
+        SC_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        SC_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -uo pipefail
+        # The marker names the working-directory, so that two steps (or a matrix) scanning two
+        # projects keep a comment each; the project root's has no directory.
+        backslash='\'
+        dir="${SC_WORKDIR//"$backslash"//}"
+        while [ "${dir#./}" != "$dir" ]; do dir="${dir#./}"; done
+        while [ "${dir%/}" != "$dir" ]; do dir="${dir%/}"; done
+        dir="${dir//>/}"
+        case "$dir" in
+          "" | .) marker='<!-- since-cutoff:pr-comment -->' where="the project root" ;;
+          *) marker="<!-- since-cutoff:pr-comment:$dir -->" where="$dir" ;;
+        esac
+        if [ -z "$SC_PR" ]; then
+          echo "::notice title=since-cutoff::pr-comment: not a pull request ($GITHUB_EVENT_NAME), so no comment"
+          exit 0
+        fi
+        # A fork's token cannot write on pull_request; on pull_request_target it can, but then a
+        # fork's change would choose what is written with it. An unknown head (a deleted fork)
+        # counts as a fork.
+        if [ "$SC_HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "::notice title=since-cutoff::pr-comment: the token of a pull request from a fork cannot comment, so the summary is in the job summary only"
+          else
+            echo "::notice title=since-cutoff::pr-comment: the pull request is from a fork, so $GITHUB_EVENT_NAME posts no comment and the summary is in the job summary only"
+          fi
+          exit 0
+        fi
+        if ! command -v gh > /dev/null; then
+          echo "::warning title=since-cutoff::pr-comment: gh not found (the GitHub CLI, which GitHub-hosted runners have), so no comment"
+          exit 0
+        fi
+        # On GitHub Enterprise Server, gh talks to the server the workflow runs on.
+        host="${GITHUB_SERVER_URL#*://}"
+        export GH_HOST="${GH_HOST:-${host%%/*}}"
+
+        # GitHub takes up to 65,536 characters; a byte is at most one character (LC_ALL=C makes
+        # awk count bytes, not characters). A longer summary is cut after a whole line, then a
+        # code fence left open is closed, then each open <details>.
+        max="${SINCE_CUTOFF_COMMENT_MAX_BYTES:-64000}"
+        run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        body="$(mktemp "${RUNNER_TEMP:-/tmp}/since-cutoff-comment.XXXXXX")"
+        {
+          printf '%s\n' "$marker"
+          if [ -n "$SC_MARKDOWN" ] && [ -f "$SC_MARKDOWN" ]; then
+            if [ "$(( $(wc -c < "$SC_MARKDOWN") ))" -le "$max" ]; then
+              cat "$SC_MARKDOWN"
+            else
+              LC_ALL=C awk -v max="$max" '
+                { size += length($0) + 1; if (size > max) exit; print }
+                fence != "" {
+                  if ($0 ~ ("^ *" fence "[" substr(fence, 1, 1) "]* *$")) fence = ""
+                  next
+                }
+                match($0, /^ *(```+|~~~+)/) { fence = substr($0, RSTART, RLENGTH); sub(/^ +/, "", fence); next }
+                { opened += gsub(/<details/, "&"); closed += gsub(/<\/details>/, "&") }
+                END { if (fence != "") print fence; for (i = closed; i < opened; i++) print "</details>" }
+              ' "$SC_MARKDOWN"
+              if [ "$SC_STEP_SUMMARY" = "true" ]; then
+                printf '\n**The summary is longer than a comment can be, so it was cut here: the [job summary](%s) has all of it.**\n' "$run_url"
+              else
+                printf '\n**The summary is longer than a comment can be, so it was cut here** (`step-summary: true` adds all of it to the [job summary](%s)).\n' "$run_url"
+              fi
+            fi
+          else
+            printf '## since-cutoff scan\n\nThe scan did not finish, so there is no summary for this commit: see the [workflow run](%s).\n' "$run_url"
+          fi
+          printf '\n<sub>Updated for %s by the since-cutoff action ([workflow run](%s)).</sub>\n' "${SC_HEAD_SHA:0:7}" "$run_url"
+        } > "$body"
+
+        comments="repos/$GITHUB_REPOSITORY/issues/$SC_PR/comments"
+        err="$(mktemp "${RUNNER_TEMP:-/tmp}/since-cutoff-gh.XXXXXX")"
+        # Each comment as "id author first-line": ours start with the marker line.
+        if ! listed="$(gh api --paginate "$comments" --jq '.[] | "\(.id) \(.user.login) \((.body // "") | split("\n") | .[0])"' 2> "$err")"; then
+          echo "::warning title=since-cutoff::pr-comment: could not read the comments of pull request #$SC_PR on $GH_HOST ($(head -n 1 "$err")); the job needs permissions: pull-requests: write"
+          exit 0
+        fi
+        id="" found=0
+        while read -r cid author first; do
+          if [ "$author" = "github-actions[bot]" ] && [ "${first%$'\r'}" = "$marker" ]; then
+            found=$((found + 1))
+            if [ -z "$id" ] || [ "$cid" -gt "$id" ]; then id="$cid"; fi
+          fi
+        done <<< "$listed"
+        if [ "$found" -gt 1 ]; then
+          echo "::notice title=since-cutoff::pr-comment: pull request #$SC_PR has $found since-cutoff comments for $where; the newest ($id) is edited, the others are left as they are"
+        fi
+        if [ -n "$id" ]; then
+          request=(--method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id")
+        else
+          request=(--method POST "$comments")
+        fi
+        # This repository's CI checks the comment without posting it.
+        if [ -n "${SINCE_CUTOFF_COMMENT_DRY_RUN:-}" ]; then
+          { echo "gh api ${request[*]} -F body=@-"; echo; cat "$body"; } > "$SINCE_CUTOFF_COMMENT_DRY_RUN"
+          echo "Dry run: gh api ${request[*]} -F body=@$body"
+          exit 0
+        fi
+        if ! gh api "${request[@]}" -F "body=@$body" --jq '"pr-comment: " + .html_url' 2> "$err"; then
+          echo "::warning title=since-cutoff::pr-comment: could not write the comment on pull request #$SC_PR on $GH_HOST ($(head -n 1 "$err")); the job needs permissions: pull-requests: write"
+        fi
+        exit 0
 
     - name: Report the result
       if: ${{ !cancelled() && steps.scan.outputs.exit-code != '' && (steps.scan.outputs.exit-code != '0' || steps.scan.outputs.notes-exit-code != '0') }}

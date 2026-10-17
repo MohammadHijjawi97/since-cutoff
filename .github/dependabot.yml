@@ -8,6 +8,14 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+  # The Dockerfile's base image, pinned by digest: new digests of python:3.12-slim only.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   # pyproject.toml
   - package-ecosystem: pip
     directory: /

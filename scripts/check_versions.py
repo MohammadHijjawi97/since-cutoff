@@ -124,6 +124,9 @@ FIELDS: dict[str, Callable[[], Any]] = {
     "action.yml since-cutoff-version default": lambda: _match(
         "action.yml", rf'^  since-cutoff-version:\n(?:    .*\n)*?    default: "{_VERSION}"$'
     ),
+    "Dockerfile SINCE_CUTOFF_VERSION": lambda: _match(
+        "Dockerfile", rf"^ARG SINCE_CUTOFF_VERSION={_VERSION}$"
+    ),
     "CHANGELOG.md newest release": lambda: _match("CHANGELOG.md", rf"^## {_VERSION} - "),
 }
 # Each README pins the release twice: the pre-commit `rev`, and the action's `since-cutoff-version`

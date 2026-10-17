@@ -808,6 +808,7 @@ modifiée.
 | `fail-on-changes` | `false` | fait échouer l'étape quand une dépendance a modifié son API après la date limite |
 | `check-notes` | `false` | lance aussi `since-cutoff sync --check`, qui n'écrit rien, et fait échouer le job quand les notes d'AGENTS.md / CLAUDE.md ne sont plus à jour ou que le bloc a été modifié à la main ; les notes gardent le modèle pour lequel elles ont été écrites, et `model` (et `cutoff`) servent pour un projet qui n'a pas encore de bloc |
 | `step-summary` | `true` | ajoute le résumé Markdown au résumé du job |
+| `pr-comment` | `false` | (depuis la 0.7.0) sur les pull requests, publie le résumé en un seul commentaire et le modifie à chaque exécution ; nécessite `permissions: pull-requests: write` |
 | `cache` | `true` | conserve entre les exécutions les métadonnées PyPI, les sources des paquets et les diffs d'API (y compris quand `fail-on-changes` fait échouer le job) |
 | `args` | | arguments supplémentaires pour `since-cutoff scan`, par exemple `--all-deps --limit 20` |
 | `since-cutoff-version` | `0.5.0` | la version de since-cutoff à exécuter, ou `latest` |
@@ -816,11 +817,52 @@ modifiée.
 API modifiée sous l'ancienne forme, et annote chaque fichier qui en utilise une : un
 avertissement (*warning*) pour l'ancienne forme, une note (*notice*) sinon.
 
-Sorties : `changed-packages` (liste séparée par des virgules), `changes` (changements incompatibles),
-`deprecations`, `markdown` (le chemin du résumé, par exemple pour le publier en commentaire de
-la pull request), `report` (le chemin du rapport complet) et, avec `check-notes`, `notes`
-(`up-to-date`, `out-of-date`, `edited-by-hand` ou `error`). Un changement accessible par
-plusieurs chemins d'import n'est compté qu'une fois.
+Avec `pr-comment: true` (depuis la 0.7.0), le résumé devient aussi un commentaire de la pull
+request, là où les relecteurs le lisent : la première exécution le publie, les suivantes
+modifient ce commentaire au lieu d'en ajouter un, si bien qu'il décrit toujours le dernier push,
+y compris quand le scan ne trouve plus rien. Le token du job doit pouvoir écrire dans les pull
+requests :
+
+```yaml
+# une seule exécution à la fois par pull request, pour qu'une ancienne n'écrase pas le commentaire
+concurrency:
+  group: since-cutoff-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # pour pr-comment
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MohammadHijjawi97/since-cutoff@v0
+        with:
+          model: anthropic:claude-sonnet-4-5
+          pr-comment: true
+```
+
+Sur une pull request venant d'un fork, le token ne peut que lire : l'étape affiche alors une note
+(*notice*) et le résumé reste dans le résumé du job ; sur les autres événements (un push), elle
+ne publie rien. Ne la lancez pas sur `pull_request_target` avec un checkout de la branche de la
+pull request pour avoir des commentaires sur les forks : cela exécute le code du fork avec un
+token qui peut écrire dans votre dépôt (et l'étape n'y publie rien non plus pour un fork). Un
+résumé plus long que ce qu'admet un commentaire (65 536 caractères) est coupé après une ligne
+entière, avec un lien vers le résumé du job. Le commentaire est retrouvé grâce à un marqueur
+caché, `<!-- since-cutoff:pr-comment -->` pour la racine du projet et
+`<!-- since-cutoff:pr-comment:DIR -->` pour un `working-directory`, si bien que deux étapes qui
+analysent deux projets gardent chacune leur commentaire ; s'il y en a deux pour un même projet,
+c'est le plus récent qui est modifié. Le texte des bibliothèques elles-mêmes dans le résumé (un
+message de dépréciation, par exemple) ne mentionne personne et ne lie aucune issue : hors du
+code, un `@nom` ou un `#N` reçoit une espace de largeur nulle, et un lien vers une issue ou une
+pull request GitHub passe par redirect.github.com.
+
+Sorties : `changed-packages` (liste séparée par des virgules), `changes` (changements
+incompatibles), `deprecations`, `markdown` (le chemin du résumé, par exemple pour une étape à
+vous), `report` (le chemin du rapport complet) et, avec `check-notes`, `notes` (`up-to-date`,
+`out-of-date`, `edited-by-hand` ou `error`). Un changement accessible par plusieurs chemins
+d'import n'est compté qu'une fois.
 
 ### pre-commit
 
@@ -876,6 +918,42 @@ largeur). Codes de sortie :
   `status` (et avec `sync`, quand il ne les a pas écrites) ;
 - `4` `sync` : le bloc a été modifié à la main, et rien n'a été écrit sans `--force` ;
 - `141` la sortie a été fermée prématurément (par exemple, redirigée vers `head`).
+
+### Docker (depuis la 0.7.0)
+
+Chaque version est aussi une image, `ghcr.io/mohammadhijjawi97/since-cutoff:X.Y.Z` et `:latest`,
+pour linux/amd64 et linux/arm64, pour les CI qui exécutent leurs outils dans des conteneurs :
+
+```bash
+# analyse le projet du répertoire courant ; -u lui permet d'y écrire .since-cutoff/
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" ghcr.io/mohammadhijjawi97/since-cutoff \
+  scan --model anthropic:claude-sonnet-4-5 --markdown summary.md
+```
+
+```yaml
+# .gitlab-ci.yml
+since-cutoff:
+  image:
+    name: ghcr.io/mohammadhijjawi97/since-cutoff:latest
+    entrypoint: [""]  # GitLab exécute le script dans un shell
+  variables:
+    SINCE_CUTOFF_CACHE: "$CI_PROJECT_DIR/.since-cutoff-cache"
+  cache:
+    paths: [.since-cutoff-cache/]
+  script:
+    - since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown summary.md --fail-on old-form
+  artifacts:
+    when: always
+    paths: [summary.md, .since-cutoff/]
+```
+
+Le point d'entrée est `since-cutoff` et le répertoire de travail `/src` ; sans arguments, l'image
+démarre le serveur MCP sur stdio
+(`docker run --rm -i ghcr.io/mohammadhijjawi97/since-cutoff`). Elle s'exécute avec un
+utilisateur non root et garde son cache dans `/cache` (montez-y un volume pour le conserver d'une
+exécution à l'autre). Elle contient `scan`, `sync`, `status` et `mcp`, mais pas l'extra `run` :
+`run` nécessite `pip install "since-cutoff[run]"`, la clé d'API de son modèle et, pour les
+modèles `claude-code:`, la CLI claude, que l'image n'a pas.
 
 ## Fonctionnement
 

@@ -1,13 +1,15 @@
 name: Release
 
 # Publishes to PyPI with trusted publishing when a version tag (v0.2.0, ...) is pushed, then
-# lists that version in the official MCP Registry (registry.modelcontextprotocol.io) and creates
-# the GitHub release. The major tag (v0) that `uses: MohammadHijjawi97/since-cutoff@v0` resolves
-# to is moved by hand afterwards (see CONTRIBUTING.md).
+# lists that version in the official MCP Registry (registry.modelcontextprotocol.io), pushes the
+# Docker image to ghcr.io and creates the GitHub release. The major tag (v0) that
+# `uses: MohammadHijjawi97/since-cutoff@v0` resolves to is moved by hand afterwards (see
+# CONTRIBUTING.md).
 # One-time setup on pypi.org: add a "pending publisher" for project `since-cutoff`,
 # owner `MohammadHijjawi97`, repository `since-cutoff`, workflow `release.yml`, environment `pypi`.
 # The MCP Registry needs no setup: it trusts this repository's GitHub OIDC token for the
-# io.github.MohammadHijjawi97/* namespace.
+# io.github.MohammadHijjawi97/* namespace. A package's first push to ghcr.io is private: make it
+# public once, in the package's settings.
 
 on:
   push:
@@ -27,7 +29,7 @@ jobs:
           python-version: "3.12"
       - name: Check that every version field matches the tag
         # The package, the action's default, server.json, the plugin and extension manifests,
-        # the MCP launcher pins, CITATION.cff, the changelog and the README pins.
+        # the MCP launcher pins, CITATION.cff, the Dockerfile, the changelog and the README pins.
         run: python scripts/check_versions.py "$GITHUB_REF_NAME"
       - run: python -m pip install build
       - run: python -m build
@@ -89,6 +91,80 @@ jobs:
         run: ./mcp-publisher login github-oidc
       - name: Publish server.json
         run: ./mcp-publisher publish
+
+  docker:
+    # The image for CI outside GitHub Actions: ghcr.io/mohammadhijjawi97/since-cutoff:X.Y.Z for
+    # linux/amd64 and linux/arm64, and :latest when X.Y.Z is the newest release (not for a fix to
+    # an older line). The Dockerfile installs the release from PyPI. The linux/amd64 image is
+    # built and checked first, so that nothing is pushed unless it starts and answers MCP.
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Wait until PyPI serves the release
+        id: release
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 1 30); do
+            if curl -sf -o /dev/null "https://pypi.org/pypi/since-cutoff/$version/json"; then
+              # :latest only for the newest release. PyPI's newest may still be cached as the
+              # previous one, which this version is newer than anyway.
+              newest="$(curl -sSf https://pypi.org/pypi/since-cutoff/json | jq -r .info.version)"
+              latest=false
+              if [ "$(printf '%s\n%s\n' "$newest" "$version" | sort -V | tail -n 1)" = "$version" ]; then
+                latest=true
+              fi
+              echo "since-cutoff $version, PyPI's newest $newest: latest=$latest"
+              { echo "version=$version"; echo "latest=$latest"; } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "since-cutoff $version is not on PyPI yet"
+          exit 1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the linux/amd64 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: SINCE_CUTOFF_VERSION=${{ steps.release.outputs.version }}
+          tags: since-cutoff:check
+          load: true
+          push: false
+      - name: Check it (--version, uid, MCP tools/list with --network none)
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: python3 scripts/check_image.py since-cutoff:check "$VERSION"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/mohammadhijjawi97/since-cutoff
+          # No automatic :latest for every semver tag: only the newest release moves it.
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ steps.release.outputs.latest }}
+      - name: Build and push linux/amd64 and linux/arm64
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: SINCE_CUTOFF_VERSION=${{ steps.release.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
 
   github-release:
     # The GitHub release: the changelog entry and the built files (two files, so that

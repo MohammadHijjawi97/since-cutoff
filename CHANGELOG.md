@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- The GitHub Action posts its summary on the pull request with `pr-comment: true` (#33): one
+  comment per `working-directory`, found again by a hidden marker
+  (`<!-- since-cutoff:pr-comment -->` for the project root, `<!-- since-cutoff:pr-comment:DIR -->`
+  otherwise) and edited on each run, so it describes the latest push, also once the scan finds
+  nothing; if two have the marker, the newest is edited, with a notice. It uses the `gh` CLI
+  (on GitHub Enterprise Server, against that server) and the job's token, which needs
+  `permissions: pull-requests: write`. On a pull request from a fork (on `pull_request`, whose
+  token can only read, and on `pull_request_target` too) and on other events, the step prints a
+  notice and posts nothing; a token that cannot write, or a runner without `gh`, gets a warning
+  that says why, never a failed job. A summary longer than a comment can be (65,536 characters)
+  is cut after a whole line, a code fence it was cut in closed, then its open `<details>`, with a
+  link to the job summary. The step runs before the one that fails the job, so a failing scan
+  still updates the comment. The Markdown summary (`--markdown`, so the job summary and the
+  comment) quotes the libraries' text without pinging anyone: outside code spans and fences, an
+  `@name`, a `#N` and a `GH-N` get a zero-width space, as Dependabot's do, and links to GitHub
+  issues, pull requests and discussions go through redirect.github.com, so that a deprecation
+  message that links an issue of PyTorch's adds nothing to that issue. CI posts and edits the
+  comment for real on this repository's own pull requests, with the token in the env of the steps
+  that call `gh` only and not kept by checkout.
+- A Docker image on each release (#35): `ghcr.io/mohammadhijjawi97/since-cutoff:X.Y.Z` and
+  `:latest`, for linux/amd64 and linux/arm64, for GitLab CI, Jenkins, Buildkite and other CI that
+  runs tools from containers (`docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" IMAGE scan
+  --model ...`). The Dockerfile pins python:3.12-slim by digest (Dependabot updates it) and the
+  release by a build argument that `scripts/check_versions.py` checks, installs no `run` extra,
+  runs as a non-root user with its cache in `/cache`, and still starts the MCP server without
+  arguments (`ENTRYPOINT ["since-cutoff"]`, `CMD ["mcp"]`), as MCP directories expect. CI builds
+  it on every pull request, checks `--version`, MCP `tools/list` and a scan of
+  `examples/agent-app`; `release.yml` builds it for linux/amd64 and checks `--version`, the user
+  and MCP `tools/list` first, then pushes both platforms after PyPI has the release, with
+  `packages: write` for that job only, and moves `:latest` only when the release is the newest.
 - Notes from the diff say what to use instead in more cases, and point somewhere useful when they
   cannot (an audit of 36 libraries found 25 of 36 notes ending in "since-cutoff found no
   replacement in X's deprecation text", several although the text named one; #14). A replacement

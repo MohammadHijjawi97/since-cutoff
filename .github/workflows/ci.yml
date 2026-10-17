@@ -100,6 +100,11 @@ jobs:
     # network job it talks to PyPI and models.dev; it never calls a model.
     name: action (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # pr-comment reads the pull request's comments; its dry run (below) writes none. It covers
+    # pull requests from forks too; the pr-comment job posts for real on this repository's own.
+    permissions:
+      contents: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
@@ -109,9 +114,13 @@ jobs:
       - name: Scan examples/agent-app
         id: scan
         uses: ./
+        env:
+          # The comment it would post goes to this file, after the gh api call it would make.
+          SINCE_CUTOFF_COMMENT_DRY_RUN: ${{ runner.temp }}/pr-comment.txt
         with:
           model: anthropic:claude-haiku-4-5
           working-directory: examples/agent-app
+          pr-comment: "true"
           since-cutoff-version: local
       - name: Scan again with fail-on-changes (must fail)
         id: strict
@@ -132,6 +141,8 @@ jobs:
           MARKDOWN: ${{ steps.scan.outputs.markdown }}
           REPORT: ${{ steps.scan.outputs.report }}
           STRICT: ${{ steps.strict.outcome }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euxo pipefail
           [[ ",$CHANGED," == *",huggingface-hub,"* ]]
@@ -139,6 +150,100 @@ jobs:
           grep -q "<b>huggingface-hub</b>" "$MARKDOWN"
           test -f "$REPORT"
           [ "$STRICT" = "failure" ]
+          # pr-comment: on a pull request from this repository, the comment it would post or
+          # edit; elsewhere (a push, a fork) none.
+          comment="$RUNNER_TEMP/pr-comment.txt"
+          if [ -n "$PR" ] && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            cat "$comment"
+            grep -Eq "^gh api --method (POST repos/$GITHUB_REPOSITORY/issues/$PR/comments|PATCH repos/$GITHUB_REPOSITORY/issues/comments/[0-9]+) " "$comment"
+            [ "$(sed -n 3p "$comment")" = "<!-- since-cutoff:pr-comment:examples/agent-app -->" ]
+            grep -q "^## since-cutoff scan" "$comment"
+            grep -q "<b>huggingface-hub</b>" "$comment"
+            grep -q "^<sub>Updated for [0-9a-f]\{7\} by the since-cutoff action" "$comment"
+          else
+            test ! -e "$comment"
+          fi
+
+  pr-comment:
+    # pr-comment for real, on this repository's own pull requests only (a fork's token cannot
+    # write, and the job has no secret but its token): the first run on a pull request creates
+    # the comment, and each later run, and the second scan below, edits that comment. Only the
+    # steps that call gh have the token (the action's comment step sets its own), and checkout
+    # does not keep it in .git/config: the scans build and run packages from PyPI.
+    name: action (pr-comment)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      MARKER: "<!-- since-cutoff:pr-comment:examples/agent-app -->"
+      # The marked comments of github-actions[bot], found independently of the action's own code.
+      MARKED: >-
+        .[] | select(.user.login == "github-actions[bot]" and (.body | startswith(env.MARKER))) | .id
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The comment before this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          before="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --jq "$MARKED")"
+          [ "$(grep -c . <<< "$before" || true)" -le 1 ]
+          echo "BEFORE=$before" >> "$GITHUB_ENV"
+          echo "Comment before this run: ${before:-none}"
+      - name: Scan examples/agent-app and comment
+        uses: ./
+        with:
+          model: anthropic:claude-haiku-4-5
+          working-directory: examples/agent-app
+          pr-comment: "true"
+          since-cutoff-version: local
+      - name: Check that there is one comment, created or edited
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --jq "$MARKED")"
+          [ "$(grep -c . <<< "$ids" || true)" -eq 1 ]
+          if [ -z "$BEFORE" ]; then action=created; else [ "$ids" = "$BEFORE" ]; action=edited; fi
+          comment="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$ids")"
+          body="$(jq -r .body <<< "$comment")"
+          printf '%s\n' "$body"
+          [ "$(head -n 1 <<< "$body" | tr -d '\r')" = "$MARKER" ]
+          grep -q "^## since-cutoff scan" <<< "$body"
+          grep -q "<b>huggingface-hub</b>" <<< "$body"
+          grep -qF "Updated for ${HEAD_SHA:0:7} by the since-cutoff action ([workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID))" <<< "$body"
+          url="$(jq -r .html_url <<< "$comment")"
+          echo "pr-comment $action $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo "COMMENT=$ids"; echo "FIRST_BODY=$(sha256sum <<< "$body" | cut -d' ' -f1)"; } >> "$GITHUB_ENV"
+      - name: Scan again with another summary (edits the comment)
+        uses: ./
+        with:
+          model: anthropic:claude-haiku-4-5
+          working-directory: examples/agent-app
+          only: huggingface-hub
+          step-summary: "false"
+          pr-comment: "true"
+          since-cutoff-version: local
+      - name: Check that the same comment was edited
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --jq "$MARKED")"
+          [ "$ids" = "$COMMENT" ]
+          body="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT" --jq .body)"
+          printf '%s\n' "$body"
+          [ "$(sha256sum <<< "$body" | cut -d' ' -f1)" != "$FIRST_BODY" ]
+          [ "$(head -n 1 <<< "$body" | tr -d '\r')" = "$MARKER" ]
+          grep -q "<b>huggingface-hub</b>" <<< "$body"
+          echo "pr-comment edited again by a second scan in this job (comment $COMMENT)" | tee -a "$GITHUB_STEP_SUMMARY"
 
   build:
     runs-on: ubuntu-latest
@@ -150,3 +255,35 @@ jobs:
       - run: python -m pip install build twine
       - run: python -m build
       - run: python -m twine check dist/*
+
+  docker:
+    # The Dockerfile that release.yml publishes to ghcr.io (built here, never pushed): the MCP
+    # server answers tools/list, and the image scans the example project. The image installs
+    # since-cutoff from PyPI, so until the version the Dockerfile pins is there (a version bump
+    # before its tag) the job builds the newest release instead.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's/^ARG SINCE_CUTOFF_VERSION=//p' Dockerfile)"
+          version="$pinned"
+          if ! curl -sf -o /dev/null "https://pypi.org/pypi/since-cutoff/$pinned/json"; then
+            version="$(curl -sSf https://pypi.org/pypi/since-cutoff/json | jq -r .info.version)"
+            echo "::notice::since-cutoff $pinned is not on PyPI yet: the image installs $version"
+          fi
+          docker build --build-arg "SINCE_CUTOFF_VERSION=$version" -t since-cutoff:ci .
+          echo "IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+      # The check release.yml runs before it pushes: --version, the user, and MCP tools/list from
+      # the default command with --network none.
+      - name: Check the image
+        run: python3 scripts/check_image.py since-cutoff:ci "$IMAGE_VERSION"
+      - name: Scan examples/agent-app
+        run: |
+          set -euxo pipefail
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD/examples/agent-app:/src" since-cutoff:ci \
+            scan --model anthropic:claude-haiku-4-5 --markdown summary.md
+          test -f examples/agent-app/.since-cutoff/results.json
+          grep -q "<b>huggingface-hub</b>" examples/agent-app/summary.md

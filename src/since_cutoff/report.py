@@ -1893,7 +1893,8 @@ def render_scan_markdown(
     row per flagged dependency and the top ``limit`` changes of each changed one, folded, with
     changes to names the project's code uses first. The full list stays in report.md. Every
     count is of distinct changes, and the dependencies come in the same order, as in the full
-    report and the MCP tools.
+    report and the MCP tools. The libraries' text in it pings no one where it is posted
+    (:func:`quiet_on_github`).
     """
     s = summary(scan)
     project = scan.project
@@ -1954,7 +1955,79 @@ def render_scan_markdown(
         f"no model calls. {COUNTING_NOTE} Behaviour changes behind an unchanged signature are "
         "not shown.</sub>",
     ]
-    return "\n".join(out) + "\n"
+    return quiet_on_github("\n".join(out) + "\n")
+
+
+# The summary repeats the libraries' own text (a deprecation message, a release's reason), and
+# the action posts it on pull requests, where an @name notifies that GitHub user, a #N or GH-N
+# links the pull request's own issue N, and a link to a GitHub issue adds "mentioned this" to
+# that issue. A zero-width space after the @ and the # (as Dependabot does), and links through
+# redirect.github.com, keep the text as it reads. Code spans and fences are left alone: GitHub
+# links nothing in them, and an entity there would show as typed.
+_ZWSP = "&#8203;"
+_FENCE = re.compile(r"\s*(`{3,}|~{3,})")
+_BACKTICKS = re.compile(r"`+")
+_URL = re.compile(r"(?:https?://|www\.)[^\s<>]*", re.IGNORECASE)
+_MENTION = re.compile(r"(?<!\w)@(?=[A-Za-z0-9])")
+_ISSUE_REF = re.compile(r"(?<!&)#(?=\d)|(?<!\w)GH-(?=\d)", re.IGNORECASE)
+_GITHUB_THREAD = re.compile(
+    r"(?:https?://)?(?:www\.)?github\.com/(?=[\w.-]+/[\w.-]+/(?:issues|pull|discussions)/\d)",
+    re.IGNORECASE,
+)
+_REDIRECT = "https://redirect.github.com/"
+
+
+def quiet_on_github(markdown: str) -> str:
+    """``markdown`` with no @mention, issue reference or GitHub issue link that GitHub would act
+    on outside code spans and fences: ``use @field_validator, see #1234`` becomes
+    ``use @&#8203;field_validator, see #&#8203;1234``, and https://github.com/o/r/issues/5
+    becomes https://redirect.github.com/o/r/issues/5."""
+    out, fence = [], ""
+    for line in markdown.split("\n"):
+        stripped = line.strip()
+        if fence:
+            if stripped.startswith(fence) and not stripped.strip(fence[0]):
+                fence = ""
+        elif match := _FENCE.match(line):
+            fence = match.group(1)
+        else:
+            line = _outside_code_spans(line)
+        out.append(line)
+    return "\n".join(out)
+
+
+def _outside_code_spans(line: str) -> str:
+    """The line with :func:`_quiet_text` applied to all but its code spans (a run of backticks up
+    to the next run of the same length; a run with none is text)."""
+    out, start, at = [], 0, 0
+    while match := _BACKTICKS.search(line, at):
+        ticks = match.group()
+        close = next(
+            (m for m in _BACKTICKS.finditer(line, match.end()) if m.group() == ticks), None
+        )
+        if close is None:
+            at = match.end()
+            continue
+        out += [_quiet_text(line[start : match.start()]), line[match.start() : close.end()]]
+        start = at = close.end()
+    return "".join([*out, _quiet_text(line[start:])])
+
+
+def _quiet_text(text: str) -> str:
+    """Text outside code: a link keeps its @ and # (GitHub mentions nothing in a link, and a #
+    there is the fragment), and a link to a GitHub issue goes through redirect.github.com."""
+    out, at = [], 0
+    for url in _URL.finditer(text):
+        thread = _GITHUB_THREAD.match(url.group())
+        link = _REDIRECT + url.group()[thread.end() :] if thread else url.group()
+        out += [_quiet_words(text[at : url.start()]), link]
+        at = url.end()
+    return "".join([*out, _quiet_words(text[at:])])
+
+
+def _quiet_words(text: str) -> str:
+    text = _MENTION.sub("@" + _ZWSP, text)
+    return _ISSUE_REF.sub(lambda m: m.group() + _ZWSP, text)
 
 
 _EVIDENCE_WORDS = {

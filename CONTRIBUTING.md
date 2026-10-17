@@ -135,7 +135,8 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
 
 1. Set the new version everywhere and date the changelog:
    - `src/since_cutoff/__init__.py`, `server.json` (twice), `CITATION.cff` (`version` and
-     `date-released`) and the `since-cutoff-version` default in `action.yml`;
+     `date-released`), the `since-cutoff-version` default in `action.yml` and
+     `ARG SINCE_CUTOFF_VERSION` in the `Dockerfile`;
    - the plugin and extension manifests: `.claude-plugin/plugin.json`, the plugin entry in
      `.claude-plugin/marketplace.json`, `plugin.json`, `.codex-plugin/plugin.json` and
      `gemini-extension.json`, and the skill's `metadata.version` in
@@ -150,13 +151,20 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
    - turn the changelog's "Unreleased" section into `## X.Y.Z - YYYY-MM-DD`.
 
    `python scripts/check_versions.py` lists every field that still differs, and the plugin hook
-   when it is missing or pinned to another release; `pytest` runs the same check. The user configs in the README (`uvx since-cutoff@latest mcp`) and the
-   `Dockerfile` (`since-cutoff>=...`) need no change.
+   when it is missing or pinned to another release; `pytest` runs the same check. The user
+   configs in the README (`uvx since-cutoff@latest mcp`) need no change. Until the new version
+   is on PyPI, CI's `docker` job builds the image with the newest release there.
 2. Tag `vX.Y.Z` and push the tag. `.github/workflows/release.yml` runs only for full `vX.Y.Z`
    tags, and then:
    - checks that every version field equals the tag (`scripts/check_versions.py`), and builds;
    - publishes to PyPI with trusted publishing (configure the pending publisher on pypi.org once);
    - publishes `server.json` to the MCP Registry;
+   - builds the Docker image from the release on PyPI for linux/amd64 and checks it
+     (`scripts/check_image.py`: `--version`, the user, MCP `tools/list` with no network), then
+     builds it for linux/amd64 and linux/arm64 and pushes it as
+     `ghcr.io/mohammadhijjawi97/since-cutoff:X.Y.Z`, and as `:latest` when no newer release is on
+     PyPI (the first push creates a private package: make it public once, under the package's
+     settings);
    - creates the GitHub release with the changelog entry and the built files.
 3. Once the release is on PyPI, move the major tag by hand, so that
    `uses: MohammadHijjawi97/since-cutoff@v0` picks it up (the workflow never moves it, and
