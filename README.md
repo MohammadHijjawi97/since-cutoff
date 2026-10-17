@@ -243,7 +243,8 @@ would make them "old form". `scan -v` lists every file that uses an API (3 are s
 the changes to internal APIs, which every count gives apart as "+N internal"). `scan --json` and
 `.since-cutoff/results.json` have the same in `used_apis` (each API, where it is used, its
 changes and its note, with the note's tags, the versions it applies to and what was checked),
-and `.since-cutoff/report.md` starts with "Used by your code".
+and `.since-cutoff/report.md` starts with "Used by your code". The JSON is described by a
+JSON Schema that ships in the package, [results.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/results.schema.json).
 
 ### Keep the notes current: sync and status
 
@@ -293,7 +294,7 @@ exit codes and `--force` behavior still apply.
 `since-cutoff status` reads no network and no code: per package, the version the notes are for
 and the version the lockfile has, whether other dependencies changed, and whether the model
 your coding agent is set up with has an earlier training cutoff than the notes (with the
-`sync --model` command for it). `status --json` is for scripts. `status --hook` prints one line
+`sync --model` command for it). `status --json` is for scripts ([status.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/status.schema.json)). `status --hook` prints one line
 only when the notes are out of date and always exits with 0, for example:
 
 ```text
@@ -771,6 +772,93 @@ Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `de
 (the full report's path) and, with `check-notes`, `notes` (`up-to-date`, `out-of-date`,
 `edited-by-hand` or `error`). A change reachable under several import paths is counted once.
 
+### GitHub code scanning (SARIF)
+
+`scan --sarif FILE` writes a SARIF 2.1.0 report, which `github/codeql-action/upload-sarif`
+uploads to code scanning: each file that uses a changed API becomes an alert in the
+repository's Security tab, a warning for the old form and a note otherwise, with the change,
+both versions and the note in its message. Each kind of change is a rule (`removed`, `moved`,
+`param_removed`, `deprecated`, ...). Until the scan records lines
+([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)), an alert is on line 1 of its file and says so. A pull
+request shows an alert only when the line it is on is in the pull request's diff, so until
+then it shows mostly those of new files; the Security tab has them all.
+
+Code scanning matches an alert across runs by its rule and its `primaryLocationLineHash`, which
+the report sets to a hash of the package, the API and the file, without the versions: an alert
+stays the same across runs, version bumps and edits to the file, and two APIs in one file are
+two alerts. upload-sarif keeps that hash rather than computing one from the text at the
+alert's line (which every alert on line 1 of a file would share), and logs a warning for each
+result that the two differ ("found existing inconsistent fingerprint value"): that warning is
+expected.
+
+```yaml
+# .github/workflows/since-cutoff-sarif.yml
+name: since-cutoff code scanning
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # to upload the report
+      actions: read  # for upload-sarif in a private repository
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MohammadHijjawi97/since-cutoff@v0
+        with:
+          model: anthropic:claude-sonnet-4-5
+          args: --sarif since-cutoff.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        # also when --fail-on failed the job; not when no dependency could be checked (no file)
+        if: ${{ !cancelled() && hashFiles('since-cutoff.sarif') != '' }}
+        with:
+          sarif_file: since-cutoff.sarif
+          category: since-cutoff
+```
+
+Run it on the default branch as well as on pull requests, so that code scanning can tell which
+alerts a pull request adds. Code scanning is free for public repositories; private ones need
+GitHub Code Security. `--sarif` needs since-cutoff 0.7.0 or later, which `@v0` runs by default
+from the action's v0.7.0 on; with an older tag of the action, set `since-cutoff-version: 0.7.0`.
+Outside the Action: `since-cutoff scan --model ... --sarif since-cutoff.sarif`, then the same
+upload step.
+
+Code scanning reads each upload as the whole analysis of its `category` on that branch: it
+closes as fixed each open alert that the upload does not have, and reopens it when a later
+upload has it again. So:
+
+- When no dependency could be checked (PyPI unreachable), the scan exits with code 1 and
+  writes no SARIF file: the `hashFiles` condition skips the upload, and the alerts stay as
+  they were.
+- When some could not be checked (exit code 0, the reasons in the job's log), the report
+  says so: `runs[0].invocations[0].executionSuccessful` is `false`, and its
+  `toolExecutionNotifications` name each skipped package and why. Code scanning still
+  processes the results, and only flags the analysis as an unsuccessful tool execution: the
+  upload closes the open alerts of those packages as fixed, and the next upload that checks
+  them reopens them. They stay open only if that report is not uploaded; to upload only a
+  report in which every dependency was checked, use these two steps in place of the upload
+  step above:
+
+  ```yaml
+        - id: sarif  # complete=true when every dependency was checked
+          if: ${{ !cancelled() && hashFiles('since-cutoff.sarif') != '' }}
+          run: echo "complete=$(jq '.runs[0].invocations[0].executionSuccessful' since-cutoff.sarif)" >> "$GITHUB_OUTPUT"
+        - uses: github/codeql-action/upload-sarif@v4
+          if: ${{ !cancelled() && steps.sarif.outputs.complete == 'true' }}
+          with:
+            sarif_file: since-cutoff.sarif
+            category: since-cutoff
+  ```
+
+  A dependency that is never checked (one that is not on PyPI) then stops every upload: leave
+  it out with the action's `exclude` input.
+- When several folders are scanned (a monorepo), give each upload its own `category`
+  (`since-cutoff-api`, `since-cutoff-web`): upload-sarif refuses a second upload of a category
+  in the same job, and one in another job replaces the first and closes its alerts.
+
 ### pre-commit
 
 ```yaml
@@ -806,9 +894,32 @@ since-cutoff sync --check
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ```
 
-`--markdown -` prints the summary to stdout, and only the progress and the report's path to
-stderr, as `--json` does. In a file, a pipe or a CI log there is no live progress bar, and the
-output is laid out 160 columns wide (`COLUMNS` sets another width). Exit codes:
+For GitLab merge requests, `--gitlab-codequality FILE` writes a Code Quality report: an issue
+for each file that uses a changed API (`major` for the old form, `info` otherwise; check
+`since-cutoff/<kind>`), with its path relative to `CI_PROJECT_DIR` and the note in its
+description. Its fingerprints leave the versions out, so a version bump does not reopen every
+issue. GitLab shows an issue of the target branch's report that the merge request's lacks as
+fixed: when no dependency could be checked, the scan exits with code 1 and writes no report,
+but after a partial skip the issues of the skipped packages show as fixed. Add it as an
+artifact:
+
+```yaml
+# .gitlab-ci.yml
+since-cutoff:
+  image: python:3.12-slim
+  script:
+    - pip install since-cutoff
+    - since-cutoff scan --model anthropic:claude-sonnet-4-5 --gitlab-codequality gl-code-quality.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality.json
+```
+
+`--markdown -`, `--sarif -` and `--gitlab-codequality -` print the report to stdout, and only the
+progress and the report's path to stderr, as `--json` does. In a file, a pipe or a CI log there
+is no live progress bar, and the output is laid out 160 columns wide (`COLUMNS` sets another
+width). Exit codes:
 
 - `0` ok;
 - `1` error (for example, `run` could not probe any API change or score any model answer, or
@@ -934,7 +1045,8 @@ meaning the same as `checks.example_type_checks`).
   server, the GitHub Action and the pre-commit hooks send nothing to any model.
 - **Shows where your code uses a changed API** (file names for now) in the terminal and in
   `.since-cutoff/`, and sends it nowhere. What you pass on is up to you: `--markdown` and
-  `--annotate github` put it in a CI job's summary and annotations, and the MCP tool
+  `--annotate github` put it in a CI job's summary and annotations, `--sarif` and
+  `--gitlab-codequality` in GitHub code scanning and GitLab merge requests, and the MCP tool
   `project_changes` gives it to the agent that asked, which passes tool results to its model.
 - **Stores** results in `.since-cutoff/` in your project (it ignores itself in git) and a local
   cache: `since-cutoff cache info` shows where it is and its size by kind, `since-cutoff cache
@@ -968,8 +1080,9 @@ meaning the same as `checks.example_type_checks`).
   ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)). A method read on a value
   whose class the code does not show can count by its name alone, when that name is one
   changed API's and neither a common one nor a member of a built-in or standard-library type:
-  such a `[name match]` is hidden from every report, the notes, `--fail-on` and `--annotate`
-  unless `--include-name-matches` is given (`include_name_matches` over MCP), as most are
+  such a `[name match]` is hidden from every report, the notes, `--fail-on`, `--annotate`,
+  `--sarif` and `--gitlab-codequality` unless `--include-name-matches` is given
+  (`include_name_matches` over MCP), as most are
   another library's method of the same name. A parameter that became
   required, keyword-only or positional-only is always "uses this API", never "old form", for
   now.

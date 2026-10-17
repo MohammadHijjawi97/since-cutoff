@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- `scan --sarif FILE` writes a SARIF 2.1.0 report for GitHub code scanning (#9), and `scan
+  --gitlab-codequality FILE` a GitLab Code Quality report for merge requests (#34): one finding
+  per file that uses a changed API, as `--annotate github` has them (a name match only with
+  `--include-name-matches`), with the change, both versions and the note. The old form is a
+  SARIF `warning` and a Code Quality `major`, any other use a `note` and an `info`; each kind of
+  change is a SARIF rule and a `since-cutoff/<kind>` check. Findings are on line 1 of their file,
+  saying so, until the scan records lines (#8), so a pull request, which shows an alert only
+  when its line is in the diff, shows mostly those of new files. Their fingerprints hash the
+  package, the API and the path, not the versions: the
+  SARIF `primaryLocationLineHash`, the one code scanning matches alerts by (upload-sarif keeps
+  it rather than hashing line 1, which every finding in a file would share), and the Code
+  Quality `fingerprint`. So a version bump or an edit to the file keeps the same alerts. With
+  nothing to report, the SARIF log has no result (an upload closes the open alerts) and the
+  Code Quality report is `[]`; with no dependency checked, neither is written and the exit code
+  is 1. The SARIF run's invocation says whether every dependency was checked and names each
+  skipped one. The log keeps within one upload's 25,000 results and 10 MB, `note` results left
+  out first, and its `semanticVersion` says a pre-release as SemVer does (`0.7.0-rc.1`). Paths
+  are relative to `GITHUB_WORKSPACE` and `CI_PROJECT_DIR`. `-` writes either to stdout; an
+  empty file name, or two reports in one file, is a usage error. The README's "Use in CI" shows
+  the `upload-sarif` step (with `actions: read`, and a `category` per folder) and the
+  `.gitlab-ci.yml` artifact, what an upload after a skipped package does, and how to upload
+  only a log in which every dependency was checked.
+- JSON Schemas (draft 2020-12) for results.json, `scan --json` and `run --json`
+  (`report_schema` 3) and for `status --json` ship in the package, in `since_cutoff/schemas`
+  (#71), with a one-line description of each field and an `$id` at the release's tag. The tests
+  validate the reports against them (jsonschema, a test dependency only) and fail on a
+  top-level or settings key the schema does not describe.
 - Notes from the diff say what to use instead in more cases, and point somewhere useful when they
   cannot (an audit of 36 libraries found 25 of 36 notes ending in "since-cutoff found no
   replacement in X's deprecation text", several although the text named one; #14). A replacement

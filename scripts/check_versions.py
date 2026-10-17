@@ -126,6 +126,15 @@ FIELDS: dict[str, Callable[[], Any]] = {
     ),
     "CHANGELOG.md newest release": lambda: _match("CHANGELOG.md", rf"^## {_VERSION} - "),
 }
+# Each JSON Schema's $id names the file at the release's tag, so that the id of a schema never
+# changes after its release.
+for _schema in ("results", "status"):
+    _path = f"src/since_cutoff/schemas/{_schema}.schema.json"
+    FIELDS[f"{_path} $id"] = lambda path=_path: _match(
+        path,
+        rf'^  "\$id": "https://raw\.githubusercontent\.com/[^/]+/{PACKAGE}/v{_VERSION}/'
+        rf'{re.escape(path)}",$',
+    )
 # Each README pins the release twice: the pre-commit `rev`, and the action's `since-cutoff-version`
 # default in its input table.
 READMES = ("README.md", "README.zh-CN.md", "README.es.md", "README.fr.md")

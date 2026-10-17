@@ -34,7 +34,8 @@ welcome, and first-time contributors are very welcome.
 | `sync.py` | `since-cutoff sync` (what the block should be, and why it changes) and `since-cutoff status` (offline) |
 | `baselines.py` | The baseline notes of `run --compare` (`template`, `signatures`), built without a model |
 | `stats.py` | Wilson intervals, the cluster bootstrap, the sign test and token estimates |
-| `report.py` | Terminal, Markdown and JSON reports |
+| `report.py` | Terminal, Markdown and JSON reports; the CI ones: GitHub annotations, SARIF and GitLab Code Quality |
+| `schemas/` | The JSON Schemas of results.json / `scan --json` and of `status --json`; `tests/test_schemas.py` checks the reports against them, so a change to the JSON changes the schema too (and `REPORT_SCHEMA` in `report.py`) |
 | `mcp_server.py` | The `since-cutoff mcp` server and its tools (`Tools` diffs in-process; `Tools(processes=True)`, as the server uses, in worker processes) |
 | `providers/` | Model providers (Claude Code CLI, Anthropic, OpenAI-compatible APIs) |
 | `cache.py` | The disk cache: JSON entries, the sizes `cache info` shows, and the cap on the extracted sources |
@@ -47,7 +48,7 @@ welcome, and first-time contributors are very welcome.
 git clone https://github.com/MohammadHijjawi97/since-cutoff
 cd since-cutoff
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[run]" pytest pytest-cov hypothesis ruff mypy
+pip install -e ".[run]" pytest pytest-cov hypothesis jsonschema ruff mypy
 ```
 
 `[run]` adds basedpyright, which `since-cutoff run` and the tests marked `pyright` need; the
@@ -141,6 +142,7 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
      `gemini-extension.json`, and the skill's `metadata.version` in
      `skills/since-cutoff/SKILL.md`;
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
+   - the `$id` of both JSON Schemas in `src/since_cutoff/schemas` (`.../vX.Y.Z/...`);
    - the README pins, in each of the four READMEs (`README.md`, `README.zh-CN.md`,
      `README.es.md` and `README.fr.md`): the pre-commit `rev: vX.Y.Z` and the
      `since-cutoff-version` default in the action's input table;

@@ -244,7 +244,8 @@ either: an alias (`alias = loc`), `store = self.store` after `self.store = Store
 unpacking, `:=` and `except ... as err`.
 
 Such a name match is hidden by default: no report (the terminal, report.md, the JSON lists, the
-MCP answers), no note and no count of `--fail-on` or `--annotate github` has it, as on ordinary
+MCP answers), no note and no count of `--fail-on`, `--annotate github`, `--sarif` or
+`--gitlab-codequality` has it, as on ordinary
 code most of them are another library's method of the same name. `--include-name-matches` (on
 `scan` and `sync`; `include_name_matches` for the MCP `project_changes`) shows them: the
 reports tag each such use `[name match]` (the terminal next to its label and its place, the
@@ -264,6 +265,65 @@ The terminal and the MCP tool `project_changes` show at most 3 files per API (`s
 every one). Locations are files for now (`app/main.py`); line numbers are
 [#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8), and the JSON already has
 `line`, `column` and `code` (null until then) in `used_apis[].locations`.
+
+### In CI: annotations, SARIF and Code Quality
+
+`--annotate github`, `--sarif` and `--gitlab-codequality` report the same findings: one per
+file and changed API the code uses there (a place, once lines are known), counted as
+`--fail-on` counts them (a name match only with `--include-name-matches`). The old form is a
+GitHub `warning`, a SARIF `warning` and a Code Quality `major`; any other use a `notice`, a
+SARIF `note` and an `info`. Each says the API and its change, the release at the cutoff and the
+pinned one, and the note from the API diff.
+
+- **SARIF 2.1.0** (`scan --sarif FILE`, for `github/codeql-action/upload-sarif`): one rule per
+  kind of change (`removed`, `moved`, `param_removed`, `param_required`, `param_keyword_only`,
+  `param_positional_only`, `kind_changed`, `deprecated`, `dependency_switched`). A place whose
+  code uses several kinds is filed under the first that `changes_text` names (removals and
+  moves first), among those it uses in the old form when it does. Paths are relative to
+  `GITHUB_WORKSPACE` when the project is inside it.
+- **GitLab Code Quality** (`scan --gitlab-codequality FILE`, for `artifacts: reports:
+  codequality:`): the CodeClimate issue format, with `check_name` `since-cutoff/<kind>` and
+  paths relative to `CI_PROJECT_DIR`.
+- **Locations**: the line and column once the scan records them
+  ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)); until then line 1 of the
+  file, and the message says the finding is file-level. A pull request shows a code scanning
+  alert only when the lines it points at are in the pull request's diff, so until then it
+  shows mostly those of new files; the Security tab has them all.
+- **Fingerprints** (SARIF `partialFingerprints.primaryLocationLineHash` and
+  `sinceCutoffFinding/v1`, Code Quality `fingerprint`): a hash of the package, the API and the
+  path, without the versions, so that a run after a version bump, or after an edit to the
+  file, updates the same alerts instead of opening new ones. Code scanning matches alerts by
+  the rule and `primaryLocationLineHash` only. upload-sarif fills that in only when it is
+  missing (codeql-action's `src/fingerprints.ts`, as of `upload-sarif@v4`): a rolling hash of
+  the first 100 characters from the start of the result's line, spaces and tabs left out,
+  numbered when the same hash comes again in the file. On line 1 every result in a file would
+  get the same one, so the alerts of two APIs with the same kind of change in one file would
+  merge, and an edit near the top of the file would close and reopen them all. When the
+  result has a hash, upload-sarif keeps it, and logs a warning when its own differs. Once
+  lines are recorded, a second place of an API in the same file adds its rank among them to
+  the hash, so a new use above it moves the alerts below it to new ones.
+- **Rules**: one per kind of change, not per API. The fingerprint already tells the APIs
+  apart; a rule is what code scanning filters by and describes, and a rule per API would fill
+  the rule filter with every API, with a description that repeats the result's message. A
+  change of kind (deprecated, then removed) is a new problem, so it is a new alert.
+- **Nothing to report, or not everything checked**: with nothing to report, the SARIF log has
+  no result (an upload of it closes the open alerts) and the Code Quality report is `[]`. With
+  no dependency checked, `scan` writes neither and exits with code 1. With some skipped, the
+  SARIF run's `invocations[0]` has `executionSuccessful: false` and one error-level
+  `toolExecutionNotifications` entry per skipped package, with why. Code scanning still
+  processes the results, so an upload closes the alerts of the skipped packages as fixed, and
+  they reopen when a later upload checks them again; it only flags the analysis as an
+  unsuccessful tool execution (a warning on the analysis in the code scanning analyses API).
+  The README's "Use in CI" shows how to upload only a complete log. The Code Quality format
+  has no such field, and a merge request shows those issues as fixed.
+- **Limits**: one upload to code scanning takes at most 25,000 results in a run and a SARIF
+  file of 10 MB gzip-compressed, and shows the 5,000 most severe results of a run. The 10 MB
+  is deliberately measured stricter than that: on the log as upload-sarif sends it,
+  gzip-compressed and then base64-encoded, about a third larger than the gzip file. Above the
+  limits, the `note` results are left out first, then the `warning` ones, and a warning-level
+  notification says how many.
+- **Version**: `driver.version` is since-cutoff's; `semanticVersion` is the same release in
+  Semantic Versioning (`0.7.0rc1` is `0.7.0-rc.1`).
 
 ### The note for each API
 
@@ -745,6 +805,16 @@ notes apply to and the release they are compared from. The rest is in `scan --js
 source, and its note with `tags`, `applies_to` and `checks`) and, after `run`, `notes_detail[]`
 (each note with the model's example and what the held-out test measured; `verified` is kept,
 meaning the same as `checks.example_type_checks`).
+
+The package ships JSON Schemas (draft 2020-12) for them, in `since_cutoff/schemas`:
+[results.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/results.schema.json)
+for results.json, `scan --json` and `run --json` (`report_schema` 3), and
+[status.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/status.schema.json)
+for `status --json`. Each field has a one-line description, and each schema's `$id` is its
+file at the release's tag (`.../v0.7.0/...`), so it never changes once released. The tests
+check the reports against them, and fail on a top-level key (or a key of `used_apis`, its
+locations and notes, or of `settings`) that the schema does not describe; the changes under
+`scan[].changes` follow `diff_schema`, and the schema lists the fields integrations read.
 
 ## What the numbers mean (and do not mean)
 

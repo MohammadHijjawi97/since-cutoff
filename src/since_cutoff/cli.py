@@ -80,6 +80,8 @@ EXAMPLES = """examples:
                                         (no model calls; --all lists every change)
   since-cutoff scan --model anthropic:claude-sonnet-4-5 --markdown - >> "$GITHUB_STEP_SUMMARY"
   since-cutoff scan --annotate github --fail-on old-form   annotate and fail a CI job
+  since-cutoff scan --sarif since-cutoff.sarif   for GitHub code scanning (upload-sarif)
+  since-cutoff scan --gitlab-codequality gl-code-quality.json   for GitLab merge requests
   since-cutoff scan --cutoff 2025-03   list API changes since a date, with no model involved
   since-cutoff sync                     write the notes into AGENTS.md (shows the diff and asks
                                         first) and keep them in step with the lockfile
@@ -487,6 +489,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="also print GitHub Actions annotations to stdout: a warning on each file that uses "
         "a changed API in the old form, a notice on each file that uses one otherwise",
     )
+    scan.add_argument(
+        "--sarif",
+        metavar="FILE",
+        help="also write a SARIF 2.1.0 report to FILE, relative to the current directory ('-' "
+        "for stdout), for GitHub code scanning (github/codeql-action/upload-sarif): a result "
+        "on each file that uses a changed API, a warning for the old form, a note otherwise; "
+        "not written when no dependency could be checked",
+    )
+    scan.add_argument(
+        "--gitlab-codequality",
+        metavar="FILE",
+        help="also write a GitLab Code Quality report to FILE, relative to the current "
+        "directory ('-' for stdout), for merge requests (artifacts: reports: codequality): an "
+        "issue on each file that uses a changed API, major for the old form, info otherwise; "
+        "not written when no dependency could be checked",
+    )
     scan.add_argument("--include-name-matches", action="store_true", help=_NAME_MATCHES_HELP)
 
     sync = sub.add_parser(
@@ -730,13 +748,15 @@ def _main(argv: list[str] | None) -> int:
         for flag, on in (
             ("--json", json_mode),
             ("--markdown -", markdown == "-"),
+            ("--sarif -", getattr(args, "sarif", None) == "-"),
+            ("--gitlab-codequality -", getattr(args, "gitlab_codequality", None) == "-"),
             ("--annotate", getattr(args, "annotate", None)),
         )
         if on
     ]
     if len(to_stdout) > 1:
         return _usage_error(f"{' and '.join(to_stdout)} cannot both write to stdout")
-    problem = _compare_problem(args) or _cache_problem(args)
+    problem = _compare_problem(args) or _cache_problem(args) or _report_files_problem(args)
     if problem:
         return _usage_error(problem)
     try:
@@ -751,7 +771,7 @@ def _main(argv: list[str] | None) -> int:
             return _cmd_models(args, out)
         if args.command == "unapply":
             return _cmd_unapply(args, out)
-        ui = _console(STDERR) if json_mode or markdown == "-" else out
+        ui = _console(STDERR) if json_mode or _report_to_stdout(args) else out
         if args.command == "sync":
             return _cmd_sync(args, ui)
         return _cmd_run(args, ui, json_mode)
@@ -761,6 +781,32 @@ def _main(argv: list[str] | None) -> int:
     except KeyboardInterrupt:
         _console(STDERR).print("[yellow]interrupted[/yellow]")
         return 130
+
+
+def _report_files_problem(args: argparse.Namespace) -> str | None:
+    """Why the report files of ``scan`` cannot be written as asked, if they cannot: ``--sarif``
+    or ``--gitlab-codequality`` with no file name (which would write nothing, silently), or two
+    reports in the same file (the second would overwrite the first)."""
+    reports = [
+        (flag, getattr(args, dest, None))
+        for flag, dest in (
+            ("--markdown", "markdown"),
+            ("--sarif", "sarif"),
+            ("--gitlab-codequality", "gitlab_codequality"),
+        )
+    ]
+    for flag, target in reports[1:]:
+        if target is not None and not target.strip():
+            return f"{flag} needs a file name, or '-' for stdout"
+    seen: dict[str, str] = {}
+    for flag, target in reports:
+        if not target or target == "-":
+            continue
+        key = os.path.normcase(Path(target).resolve())
+        if key in seen:
+            return f"{seen[key]} and {flag} cannot both write to {target}"
+        seen[key] = flag
+    return None
 
 
 def _compare_problem(args: argparse.Namespace) -> str | None:
@@ -871,9 +917,11 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     from since_cutoff.report import (
         fail_reason,
         github_annotations,
+        gitlab_codequality,
         render_console,
         render_scan,
         render_scan_markdown,
+        sarif_report,
         to_json,
         write_outputs,
     )
@@ -912,10 +960,28 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     summary_md = getattr(args, "markdown", None)
     if summary_md:
         _write_markdown(summary_md, render_scan_markdown(scan, limit=args.limit, env=os.environ))
+    # With no dependency checked (PyPI unreachable), the exit code is 1 (below) and neither CI
+    # report is written: an empty one would close every open alert when uploaded.
+    nothing_checked = bool(scan.packages) and all(p.status == "skipped" for p in scan.packages)
+    withheld = [
+        what
+        for what, target in (
+            ("the SARIF report", getattr(args, "sarif", None)),
+            ("the GitLab Code Quality report", getattr(args, "gitlab_codequality", None)),
+        )
+        if target and nothing_checked
+    ]
+    sarif = None if nothing_checked else getattr(args, "sarif", None)
+    if sarif:
+        _write_json(sarif, sarif_report(scan, env=os.environ), "the SARIF report")
+    codequality = None if nothing_checked else getattr(args, "gitlab_codequality", None)
+    if codequality:
+        issues = gitlab_codequality(scan, env=os.environ)
+        _write_json(codequality, issues, "the GitLab Code Quality report")
     if json_mode:
         STDOUT.write(json.dumps(to_json(scan, run), indent=2, default=str) + "\n")
         STDOUT.flush()
-    elif summary_md != "-":  # stdout has the Markdown, stderr only the progress, as for --json
+    elif not _report_to_stdout(args):  # else stdout has that report, stderr the progress
         ui.print()
         # A warning printed while scanning (on this same console) is not printed again.
         shown = reporter.warned
@@ -959,16 +1025,25 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         ui.print(f"[dim]Tasks: {_escape(tasks_out)} (repeat this run with --tasks-from)[/dim]")
     if summary_md and summary_md != "-":
         ui.print(f"[dim]Markdown summary: {_escape(summary_md)}[/dim]")
+    if sarif and sarif != "-":
+        ui.print(f"[dim]SARIF report: {_escape(sarif)}[/dim]")
+    if codequality and codequality != "-":
+        ui.print(f"[dim]GitLab Code Quality report: {_escape(codequality)}[/dim]")
     if getattr(args, "annotate", None) == "github":
         # Plain lines, never wrapped: the runner reads each "::warning ..." line as one command.
         STDOUT.write("".join(line + "\n" for line in github_annotations(scan, env=os.environ)))
         STDOUT.flush()
 
-    checked = [p for p in scan.packages if p.status != "skipped"]
-    if not checked and scan.packages:
+    if nothing_checked:
         ui.print(
             "[red]No dependency could be checked[/red] (see the reasons above; is PyPI reachable?)."
         )
+        if withheld:
+            what = " and ".join(withheld)
+            ui.print(
+                f"[dim]{what[0].upper()}{what[1:]} {'were' if len(withheld) > 1 else 'was'} "
+                "not written (empty, an upload would show every open finding as fixed).[/dim]"
+            )
         return 1
     if args.command == "run" and not scan.changed:
         ui.print(
@@ -1111,7 +1186,19 @@ def _resolve_target(engine: Engine, *, allow_calls: bool) -> ModelTarget:
         ) from exc
 
 
-def _write_markdown(target: str, text: str) -> None:
+def _report_to_stdout(args: argparse.Namespace) -> bool:
+    """Whether ``--markdown``, ``--sarif`` or ``--gitlab-codequality`` writes to stdout
+    (``-``): then the terminal report is left out, and the progress goes to stderr."""
+    return "-" in (
+        getattr(args, "markdown", None),
+        getattr(args, "sarif", None),
+        getattr(args, "gitlab_codequality", None),
+    )
+
+
+def _write_markdown(target: str, text: str, what: str = "the Markdown summary") -> None:
+    """``text`` into the file ``target``, relative to the current directory, or to stdout
+    for ``-``."""
     if target == "-":
         STDOUT.write(text)
         STDOUT.flush()
@@ -1121,7 +1208,13 @@ def _write_markdown(target: str, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     except OSError as exc:
-        raise SinceCutoffError(f"cannot write the Markdown summary to {path}: {exc}") from exc
+        raise SinceCutoffError(f"cannot write {what} to {path}: {exc}") from exc
+
+
+def _write_json(target: str, data: object, what: str) -> None:
+    """``--sarif`` and ``--gitlab-codequality``: ``data`` as JSON, written as
+    :func:`_write_markdown` writes text."""
+    _write_markdown(target, json.dumps(data, indent=2, ensure_ascii=False) + "\n", what)
 
 
 # ------------------------------------------------------------ sync and status

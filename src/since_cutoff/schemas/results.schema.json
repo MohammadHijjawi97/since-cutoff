@@ -1,0 +1,688 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/v0.5.0/src/since_cutoff/schemas/results.schema.json",
+  "title": "since-cutoff results",
+  "description": "The document that `since-cutoff scan --json` and `run --json` print and that .since-cutoff/results.json holds, for report_schema 3. Every count rests on the static API diff and the scan of the project's imports; nothing of the libraries is run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_schema",
+    "tool",
+    "generated_at",
+    "model",
+    "model_spec",
+    "effort",
+    "cutoff",
+    "cutoff_source",
+    "compare_from",
+    "project",
+    "version_source",
+    "dependencies_total",
+    "dependencies_checked",
+    "dependencies_skipped",
+    "dependencies_changed",
+    "dependencies_newer_than_model",
+    "breaking_changes",
+    "deprecations",
+    "internal_changes",
+    "warnings",
+    "settings",
+    "packages",
+    "scan",
+    "used",
+    "used_apis",
+    "notes_preview"
+  ],
+  "properties": {
+    "report_schema": {
+      "description": "The version of this document's shape (report.REPORT_SCHEMA): it goes up when keys are added or changed. 0.3 wrote none; 2 added used, used_apis and notes_preview; 3 added settings.griffe_version.",
+      "const": 3
+    },
+    "tool": {
+      "description": "since-cutoff and its version, as `since-cutoff 0.6.0`.",
+      "type": "string",
+      "pattern": "^since-cutoff "
+    },
+    "generated_at": {
+      "description": "When the document was written, in UTC, to the second (ISO 8601).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "description": "The model whose training cutoff the scan compares from; null for a cutoff given alone (`scan --cutoff` without `--model`).",
+      "type": ["string", "null"]
+    },
+    "model_spec": {
+      "description": "The model as `--model` takes it (`provider:model`); null for a cutoff given alone.",
+      "type": ["string", "null"]
+    },
+    "effort": {
+      "description": "The Claude Code thinking effort of `run --effort`; null when none applies.",
+      "type": ["string", "null"]
+    },
+    "cutoff": {
+      "description": "The model's training cutoff, as a day.",
+      "type": "string",
+      "format": "date"
+    },
+    "cutoff_source": {
+      "description": "Where the cutoff comes from: a models.dev listing, the bundled snapshot, or `--cutoff`.",
+      "type": "string"
+    },
+    "compare_from": {
+      "description": "The day the comparison releases were published by: settings.cutoff_margin days before the cutoff.",
+      "type": "string",
+      "format": "date"
+    },
+    "project": {
+      "description": "The project directory, as an absolute path.",
+      "type": "string"
+    },
+    "version_source": {
+      "description": "Where the dependency versions come from: a lockfile, requirements files, pins in pyproject.toml, a virtual environment, or the latest releases on PyPI.",
+      "type": "string"
+    },
+    "dependencies_total": {
+      "description": "Dependencies the scan looked at.",
+      "$ref": "#/$defs/count"
+    },
+    "dependencies_checked": {
+      "description": "Of them, those whose releases could be compared (status other than skipped).",
+      "$ref": "#/$defs/count"
+    },
+    "dependencies_skipped": {
+      "description": "Of them, those that could not be checked; each package row says why (reason).",
+      "$ref": "#/$defs/count"
+    },
+    "dependencies_changed": {
+      "description": "Dependencies whose pinned release changed its API after the release at the cutoff (status changed).",
+      "$ref": "#/$defs/count"
+    },
+    "dependencies_newer_than_model": {
+      "description": "Dependencies first released after the cutoff (status new): the model cannot know them at all.",
+      "$ref": "#/$defs/count"
+    },
+    "breaking_changes": {
+      "description": "Breaking changes to public APIs found by the static diff, over all dependencies; a change reachable under several import paths counts once.",
+      "$ref": "#/$defs/count"
+    },
+    "deprecations": {
+      "description": "New deprecations of public APIs found by the static diff, counted the same way.",
+      "$ref": "#/$defs/count"
+    },
+    "internal_changes": {
+      "description": "Changes to internal APIs (not reached from the package's top level, named in an __all__ or documented), breaking or deprecated, counted apart from the two counts above.",
+      "$ref": "#/$defs/count"
+    },
+    "warnings": {
+      "description": "What the scan could not do or read, in words (an unreachable PyPI, a compiled module, a dependency read by name only).",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "settings": {"$ref": "#/$defs/settings"},
+    "packages": {
+      "description": "One row per dependency, with its counts and, after `run`, its probe outcomes.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/package_row"}
+    },
+    "probes": {"$ref": "#/$defs/probes"},
+    "probed_dependencies": {
+      "description": "`run`: the dependencies with at least one valid probe.",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "stale_dependencies": {
+      "description": "`run`: the dependencies with at least one stale probe answer.",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notes": {"$ref": "#/$defs/notes_summary"},
+    "heldout": {
+      "description": "`run` with notes: the held-out test of the notes (heldout) and the regression check on APIs the model already got right (regression); a role with no pair at all is left out.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heldout": {"$ref": "#/$defs/pairing"},
+        "regression": {"$ref": "#/$defs/pairing"}
+      }
+    },
+    "arms": {
+      "description": "`run --compare`: each notes arm (the run's own notes as verified, then the baselines), all paired on the same pairs.",
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/arm"}
+    },
+    "scan": {
+      "description": "Each dependency's scan, with every change the static diff found (also those the code does not use).",
+      "type": "array",
+      "items": {"$ref": "#/$defs/package_scan"}
+    },
+    "used": {
+      "description": "What the project's code uses of the changes: counts over used_apis.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apis", "changes", "old_form", "files", "packages", "new_packages_imported"],
+      "properties": {
+        "apis": {"description": "Changed APIs the code uses (one API can have several changes).", "$ref": "#/$defs/count"},
+        "changes": {"description": "The changes of those APIs.", "$ref": "#/$defs/count"},
+        "old_form": {"description": "Of the APIs, those the code uses in the old form somewhere.", "$ref": "#/$defs/count"},
+        "files": {"description": "Files of the project's code that use one of them.", "$ref": "#/$defs/count"},
+        "packages": {"description": "The packages of those APIs, in the order of used_apis.", "type": "array", "items": {"type": "string"}},
+        "new_packages_imported": {"description": "Dependencies first released after the cutoff that the code imports.", "type": "array", "items": {"type": "string"}}
+      }
+    },
+    "used_apis": {
+      "description": "Each changed API the project's code uses, the old form first, with where and how, and the note from the API diff for it. A use matched by a member's name alone is here only with --include-name-matches.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/used_api"}
+    },
+    "notes_preview": {
+      "description": "The block that `since-cutoff sync` would write for the used APIs; null when there is nothing to note.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["targets", "tokens", "block"],
+          "properties": {
+            "targets": {"description": "The files sync would write it to (AGENTS.md, CLAUDE.md).", "type": "array", "items": {"type": "string"}},
+            "tokens": {"description": "An estimate of the block's size in tokens.", "$ref": "#/$defs/count"},
+            "block": {"description": "The block, from its start marker to its end marker.", "type": "string"}
+          }
+        }
+      ]
+    },
+    "attempts": {
+      "description": "`run`: every model answer, probes first, then the held-out and regression answers without and with the notes.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/attempt"}
+    },
+    "notes_detail": {
+      "description": "`run`: each note the run wrote, with the model's example and what the held-out test measured for it.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/note_detail"}
+    },
+    "block": {
+      "description": "`run`: the notes block the run wrote (`run --apply` puts it in AGENTS.md); null when no note was needed.",
+      "type": ["string", "null"]
+    },
+    "skipped_changes": {
+      "description": "`run`: the API changes that got no probe, with why.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["change", "reason"],
+        "properties": {
+          "change": {"description": "The change, in one sentence.", "type": "string"},
+          "reason": {"description": "Why it was not probed.", "type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "interval": {
+      "description": "A 95% interval as [low, high]; null when it cannot be computed.",
+      "oneOf": [
+        {"type": "null"},
+        {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false, "minItems": 2}
+      ]
+    },
+    "version": {"type": ["string", "null"]},
+    "day": {"oneOf": [{"type": "null"}, {"type": "string", "format": "date"}]},
+    "form": {
+      "description": "old_form: the code uses the API as the release at the cutoff allowed and the pinned release no longer does; uses_api: it uses the API otherwise.",
+      "enum": ["old_form", "uses_api"]
+    },
+    "match": {
+      "description": "How the use was matched: path (an import path of the API), name (by package and name: a diff with no import paths), name_only (a member's name alone; only with --include-name-matches).",
+      "enum": ["path", "name", "name_only"]
+    },
+    "settings": {
+      "description": "What the numbers depend on: the tool, the diff, the margin and, after `run`, the run's settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_version", "diff_schema", "griffe_version", "cutoff_margin", "date"],
+      "properties": {
+        "tool_version": {"description": "since-cutoff's version.", "type": "string"},
+        "diff_schema": {"description": "The version of the API diff's format (apidiff.DIFF_SCHEMA); cached diffs of another version are made again.", "type": "integer"},
+        "griffe_version": {"description": "The griffe that read the sources for the diff.", "type": ["string", "null"]},
+        "cutoff_margin": {"description": "Days before the cutoff that the comparison release had to be published by.", "$ref": "#/$defs/count"},
+        "date": {"description": "The day of the scan (UTC).", "type": "string", "format": "date"},
+        "model": {"description": "`run`: the tested model, as provider:model.", "type": ["string", "null"]},
+        "model_source": {"description": "`run` without `--model`: the agent setting the model was read from.", "type": "string"},
+        "task_model": {"description": "`run`: the model that wrote the tasks and notes.", "type": ["string", "null"]},
+        "effort": {"description": "`run`: the thinking effort of the model calls.", "type": ["string", "null"]},
+        "prompt_version": {"description": "`run`: the version of the task, solver and note prompts; cached tasks and answers of another version are not reused.", "type": "integer"},
+        "max_probes": {"description": "`run --max-probes`.", "type": "integer"},
+        "heldout": {"description": "`run --heldout`: held-out tasks per failure.", "type": "integer"},
+        "heldout_used": {
+          "description": "`run`: the held-out tasks per failure there were, when fewer than `heldout` asked for.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fewest", "most"],
+          "properties": {
+            "fewest": {"description": "The fewest of any failure.", "$ref": "#/$defs/count"},
+            "most": {"description": "The most of any failure.", "$ref": "#/$defs/count"}
+          }
+        },
+        "regression": {"description": "`run --regression`: previously correct APIs checked again with the notes.", "type": "integer"},
+        "python_version": {"description": "`run`: the Python version the answers were type-checked for.", "type": ["string", "null"]},
+        "tasks_from": {"description": "`run --tasks-from`: the tasks file; null when the run's task writer wrote the tasks.", "type": ["string", "null"]},
+        "tasks_written_by": {"description": "`run --tasks-from`: who wrote those tasks, as the file says.", "type": "object"},
+        "compare": {"description": "`run --compare`: the baseline arms compared with the notes.", "type": "array", "items": {"type": "string"}}
+      }
+    },
+    "package_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package", "locked", "locked_date", "cutoff_version", "cutoff_version_date", "status",
+        "imported", "breaking_changes", "deprecations", "internal_changes", "probed", "stale",
+        "wrong", "deprecated", "correct", "excluded", "reason"
+      ],
+      "properties": {
+        "package": {"description": "The distribution's canonical name on PyPI.", "type": "string"},
+        "locked": {"description": "The version the project pins (or resolves to).", "$ref": "#/$defs/version"},
+        "locked_date": {"description": "The day that version was released.", "$ref": "#/$defs/day"},
+        "cutoff_version": {"description": "The release it is compared from: the latest one published by compare_from.", "$ref": "#/$defs/version"},
+        "cutoff_version_date": {"description": "The day that release was published.", "$ref": "#/$defs/day"},
+        "status": {"$ref": "#/$defs/package_status"},
+        "imported": {"description": "Whether the project's code imports the package; null when its import names are unknown (its files were not read).", "type": ["boolean", "null"]},
+        "breaking_changes": {"description": "Breaking changes to its public APIs, each counted once.", "$ref": "#/$defs/count"},
+        "deprecations": {"description": "New deprecations of its public APIs, each counted once.", "$ref": "#/$defs/count"},
+        "internal_changes": {"description": "Changes to its internal APIs, counted apart.", "$ref": "#/$defs/count"},
+        "probed": {"description": "`run`: valid probes of its changes (0 in scan).", "$ref": "#/$defs/count"},
+        "stale": {"description": "`run`: probe answers that used the API as it was at the cutoff.", "$ref": "#/$defs/count"},
+        "wrong": {"description": "`run`: probe answers that were wrong otherwise.", "$ref": "#/$defs/count"},
+        "deprecated": {"description": "`run`: probe answers that used a deprecated API.", "$ref": "#/$defs/count"},
+        "correct": {"description": "`run`: probe answers that passed.", "$ref": "#/$defs/count"},
+        "excluded": {"description": "`run`: probes not counted (the answer did not touch the package, went off task, did not parse, or the call failed).", "$ref": "#/$defs/count"},
+        "reason": {"description": "Why it was not checked, or a remark on how it was; null otherwise.", "type": ["string", "null"]}
+      }
+    },
+    "package_status": {
+      "description": "changed: its API changed after the cutoff; unchanged: no breaking change; known: the pinned release came out before the cutoff; new: first released after the cutoff; skipped: not checked.",
+      "enum": ["changed", "unchanged", "known", "new", "skipped"]
+    },
+    "package_scan": {
+      "description": "A dependency's scan (engine.PackageScan).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "locked", "version_source", "direct", "imported", "status", "changes"],
+      "properties": {
+        "name": {"description": "The distribution's canonical name.", "type": "string"},
+        "locked": {"description": "The version the project pins.", "$ref": "#/$defs/version"},
+        "version_source": {"description": "Where that version comes from (pinned, locked, installed, latest).", "type": "string"},
+        "direct": {"description": "Whether the project declares it itself (not only as a dependency of a dependency).", "type": "boolean"},
+        "imported": {"description": "Whether the project's code imports it; null when unknown.", "type": ["boolean", "null"]},
+        "status": {"$ref": "#/$defs/package_status"},
+        "cutoff_version": {"description": "The release it is compared from.", "$ref": "#/$defs/version"},
+        "cutoff_version_date": {"description": "The day that release was published.", "$ref": "#/$defs/day"},
+        "locked_date": {"description": "The day the pinned version was released.", "$ref": "#/$defs/day"},
+        "import_names": {"description": "The top-level modules the pinned release provides.", "type": "array", "items": {"type": "string"}},
+        "reason": {"description": "Why it was not checked; null otherwise.", "type": ["string", "null"]},
+        "first_released": {"description": "status new: the day of its first release.", "$ref": "#/$defs/day"},
+        "summary": {"description": "status new: its one-line summary on PyPI.", "type": ["string", "null"]},
+        "changelog": {"description": "Where it documents its releases (a Changelog URL, else its GitHub releases page); null when PyPI lists neither.", "type": ["string", "null"]},
+        "unread": {"description": "What the diff could not compare: compiled modules without a source or stub, classes with a base outside the package.", "type": "array", "items": {"type": "string"}},
+        "reexported": {"description": "Modules that take their names from another distribution that could not be read, with why: changes to them are not reported.", "type": "object", "additionalProperties": {"type": "string"}},
+        "changes": {
+          "description": "Every change the static diff found, once per public path that leads to it (the counts count each once).",
+          "type": "array",
+          "items": {"$ref": "#/$defs/api_change"}
+        }
+      }
+    },
+    "api_change": {
+      "description": "One change from the static API diff (apidiff.APIChange). Its fields follow settings.diff_schema; the ones listed are those integrations read.",
+      "type": "object",
+      "required": ["package", "from_version", "to_version", "kind", "path", "name"],
+      "properties": {
+        "package": {"type": "string"},
+        "from_version": {"description": "The release at the cutoff.", "type": "string"},
+        "to_version": {"description": "The pinned release.", "type": "string"},
+        "kind": {"$ref": "#/$defs/change_kind"},
+        "path": {"description": "The changed object's public path (for a parameter: its callable's).", "type": "string"},
+        "name": {"description": "The object's name (a switched dependency: the distribution no longer required).", "type": "string"},
+        "owner": {"description": "The class of a changed member; null for a module-level object.", "type": ["string", "null"]},
+        "parameter": {"description": "The parameter, for a parameter change.", "type": ["string", "null"]},
+        "old_signature": {"type": ["string", "null"]},
+        "new_signature": {"type": ["string", "null"]},
+        "moved_to": {"description": "moved: the new path.", "type": ["string", "null"]},
+        "deprecation": {"description": "deprecated: the library's own message, from the pinned release.", "type": ["string", "null"]},
+        "import_paths": {"description": "The shortest of the public paths that lead to it (at most 5; import_paths_total counts them all); null in a diff that did not record them.", "type": ["array", "null"], "items": {"type": "string"}},
+        "import_paths_total": {"description": "How many public paths lead to it.", "$ref": "#/$defs/count"},
+        "tier": {"description": "public: an API the package presents (reached from its top level, in an __all__, or documented); internal: the rest, counted apart.", "enum": ["public", "internal"]}
+      }
+    },
+    "change_kind": {
+      "description": "What changed: removed, moved, a parameter removed, now required, keyword-only or positional-only, changed kind (class to function), deprecated, or a dependency the package switched away from.",
+      "enum": [
+        "removed", "moved", "param_removed", "param_required", "param_keyword_only",
+        "param_positional_only", "kind_changed", "deprecated", "dependency_switched"
+      ]
+    },
+    "used_api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package", "cutoff_version", "locked", "versions_from", "api", "display", "form", "match",
+        "changes", "replacement", "replacements", "used_in", "locations", "locations_total",
+        "installed", "note"
+      ],
+      "properties": {
+        "package": {"type": "string"},
+        "cutoff_version": {"description": "The release it is compared from.", "$ref": "#/$defs/version"},
+        "locked": {"description": "The pinned version.", "$ref": "#/$defs/version"},
+        "versions_from": {"description": "The file that pins it (uv.lock, pyproject.toml), installed, or PyPI's latest.", "type": "string"},
+        "api": {"description": "The API's public path.", "type": "string"},
+        "display": {"description": "How the reports name it under its package (Messages.create, hf_hub_download).", "type": "string"},
+        "form": {"description": "old_form when the code uses any of its changes in the old form somewhere, else uses_api.", "$ref": "#/$defs/form"},
+        "match": {"description": "The strongest match among its uses.", "oneOf": [{"$ref": "#/$defs/match"}, {"type": "null"}]},
+        "changes": {
+          "description": "Its changes, each with the form the code uses it in.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["change_id", "kind", "parameter", "form", "runtime"],
+            "properties": {
+              "change_id": {"description": "The change's id, as in attempts and notes_detail.", "type": "string"},
+              "kind": {"$ref": "#/$defs/change_kind"},
+              "parameter": {"type": ["string", "null"]},
+              "form": {"$ref": "#/$defs/form"},
+              "runtime": {
+                "description": "What the pinned release's source shows of run time; nothing was run (checked is always false).",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["checked", "still_handled_at"],
+                "properties": {
+                  "checked": {"const": false},
+                  "still_handled_at": {"description": "A removed parameter: where the source still reads it (pkg/module.py:line), so calls passing it may still run.", "type": ["string", "null"]},
+                  "still_named_at": {"description": "A switched dependency: where the source still names the old distribution.", "type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        },
+        "replacement": {"description": "The first of replacements, or null.", "oneOf": [{"type": "null"}, {"$ref": "#/$defs/replacement"}]},
+        "replacements": {"type": "array", "items": {"$ref": "#/$defs/replacement"}},
+        "used_in": {"description": "The files that use it, relative to the project, with /.", "type": "array", "items": {"type": "string"}},
+        "locations": {
+          "description": "One entry per place the code uses it, most specific use first. File-level until the scan records lines (issue #8): line, column and code are null until then.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/location"}
+        },
+        "locations_total": {"description": "The number of locations.", "$ref": "#/$defs/count"},
+        "installed": {
+          "description": "A switched dependency: the project's own entry for the distribution the package no longer requires; null when it lists none, and for every other API.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "version", "source", "direct"],
+              "properties": {
+                "name": {"type": "string"},
+                "version": {"type": ["string", "null"]},
+                "source": {"description": "The file that pins it, installed, or unpinned.", "type": ["string", "null"]},
+                "direct": {"type": "boolean"}
+              }
+            }
+          ]
+        },
+        "note": {"$ref": "#/$defs/note"}
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "column", "kind", "names", "form", "match", "code"],
+      "properties": {
+        "file": {"description": "The file, relative to the project, with / (empty when unknown).", "type": "string"},
+        "line": {"description": "1-based line; null until the scan records lines.", "type": ["integer", "null"], "minimum": 1},
+        "column": {"description": "0-based column; null until the scan records lines.", "type": ["integer", "null"], "minimum": 0},
+        "kind": {"description": "How the code uses it: keyword (passes a parameter), call, member (reads it), reference, dependency (a switched distribution).", "enum": ["keyword", "call", "member", "reference", "dependency"]},
+        "names": {"description": "The names used: (callable) or (callable, parameter).", "type": "array", "items": {"type": "string"}},
+        "form": {"$ref": "#/$defs/form"},
+        "match": {"$ref": "#/$defs/match"},
+        "code": {"description": "The line of code, at most 200 characters, read when the report is written; null without a line.", "type": ["string", "null"]}
+      }
+    },
+    "replacement": {
+      "description": "What to use instead, and where that comes from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "evidence", "source", "replaces", "exists_in_locked"],
+      "properties": {
+        "text": {"description": "The replacement, as code.", "type": "string"},
+        "evidence": {"description": "Why it is taken for one: library_text, move_checked, probable_rename or requires_dist.", "type": "string"},
+        "source": {"description": "Where the evidence is (the library's file, the diff).", "type": "string"},
+        "replaces": {"description": "What it replaces.", "type": "string"},
+        "exists_in_locked": {"description": "Whether the replacement exists in the pinned version.", "type": "boolean"}
+      }
+    },
+    "applies_to": {
+      "description": "The versions a note is about.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "version", "cutoff_version"],
+      "properties": {
+        "package": {"type": "string"},
+        "version": {"description": "The pinned version it applies to.", "type": "string"},
+        "cutoff_version": {"description": "The release it is compared from.", "type": ["string", "null"]}
+      }
+    },
+    "checks": {
+      "description": "What was checked for a note, and what was not.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change", "replacement", "example_type_checks", "runtime", "measured"],
+      "properties": {
+        "change": {"description": "How the change was found (the static API diff, with the versions and diff schema).", "type": "string"},
+        "replacement": {"description": "How each replacement was checked; null without one.", "type": ["string", "null"]},
+        "example_type_checks": {"description": "true for a [type-checked] note (a model's example that basedpyright accepts for the pinned version); false for the note from the diff that replaced one whose example did not; null when no example was checked.", "type": ["boolean", "null"]},
+        "runtime": {"description": "What is known of run time; nothing was run.", "type": "string"},
+        "measured": {
+          "description": "`run` (notes_detail): what the held-out test measured for the note's changes; null otherwise.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pairs", "correct_without", "correct_with", "outcome"],
+              "properties": {
+                "pairs": {"$ref": "#/$defs/count"},
+                "correct_without": {"$ref": "#/$defs/count"},
+                "correct_with": {"$ref": "#/$defs/count"},
+                "outcome": {"description": "fixed, broken or neither, for a note about one change; null for several.", "enum": ["fixed", "broken", "neither", null]}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "note": {
+      "description": "The note from the API diff for a used API (notes_detail has more after `run`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bullet", "tags", "tag_text", "applies_to", "checks", "replacements", "not_confirmed"],
+      "properties": {
+        "bullet": {"description": "The note, without its tag.", "type": "string"},
+        "tags": {"description": "What was checked: diff, library, type_checked, metadata, ...", "type": "array", "items": {"type": "string"}},
+        "tag_text": {"description": "The tags as the block writes them ([diff + library]).", "type": "string"},
+        "applies_to": {"$ref": "#/$defs/applies_to"},
+        "checks": {"$ref": "#/$defs/checks"},
+        "replacements": {"type": "array", "items": {"$ref": "#/$defs/replacement"}},
+        "not_confirmed": {"description": "Names in the pinned version that look similar, not confirmed as replacements (never in the note).", "type": "array", "items": {"type": "string"}}
+      }
+    },
+    "note_detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id", "package", "bullet", "example", "verified", "source", "api", "change_ids",
+        "tags", "tag_text", "applies_to", "checks", "replacement", "replacements",
+        "not_confirmed", "writer"
+      ],
+      "properties": {
+        "change_id": {"description": "The first change the note covers.", "type": "string"},
+        "package": {"type": "string"},
+        "bullet": {"description": "The note, without its tag.", "type": "string"},
+        "example": {"description": "The model's example; null for a note from the diff.", "type": ["string", "null"]},
+        "verified": {"description": "The older name of checks.example_type_checks being true: kept because results.json has always had it.", "type": "boolean"},
+        "source": {"description": "model, diff, or a --compare baseline's arm.", "type": "string"},
+        "api": {"type": "string"},
+        "change_ids": {"description": "Every change the note covers.", "type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "tag_text": {"type": "string"},
+        "applies_to": {"$ref": "#/$defs/applies_to"},
+        "checks": {"$ref": "#/$defs/checks"},
+        "replacement": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/replacement"}]},
+        "replacements": {"type": "array", "items": {"$ref": "#/$defs/replacement"}},
+        "not_confirmed": {"type": "array", "items": {"type": "string"}},
+        "writer": {"description": "The model that wrote a model's note; null otherwise.", "type": ["string", "null"]}
+      }
+    },
+    "probes": {
+      "description": "`run`: the probe answers by outcome.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "valid", "pass", "stale", "wrong", "deprecated", "excluded", "changes_without_tasks", "cached_answers"],
+      "properties": {
+        "total": {"description": "Probes asked.", "$ref": "#/$defs/count"},
+        "valid": {"description": "Probes whose answer could be scored.", "$ref": "#/$defs/count"},
+        "pass": {"description": "Answers that type-check against the pinned version and use the changed API.", "$ref": "#/$defs/count"},
+        "stale": {"description": "Answers that use the API as it was at the cutoff.", "$ref": "#/$defs/count"},
+        "wrong": {"description": "Answers wrong otherwise.", "$ref": "#/$defs/count"},
+        "deprecated": {"description": "Answers that use a deprecated API.", "$ref": "#/$defs/count"},
+        "excluded": {
+          "description": "Probes not counted, by why.",
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/count"}
+        },
+        "changes_without_tasks": {"description": "API changes that got no usable task (skipped_changes).", "$ref": "#/$defs/count"},
+        "cached_answers": {"description": "Answers taken from the cache instead of the model.", "$ref": "#/$defs/count"}
+      }
+    },
+    "notes_summary": {
+      "description": "`run`: the notes the run wrote.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "verified", "type_checked", "from_diff", "tokens"],
+      "properties": {
+        "count": {"description": "Notes in the block.", "$ref": "#/$defs/count"},
+        "verified": {"description": "The older name of type_checked: the same number.", "$ref": "#/$defs/count"},
+        "type_checked": {"description": "Notes whose example type-checked against the pinned version.", "$ref": "#/$defs/count"},
+        "from_diff": {"description": "Notes from the API diff (no model example).", "$ref": "#/$defs/count"},
+        "tokens": {"description": "An estimate of the block's size in tokens.", "$ref": "#/$defs/count"}
+      }
+    },
+    "pairing": {
+      "description": "Held-out answers compared task by task, without vs with the notes, and the statistics on them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n", "before", "after", "fixed", "broken", "excluded", "excluded_reasons", "changes",
+        "changes_fixed", "changes_broken", "per_change", "difference", "ci95_difference",
+        "bootstrap", "ci95_changes_fixed", "sign_test_p"
+      ],
+      "properties": {
+        "n": {"description": "Counted pairs.", "$ref": "#/$defs/count"},
+        "before": {"description": "Pairs correct without the notes.", "$ref": "#/$defs/count"},
+        "after": {"description": "Pairs correct with the notes.", "$ref": "#/$defs/count"},
+        "fixed": {"description": "Pairs wrong without the notes and correct with them.", "$ref": "#/$defs/count"},
+        "broken": {"description": "Pairs correct without the notes and wrong with them.", "$ref": "#/$defs/count"},
+        "excluded": {"description": "Pairs not counted.", "$ref": "#/$defs/count"},
+        "excluded_reasons": {"description": "Pairs not counted, by why.", "type": "object", "additionalProperties": {"$ref": "#/$defs/count"}},
+        "changes": {"description": "API changes with counted pairs.", "$ref": "#/$defs/count"},
+        "changes_fixed": {"description": "Changes with more than half of their pairs wrong without the notes and correct with them.", "$ref": "#/$defs/count"},
+        "changes_broken": {"description": "Changes fixed the other way round.", "$ref": "#/$defs/count"},
+        "changes_still_correct": {"description": "regression: changes still correct with the notes (more than half of their pairs).", "$ref": "#/$defs/count"},
+        "ci95_changes_still_correct": {"description": "regression: the Wilson interval of changes_still_correct.", "$ref": "#/$defs/interval"},
+        "per_change": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["change_id", "change", "n", "before", "after", "fixed", "broken", "outcome"],
+            "properties": {
+              "change_id": {"type": "string"},
+              "change": {"description": "The change, in one sentence.", "type": "string"},
+              "n": {"$ref": "#/$defs/count"},
+              "before": {"$ref": "#/$defs/count"},
+              "after": {"$ref": "#/$defs/count"},
+              "fixed": {"$ref": "#/$defs/count"},
+              "broken": {"$ref": "#/$defs/count"},
+              "outcome": {"enum": ["fixed", "broken", "neither"]}
+            }
+          }
+        },
+        "difference": {"description": "With minus without, over all counted pairs (a fraction); null without pairs.", "type": ["number", "null"]},
+        "ci95_difference": {"description": "The cluster bootstrap interval of difference (resampling changes); null with fewer than two changes.", "$ref": "#/$defs/interval"},
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["unit", "resamples", "seed"],
+          "properties": {
+            "unit": {"const": "change"},
+            "resamples": {"type": "integer"},
+            "seed": {"type": "integer"}
+          }
+        },
+        "ci95_changes_fixed": {"description": "The Wilson interval of changes_fixed of changes.", "$ref": "#/$defs/interval"},
+        "sign_test_p": {"description": "The exact two-sided sign test over changes fixed vs changes broken.", "type": ["number", "null"]}
+      }
+    },
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tokens", "bullets", "heldout", "regression", "versus_verified", "block"],
+      "properties": {
+        "tokens": {"description": "An estimate of the arm's block size in tokens.", "$ref": "#/$defs/count"},
+        "bullets": {"description": "Bullets in the block.", "$ref": "#/$defs/count"},
+        "heldout": {"$ref": "#/$defs/pairing"},
+        "regression": {"$ref": "#/$defs/pairing"},
+        "versus_verified": {
+          "description": "A baseline against the run's notes, on the changes counted in both; null for the notes themselves.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["changes", "fixed_by_verified_only", "fixed_by_this_only", "sign_test_p"],
+              "properties": {
+                "changes": {"$ref": "#/$defs/count"},
+                "fixed_by_verified_only": {"$ref": "#/$defs/count"},
+                "fixed_by_this_only": {"$ref": "#/$defs/count"},
+                "sign_test_p": {"type": ["number", "null"]}
+              }
+            }
+          ]
+        },
+        "block": {"description": "The arm's block.", "type": "string"}
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change_id", "package", "change", "task", "role", "with_notes", "outcome", "errors", "code", "error", "cached"],
+      "properties": {
+        "change_id": {"type": "string"},
+        "package": {"type": "string"},
+        "change": {"description": "The change, in one sentence.", "type": "string"},
+        "task": {"description": "The task the model was given.", "type": "string"},
+        "role": {"enum": ["probe", "heldout", "regression"]},
+        "with_notes": {"description": "Whether the model saw a notes block.", "type": "boolean"},
+        "outcome": {"description": "pass, stale, wrong or deprecated; untouched, off-task, invalid or error for an answer that is not counted.", "enum": ["pass", "stale", "wrong", "deprecated", "untouched", "off-task", "invalid", "error"]},
+        "errors": {"description": "The type checker's errors attributed to the package.", "type": "array", "items": {"type": "string"}},
+        "code": {"description": "The model's answer (never run).", "type": ["string", "null"]},
+        "error": {"description": "Why the model call failed; null when it did not.", "type": ["string", "null"]},
+        "cached": {"description": "Whether the answer came from the cache.", "type": "boolean"},
+        "arm": {"description": "`run --compare`: the arm whose block the model saw; null for an answer without notes.", "type": ["string", "null"]}
+      }
+    }
+  }
+}

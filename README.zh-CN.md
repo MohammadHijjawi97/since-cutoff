@@ -155,7 +155,7 @@ uvx --with basedpyright since-cutoff run
 
 <p align="center"><img src="https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/main/docs/img/scan.svg" width="100%" alt="在示例项目上运行 since-cutoff scan --model anthropic:claude-sonnet-4-5。你的代码用到了 2 个在 claude-sonnet-4-5 训练截止日期（2025-07-31）之后发生变化的 API。huggingface-hub 0.33.1 -> 2.0.0：app/main.py 用到的 hf_hub_download 的签名中不再有 force_filename、local_dir_use_symlinks、resume_download 和 proxies；它的说明标为 [diff]，一行 Runtime 提示指出 2.0.0 的源码仍会处理这些参数，所以传入它们的调用可能会带着警告运行。anthropic 0.56.0 -> 1.8.0：app/main.py 调用的 Messages.create 不再接受 temperature、top_k 和 top_p；它的说明标为 [diff]。2 条说明可以写入 AGENTS.md；uses this API 和 [diff] 的含义；代码没有用到的另外 7 个包中的 348 个变更，以及内部 API 的 139 个变更。"></p>
 
-这两个 API 都是“uses this API”；如果某个文件传了 `resume_download=True` 或 `temperature=0.2`，它们就会变成“old form”。`scan -v` 列出用到某个 API 的所有文件（默认显示 3 个），`scan --all` 会逐个包列出公共 API 的其余所有变更（`--internal` 再加上内部 API 的变更，各项计数把它们单独记为“+N internal”）。`scan --json` 和 `.since-cutoff/results.json` 的 `used_apis` 中有同样的内容（每个 API、用到它的位置、它的变更和说明，以及说明的标签、适用的版本和检查了什么），`.since-cutoff/report.md` 以“Used by your code”开头。
+这两个 API 都是“uses this API”；如果某个文件传了 `resume_download=True` 或 `temperature=0.2`，它们就会变成“old form”。`scan -v` 列出用到某个 API 的所有文件（默认显示 3 个），`scan --all` 会逐个包列出公共 API 的其余所有变更（`--internal` 再加上内部 API 的变更，各项计数把它们单独记为“+N internal”）。`scan --json` 和 `.since-cutoff/results.json` 的 `used_apis` 中有同样的内容（每个 API、用到它的位置、它的变更和说明，以及说明的标签、适用的版本和检查了什么），`.since-cutoff/report.md` 以“Used by your code”开头。这份 JSON 由随包发布的 JSON Schema 描述：[results.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/results.schema.json)。
 
 ### 用 sync 和 status 保持说明最新
 
@@ -178,7 +178,7 @@ uvx --with basedpyright since-cutoff run
 
 `sync --json` 需要搭配 `--yes`、`--check` 或 `--dry-run`；缺少其中之一时，它不询问，直接以退出码 2 结束。标准输出只包含 JSON；sync 失败时标准输出为空（用法错误，退出码 2；或其他错误，例如无法访问 PyPI，退出码 1）；进度、diff 和错误都输出到 stderr。对象包含 `exit_code`、`tip`（sync 关于 AGENTS.md 和 CLAUDE.md 的提示，没有时为 null）和 `targets`。每个目标文件报告 `target`、`action`、`changed`、`edited`、`written`、`model`、`cutoff`、`scope`、`notes`、`changes`（每个包的 `package`、`done` 和 `state`）、`retest` 和 `diff_lines`。`written` 用来区分已应用的提议、预览和被拒绝的手动修改。通常的退出码和 `--force` 的行为仍然适用。
 
-`since-cutoff status` 不联网，也不读取代码：它列出每个包的说明所对应的版本和 lockfile 中的版本、其他依赖是否有变化，以及你的编程 Agent 所配置的模型的训练截止日期是否早于说明所用的截止日期（并给出相应的 `sync --model` 命令）。`status --json` 供脚本使用。`status --hook` 只在说明过时时输出一行，并且总是以 0 退出，例如：
+`since-cutoff status` 不联网，也不读取代码：它列出每个包的说明所对应的版本和 lockfile 中的版本、其他依赖是否有变化，以及你的编程 Agent 所配置的模型的训练截止日期是否早于说明所用的截止日期（并给出相应的 `sync --model` 命令）。`status --json` 供脚本使用（[status.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/status.schema.json)）。`status --hook` 只在说明过时时输出一行，并且总是以 0 退出，例如：
 
 ```text
 since-cutoff: the library notes in AGENTS.md are out of date: anthropic 1.8.0 in the notes, 0.60.0 in pyproject.toml. `since-cutoff sync` updates them.
@@ -467,6 +467,61 @@ jobs:
 
 输出：`changed-packages`（逗号分隔）、`changes`（破坏性变更数）、`deprecations`、`markdown`（摘要文件的路径，例如可用来把摘要发成 pull request 评论）、`report`（完整报告的路径），以及设置 `check-notes` 时的 `notes`（`up-to-date`、`out-of-date`、`edited-by-hand` 或 `error`）。能通过多个导入路径访问的同一个变更只计一次。
 
+### GitHub 代码扫描（SARIF）
+
+`scan --sarif 文件` 写出一份 SARIF 2.1.0 报告，由 `github/codeql-action/upload-sarif` 上传到代码扫描（code scanning）：每个用到有变更 API 的文件都成为一条警报，显示在仓库的 Security 标签页中；旧写法为警告（warning），其他情况为提示（note），消息中包含变更、两个版本和说明。每种变更是一条规则（`removed`、`moved`、`param_removed`、`deprecated` 等）。在扫描记录行号之前（[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)），警报位于文件的第 1 行，并在消息中说明。pull request 只显示所在行在其 diff 中的警报，所以在此之前它主要显示新文件的警报；Security 标签页中有全部警报。
+
+代码扫描根据规则和 `primaryLocationLineHash` 在多次运行之间识别同一条警报，而报告把它设为包、API 和文件的哈希，不含版本：同一条警报在多次运行、版本升级和文件修改之间保持不变，同一文件中的两个 API 是两条警报。upload-sarif 保留这个哈希，而不是根据警报所在行的文本计算哈希（文件第 1 行上的所有警报都会得到同一个哈希），并对两者不同的每个结果记录一条警告（"found existing inconsistent fingerprint value"）：这条警告是正常的。
+
+```yaml
+# .github/workflows/since-cutoff-sarif.yml
+name: since-cutoff code scanning
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # 上传报告需要此权限
+      actions: read  # 私有仓库中的 upload-sarif 需要此权限
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MohammadHijjawi97/since-cutoff@v0
+        with:
+          model: anthropic:claude-sonnet-4-5
+          args: --sarif since-cutoff.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        # --fail-on 使任务失败时也上传；没有任何依赖能检查时没有文件，不上传
+        if: ${{ !cancelled() && hashFiles('since-cutoff.sarif') != '' }}
+        with:
+          sarif_file: since-cutoff.sarif
+          category: since-cutoff
+```
+
+请在默认分支和 pull request 上都运行它，这样代码扫描才能分辨 pull request 新增了哪些警报。代码扫描对公开仓库免费；私有仓库需要 GitHub Code Security。`--sarif` 需要 since-cutoff 0.7.0 或更高版本，`@v0` 从 Action 的 v0.7.0 起默认使用它；使用更早标签的 Action 时，请设置 `since-cutoff-version: 0.7.0`。不使用 Action 时：先运行 `since-cutoff scan --model ... --sarif since-cutoff.sarif`，再执行同样的上传步骤。
+
+代码扫描把每次上传视为该分支上其 `category` 的完整分析：上传中没有的每条打开的警报会被关闭为已修复（fixed），之后的上传再次包含它时会重新打开。因此：
+
+- 没有任何依赖能检查时（无法访问 PyPI），扫描以退出码 1 结束，不写 SARIF 文件：`hashFiles` 条件会跳过上传，警报保持原样。
+- 部分依赖无法检查时（退出码为 0，原因在日志中），报告会说明：`runs[0].invocations[0].executionSuccessful` 为 `false`，其 `toolExecutionNotifications` 列出每个被跳过的包及原因。代码扫描仍会处理这些结果，只把这次分析标记为工具执行未成功（unsuccessful tool execution）：这次上传会把这些包仍然打开的警报关闭为已修复，下一次检查到它们的上传会重新打开这些警报。只有不上传这份报告，它们才会保持打开；若只想上传每个依赖都检查过的报告，请用下面两个步骤代替上面的上传步骤：
+
+  ```yaml
+        - id: sarif  # 每个依赖都检查过时 complete=true
+          if: ${{ !cancelled() && hashFiles('since-cutoff.sarif') != '' }}
+          run: echo "complete=$(jq '.runs[0].invocations[0].executionSuccessful' since-cutoff.sarif)" >> "$GITHUB_OUTPUT"
+        - uses: github/codeql-action/upload-sarif@v4
+          if: ${{ !cancelled() && steps.sarif.outputs.complete == 'true' }}
+          with:
+            sarif_file: since-cutoff.sarif
+            category: since-cutoff
+  ```
+
+  这样一来，一个永远无法检查的依赖（不在 PyPI 上的包）会阻止每次上传：请用 Action 的 `exclude` 输入把它排除。
+- 扫描多个文件夹时（monorepo），请给每次上传一个不同的 `category`（`since-cutoff-api`、`since-cutoff-web`）：在同一个任务中，upload-sarif 会拒绝同一 category 的第二次上传；在另一个任务中，后一次上传会取代前一次，并关闭它的警报。
+
 ### pre-commit
 
 ```yaml
@@ -495,7 +550,22 @@ since-cutoff sync --check
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ```
 
-`--markdown -` 把摘要打印到标准输出，标准错误中只有进度和报告路径，与 `--json` 相同。输出到文件、管道或 CI 日志时不显示实时进度条，并按 160 列的宽度排版（可以用 `COLUMNS` 设置其他宽度）。退出码：
+对于 GitLab 的 merge request，`--gitlab-codequality 文件` 写出一份 Code Quality 报告：每个用到有变更 API 的文件对应一个问题（旧写法为 `major`，其他情况为 `info`；检查名为 `since-cutoff/<kind>`），路径相对于 `CI_PROJECT_DIR`，说明写在描述中。它的指纹不包含版本，所以版本升级不会重新打开所有问题。目标分支的报告中有、而 merge request 的报告中没有的问题，GitLab 会显示为已修复：没有任何依赖能检查时，扫描以退出码 1 结束，不写报告；但部分依赖被跳过后，被跳过的包的问题会显示为已修复。把它加为 artifact：
+
+```yaml
+# .gitlab-ci.yml
+since-cutoff:
+  image: python:3.12-slim
+  script:
+    - pip install since-cutoff
+    - since-cutoff scan --model anthropic:claude-sonnet-4-5 --gitlab-codequality gl-code-quality.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality.json
+```
+
+`--markdown -`、`--sarif -` 和 `--gitlab-codequality -` 把报告打印到标准输出，标准错误中只有进度和报告路径，与 `--json` 相同。输出到文件、管道或 CI 日志时不显示实时进度条，并按 160 列的宽度排版（可以用 `COLUMNS` 设置其他宽度）。退出码：
 
 - `0` 正常；
 - `1` 出错（例如 `run` 没能探测任何 API 变更，或没有任何模型回答能被打分；或 `sync` 无法检查其说明所涉及的某个包）；
@@ -565,7 +635,7 @@ AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明�
 - **不运行任何包代码，也不运行模型写的代码。** 包只做静态读取（griffe 关闭 inspection；只解压 `.py`/`.pyi` 文件，并检查路径和大小）。模型的回答只在本地用 basedpyright 做类型检查。
 - **获取**：从 PyPI 获取公开的包元数据和 wheel，从 models.dev 获取模型的训练截止日期（内置快照，可离线使用）。Git、本地路径、workspace 和私有源中的依赖，绝不会按名称去公共 PyPI 上查找。`status` 不获取任何内容。
 - **发送**：只有 `run` 会发送提示词，并且只发给你选择的模型服务商，内容包括包名、版本、变更 API 的公开签名和文档字符串、生成的任务，以及（用于写说明的）模型自己的回答。从不包含你的源代码。`scan`、`sync`、`status`、MCP 服务器、GitHub Action 和 pre-commit 钩子不向任何模型发送任何内容。
-- **显示你的代码在哪里用到了有变更的 API**（目前是文件名）：显示在终端和 `.since-cutoff/` 中，不会发送到任何地方。是否传出由你决定：`--markdown` 和 `--annotate github` 会把它写进 CI 任务的摘要和注解，MCP 工具 `project_changes` 会把它返回给调用它的 Agent，而 Agent 会把工具结果传给它所用的模型。
+- **显示你的代码在哪里用到了有变更的 API**（目前是文件名）：显示在终端和 `.since-cutoff/` 中，不会发送到任何地方。是否传出由你决定：`--markdown` 和 `--annotate github` 会把它写进 CI 任务的摘要和注解，`--sarif` 和 `--gitlab-codequality` 会把它写进 GitHub 代码扫描和 GitLab 的 merge request，MCP 工具 `project_changes` 会把它返回给调用它的 Agent，而 Agent 会把工具结果传给它所用的模型。
 - **保存**：结果保存在项目中的 `.since-cutoff/` 目录（该目录会自动被 git 忽略）和一个本地缓存里：`since-cutoff cache info` 显示缓存位置和各类内容的大小，`since-cutoff cache clear` 清除缓存，加上 `--sources`、`--diffs` 或 `--pypi` 则只清除该类（`run` 得到的模型回答要花钱才能重新生成，会被保留）。解压出的包源码占缓存的大部分，上限为 2 GB（`SINCE_CUTOFF_CACHE_MAX_MB`；0 表示不设上限）：解压新版本后，最久未使用的源码会被删除，但正在运行的扫描所用的绝不会删除；一次运行中的第一次删除会打印一行，说明删除了多少。`sync`（在你同意后，或使用 `--yes` 时）和 `run --apply` 会在 AGENTS.md 或 CLAUDE.md 中写入一个带标记的区块，文件其余部分逐字节保持不变；`since-cutoff unapply` 可以移除这个区块。
 - **没有遥测**，不需要账号，不收集个人数据。重复运行直接读取缓存，所以不花钱，结果也可复现（`--fresh` 会重新询问模型）。详见 [PRIVACY.md](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/PRIVACY.md)（英文）。
 
@@ -574,7 +644,7 @@ AGENTS.md 中的区块包含带标签的说明条目，以及每个包的说明�
 - 目前仅支持 Python。下一步是 TypeScript（`.d.ts` 对比、`tsc`）（[#1](https://github.com/MohammadHijjawi97/since-cutoff/issues/1)）。
 - 类型检查器能发现错误的名称、错误的参数和 PEP 702 弃用，但看不到签名不变而行为改变的情况，也看不到只在运行时发出警告的弃用。`scan` 还会列出用库自己的装饰器（名称包含 "deprecat"）声明的弃用，以及已被移除、但模块仍通过 `__getattr__` 提供并发出警告的名称；不过 `run` 不会探测这些弃用。
 - 对比只覆盖公开 API：`_private` 名称，以及包内自带的测试、基准测试和示例，都会被跳过。
-- “Your code uses”（你的代码用到了）是逐个文件的静态匹配：导入（包括重新导出的名称）、调用、属性读取和关键字参数；方法调用的接收者会根据包自身的注解确定类型（`df = pd.read_csv(...)` 是一个 `DataFrame`；一个类连同它的基类一起计入，跨越你锁定的各个包）。它不追踪 `getattr` 这类动态访问，目前只指出文件，不指出行号（[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)）。在代码没有显示其类的值上读取的方法，可以只按名称计入：这个名称仅属于一个有变更的 API，既不是常见名称，也不是内置类型或标准库类型的成员。除非给出 `--include-name-matches`（通过 MCP 时为 `include_name_matches`），这种 `[name match]` 不会出现在任何报告、说明、`--fail-on` 和 `--annotate` 中，因为它们大多是另一个库中同名的方法。变为必需、仅限关键字或仅限位置的参数，目前总是显示为“uses this API”，从不显示为“old form”。
+- “Your code uses”（你的代码用到了）是逐个文件的静态匹配：导入（包括重新导出的名称）、调用、属性读取和关键字参数；方法调用的接收者会根据包自身的注解确定类型（`df = pd.read_csv(...)` 是一个 `DataFrame`；一个类连同它的基类一起计入，跨越你锁定的各个包）。它不追踪 `getattr` 这类动态访问，目前只指出文件，不指出行号（[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)）。在代码没有显示其类的值上读取的方法，可以只按名称计入：这个名称仅属于一个有变更的 API，既不是常见名称，也不是内置类型或标准库类型的成员。除非给出 `--include-name-matches`（通过 MCP 时为 `include_name_matches`），这种 `[name match]` 不会出现在任何报告、说明、`--fail-on`、`--annotate`、`--sarif` 和 `--gitlab-codequality` 中，因为它们大多是另一个库中同名的方法。变为必需、仅限关键字或仅限位置的参数，目前总是显示为“uses this API”，从不显示为“old form”。
 - 只有当库自己的弃用说明明确给出替代项时，说明才会写出替代项。只出现在迁移指南里的建议（anthropic 的 [MIGRATION.md](https://github.com/anthropics/anthropic-sdk-python/blob/main/MIGRATION.md) 建议对仍接受 `temperature` 的旧模型使用 `extra_body`）不会出现在说明中。
 - 探测的是破坏性变更中按优先级排序的一个**样本**（你的代码已经用到的符号优先），而不是全部。
 - “对照版本”指在截止日期至少 30 天之前发布的最新版本（`--cutoff-margin`；`0` 表示从截止日期当天算起）。模型对截止日期前几周的了解最少，所以实际的过时可能开始得更早；这个余量只是对“早多少”的一个估计。

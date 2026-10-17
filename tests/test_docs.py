@@ -267,6 +267,7 @@ def test_every_readme_says_how_to_install_run_and_what_the_cache_commands_are(na
     "fragment",
     (
         "No dependency could be checked",
+        "not written (empty, an upload would show every open finding as fixed)",
         "MB download limit (--max-download-mb)",
         "could not find importable modules in",
         "Not written: there is no terminal to ask in",

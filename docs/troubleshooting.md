@@ -23,6 +23,12 @@ uncached package metadata and sources, but makes no model calls. The condition f
 and exit code 1 is in
 [`cli.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/cli.py).
 
+`--sarif` and `--gitlab-codequality` then write nothing, and the next line says so:
+`The SARIF report and the GitLab Code Quality report were not written (empty, an upload would show every open finding as fixed)`.
+The `hashFiles` condition of the upload step in the
+[README's code scanning setup](https://github.com/MohammadHijjawi97/since-cutoff#github-code-scanning-sarif)
+then skips the upload, so no alert is closed.
+
 ## A package was skipped: download limit or no importable modules
 
 For `MB download limit (--max-download-mb)`, the distribution exceeds the configured size

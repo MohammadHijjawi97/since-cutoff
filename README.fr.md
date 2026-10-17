@@ -261,7 +261,8 @@ publique, paquet par paquet (`--internal` ajoute les changements d'API internes,
 décompte donne à part sous la forme « +N internal »). `scan --json` et `.since-cutoff/results.json` contiennent la même chose dans
 `used_apis` (chaque API, où elle est utilisée, ses changements et sa note, avec les étiquettes
 de la note, les versions auxquelles elle s'applique et ce qui a été vérifié), et
-`.since-cutoff/report.md` commence par « Used by your code ».
+`.since-cutoff/report.md` commence par « Used by your code ». Le JSON est décrit
+par un JSON Schema fourni dans le paquet, [results.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/results.schema.json).
 
 ### Tenir les notes à jour avec sync et status
 
@@ -313,7 +314,7 @@ main refusée. Les codes de sortie habituels et le comportement de `--force` s'a
 version pour laquelle les notes ont été écrites et celle du fichier de verrouillage, si d'autres
 dépendances ont changé, et si le modèle configuré pour votre agent de code a une date limite
 antérieure à celle des notes (avec la commande `sync --model` correspondante). `status --json`
-est destiné aux scripts. `status --hook` n'affiche une ligne que lorsque les notes ne sont plus à
+est destiné aux scripts ([status.schema.json](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/schemas/status.schema.json)). `status --hook` n'affiche une ligne que lorsque les notes ne sont plus à
 jour et sort toujours avec 0, par exemple :
 
 ```text
@@ -822,6 +823,96 @@ la pull request), `report` (le chemin du rapport complet) et, avec `check-notes`
 (`up-to-date`, `out-of-date`, `edited-by-hand` ou `error`). Un changement accessible par
 plusieurs chemins d'import n'est compté qu'une fois.
 
+### Code scanning de GitHub (SARIF)
+
+`scan --sarif FICHIER` écrit un rapport SARIF 2.1.0, que `github/codeql-action/upload-sarif`
+envoie à code scanning : chaque fichier qui utilise une API modifiée devient une alerte dans
+l'onglet Security du dépôt, un avertissement (*warning*) pour l'ancienne forme et une note
+(*note*) sinon, avec le changement, les deux versions et la note dans son message. Chaque type
+de changement est une règle (`removed`, `moved`, `param_removed`, `deprecated`, ...). Tant que
+l'analyse n'enregistre pas les lignes ([#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8)), une alerte est sur la ligne 1 de son
+fichier et le dit. Une pull request ne montre une alerte que si sa ligne est dans le diff
+de la pull request : jusque-là, elle montre surtout celles des nouveaux fichiers ; l'onglet
+Security les a toutes.
+
+Code scanning reconnaît une alerte d'une exécution à l'autre à sa règle et à son
+`primaryLocationLineHash`, que le rapport fixe à un hash du paquet, de l'API et du fichier,
+sans les versions : une alerte reste la même d'une exécution, d'une montée de version et d'une
+modification du fichier à l'autre, et deux API dans un même fichier font deux alertes.
+upload-sarif garde ce hash au lieu d'en calculer un à partir du texte de la ligne de l'alerte
+(que toutes les alertes de la ligne 1 d'un fichier partageraient), et journalise un
+avertissement pour chaque résultat où les deux diffèrent (« found existing inconsistent
+fingerprint value ») : cet avertissement est normal.
+
+```yaml
+# .github/workflows/since-cutoff-sarif.yml
+name: since-cutoff code scanning
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # pour envoyer le rapport
+      actions: read  # pour upload-sarif dans un dépôt privé
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MohammadHijjawi97/since-cutoff@v0
+        with:
+          model: anthropic:claude-sonnet-4-5
+          args: --sarif since-cutoff.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        # aussi quand --fail-on a fait échouer le job, mais pas sans fichier (rien de vérifié)
+        if: ${{ !cancelled() && hashFiles('since-cutoff.sarif') != '' }}
+        with:
+          sarif_file: since-cutoff.sarif
+          category: since-cutoff
+```
+
+Exécutez-le sur la branche par défaut comme sur les pull requests, pour que code scanning sache
+quelles alertes ajoute une pull request. Code scanning est gratuit pour les dépôts publics ;
+les dépôts privés ont besoin de GitHub Code Security. `--sarif` demande since-cutoff 0.7.0 ou
+plus récent, que `@v0` utilise par défaut depuis la v0.7.0 de l'Action ; avec une étiquette
+plus ancienne de l'Action, indiquez `since-cutoff-version: 0.7.0`. Hors de l'Action :
+`since-cutoff scan --model ... --sarif since-cutoff.sarif`, puis la même étape d'envoi.
+
+Code scanning lit chaque envoi comme l'analyse complète de sa `category` sur cette branche :
+il ferme comme corrigée (*fixed*) chaque alerte ouverte que l'envoi n'a pas, et la rouvre
+quand un envoi ultérieur l'a de nouveau. Ainsi :
+
+- Quand aucune dépendance n'a pu être vérifiée (PyPI injoignable), l'analyse se termine avec le
+  code 1 sans écrire de fichier SARIF : la condition `hashFiles` saute l'envoi, et les alertes
+  restent telles quelles.
+- Quand certaines n'ont pas pu l'être (code 0, les raisons dans le journal), le rapport le
+  dit : `runs[0].invocations[0].executionSuccessful` vaut `false`, et ses
+  `toolExecutionNotifications` nomment chaque paquet ignoré et pourquoi. Code scanning traite
+  quand même les résultats, et signale seulement l'analyse comme une exécution de l'outil en
+  échec (« unsuccessful tool execution ») : l'envoi ferme comme corrigées les alertes
+  ouvertes de ces paquets, et le prochain envoi qui les vérifie les rouvre. Elles ne restent
+  ouvertes que si ce rapport n'est pas envoyé ; pour n'envoyer qu'un rapport où toutes les
+  dépendances ont été vérifiées, remplacez l'étape d'envoi ci-dessus par ces deux étapes :
+
+  ```yaml
+        - id: sarif  # complete=true quand toutes les dépendances ont été vérifiées
+          if: ${{ !cancelled() && hashFiles('since-cutoff.sarif') != '' }}
+          run: echo "complete=$(jq '.runs[0].invocations[0].executionSuccessful' since-cutoff.sarif)" >> "$GITHUB_OUTPUT"
+        - uses: github/codeql-action/upload-sarif@v4
+          if: ${{ !cancelled() && steps.sarif.outputs.complete == 'true' }}
+          with:
+            sarif_file: since-cutoff.sarif
+            category: since-cutoff
+  ```
+
+  Une dépendance qui n'est jamais vérifiée (une qui n'est pas sur PyPI) empêche alors tout
+  envoi : laissez-la de côté avec l'entrée `exclude` de l'Action.
+- Quand plusieurs dossiers sont analysés (un monorepo), donnez à chaque envoi sa propre
+  `category` (`since-cutoff-api`, `since-cutoff-web`) : upload-sarif refuse un deuxième envoi
+  d'une même catégorie dans le même job, et un envoi dans un autre job remplace le premier et
+  ferme ses alertes.
+
 ### pre-commit
 
 ```yaml
@@ -860,10 +951,33 @@ since-cutoff sync --check
 since-cutoff run --quick --fail-on-stale --json > since-cutoff.json
 ```
 
-`--markdown -` écrit le résumé sur stdout, et seulement la progression et le chemin du rapport
-sur stderr, comme `--json`. Dans un fichier, un pipe ou un journal de CI, il n'y a pas de barre
-de progression animée, et la sortie est mise en page sur 160 colonnes (`COLUMNS` fixe une autre
-largeur). Codes de sortie :
+Pour les merge requests GitLab, `--gitlab-codequality FICHIER` écrit un rapport Code Quality :
+un problème par fichier qui utilise une API modifiée (`major` pour l'ancienne forme, `info`
+sinon ; vérification `since-cutoff/<kind>`), avec son chemin relatif à `CI_PROJECT_DIR` et la
+note dans sa description. Ses empreintes laissent les versions de côté, si bien qu'une montée
+de version ne rouvre pas tous les problèmes. GitLab montre comme corrigé un problème du rapport
+de la branche cible qui manque dans celui de la merge request : quand aucune dépendance n'a pu
+être vérifiée, l'analyse se termine avec le code 1 sans écrire de rapport, mais après un saut
+partiel les problèmes des paquets ignorés apparaissent comme corrigés. Ajoutez-le comme
+artefact :
+
+```yaml
+# .gitlab-ci.yml
+since-cutoff:
+  image: python:3.12-slim
+  script:
+    - pip install since-cutoff
+    - since-cutoff scan --model anthropic:claude-sonnet-4-5 --gitlab-codequality gl-code-quality.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality.json
+```
+
+`--markdown -`, `--sarif -` et `--gitlab-codequality -` écrivent le rapport sur stdout, et
+seulement la progression et le chemin du rapport sur stderr, comme `--json`. Dans un fichier,
+un pipe ou un journal de CI, il n'y a pas de barre de progression animée, et la sortie est mise
+en page sur 160 colonnes (`COLUMNS` fixe une autre largeur). Codes de sortie :
 
 - `0` OK ;
 - `1` erreur (par exemple, `run` n'a pu sonder aucun changement d'API ou n'a pu évaluer aucune
@@ -1002,7 +1116,8 @@ mesuré le test sur les tâches réservées ; `verified` est conservé et signi
 - **Montre où votre code utilise une API modifiée** (pour l'instant, des noms de fichiers) dans le
   terminal et dans `.since-cutoff/`, et ne l'envoie nulle part. Ce que vous en transmettez ne
   dépend que de vous : `--markdown` et `--annotate github` le placent dans le résumé et les
-  annotations d'un job de CI, et l'outil MCP `project_changes` le renvoie à l'agent qui l'a
+  annotations d'un job de CI, `--sarif` et `--gitlab-codequality` dans code scanning de GitHub
+  et les merge requests GitLab, et l'outil MCP `project_changes` le renvoie à l'agent qui l'a
   appelé, lequel transmet les résultats de ses outils à son modèle.
 - **Stocke** les résultats dans `.since-cutoff/` au sein de votre projet (le dossier s'exclut
   lui-même de git) et dans un cache local : `since-cutoff cache info` indique son emplacement et
@@ -1041,8 +1156,9 @@ mesuré le test sur les tâches réservées ; `verified` est conservé et signi
   valeur dont le code ne montre pas la classe peut compter par son seul nom, quand ce nom
   n'appartient qu'à une seule API modifiée et n'est ni un nom courant ni un membre d'un type
   intégré ou de la bibliothèque standard : une telle correspondance `[name match]`
-  n'apparaît dans aucun rapport, ni dans les notes, ni dans `--fail-on` ou `--annotate` sauf
-  avec `--include-name-matches` (`include_name_matches` par MCP), car la plupart sont une
+  n'apparaît dans aucun rapport, ni dans les notes, ni dans `--fail-on`, `--annotate`,
+  `--sarif` ou `--gitlab-codequality` sauf avec `--include-name-matches`
+  (`include_name_matches` par MCP), car la plupart sont une
   méthode homonyme d'une autre bibliothèque. Un paramètre devenu obligatoire, nommé seulement
   ou positionnel seulement est toujours marqué « uses this API », jamais « old form », pour l'instant.
 - Une note ne nomme un remplaçant que si le texte de dépréciation de la bibliothèque elle-même

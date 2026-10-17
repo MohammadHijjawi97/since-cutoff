@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MohammadHijjawi97/since-cutoff/v0.5.0/src/since_cutoff/schemas/status.schema.json",
+  "title": "since-cutoff status",
+  "description": "What `since-cutoff status --json` prints: whether the notes blocks in AGENTS.md / CLAUDE.md are current for the project's dependency files, decided offline (no network, no scan).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state", "exit_code", "versions_from", "coding_agent_model", "targets"],
+  "properties": {
+    "state": {
+      "description": "never_run: no file has a block; current: every block is current; out_of_date: at least one is not (exit_code 3).",
+      "enum": ["never_run", "current", "out_of_date"]
+    },
+    "exit_code": {
+      "description": "The exit code status returns: 0 current or never run, 3 out of date.",
+      "type": "integer"
+    },
+    "versions_from": {
+      "description": "Where the project's dependency versions come from now (a lockfile, requirements files, pyproject.toml, a virtual environment).",
+      "type": "string"
+    },
+    "coding_agent_model": {
+      "description": "The model the coding agent is set up with, read from its settings; null when no setting names one.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "cutoff", "spec", "source"],
+          "properties": {
+            "model": {"description": "The model id.", "type": ["string", "null"]},
+            "cutoff": {"description": "Its training cutoff.", "type": "string", "format": "date"},
+            "spec": {"description": "The model as --model takes it (provider:model).", "type": "string"},
+            "source": {"description": "The setting it was read from.", "type": "string"}
+          }
+        }
+      ]
+    },
+    "targets": {
+      "description": "One entry per instructions file (AGENTS.md, CLAUDE.md) that has or would get a block.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/target"}
+    }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file", "state", "format", "model", "cutoff", "cutoff_margin", "tool", "scope",
+        "versions_from", "edited", "packages", "problems", "notes"
+      ],
+      "properties": {
+        "file": {"description": "The file, relative to the project.", "type": "string"},
+        "state": {"description": "never_run (no block), current or out_of_date.", "enum": ["never_run", "current", "out_of_date"]},
+        "format": {"description": "The block's format version (1: written by 0.3); null without a block.", "type": ["integer", "null"]},
+        "model": {"description": "The model the notes were written for.", "type": ["string", "null"]},
+        "cutoff": {"description": "The cutoff the notes were written for.", "type": ["string", "null"]},
+        "cutoff_margin": {"description": "The margin (days before the cutoff) the notes were compared with; null without a block.", "type": ["integer", "null"]},
+        "tool": {"description": "The since-cutoff version that wrote the block.", "type": ["string", "null"]},
+        "scope": {"description": "used or imported: what the block notes (sync --scope).", "type": ["string", "null"]},
+        "versions_from": {"description": "Where the versions came from when the block was written.", "type": ["string", "null"]},
+        "edited": {"description": "Whether the block was edited by hand since since-cutoff wrote it; null without a block.", "type": ["boolean", "null"]},
+        "packages": {
+          "description": "Each package the block has notes for, compared with the version the project has now.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["package", "notes_for", "locked", "versions_from", "state"],
+            "properties": {
+              "package": {"type": "string"},
+              "notes_for": {"description": "The version the notes apply to.", "type": ["string", "null"]},
+              "locked": {"description": "The version the project has now; null when nothing pins it, or it is no longer a dependency.", "type": ["string", "null"]},
+              "versions_from": {"description": "The file that gives that version.", "type": ["string", "null"]},
+              "state": {"description": "current, out_of_date, orphan (no longer a dependency) or unpinned (nothing pins it, so status cannot compare it offline).", "enum": ["current", "out_of_date", "orphan", "unpinned"]}
+            }
+          }
+        },
+        "problems": {
+          "description": "Why the block is out of date; empty when it is current.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "text"],
+            "properties": {
+              "kind": {"description": "What changed: stale, orphan, dependencies_changed, versions_from_changed, margin_changed, old_format, run_block, model_changed, ...", "type": "string"},
+              "text": {"description": "The problem, in words.", "type": "string"}
+            }
+          }
+        },
+        "notes": {"description": "Remarks that do not make the block out of date (a hand edit, a block from 0.3).", "type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
