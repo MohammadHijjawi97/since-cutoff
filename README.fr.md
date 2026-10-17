@@ -304,8 +304,8 @@ pas être vérifié (PyPI injoignable), `sync` n'écrit rien et sort avec le cod
 `sync --json` exige `--yes`, `--check` ou `--dry-run` ; sans l'un d'eux, il sort avec le code 2
 sans rien demander. La sortie standard ne contient que du JSON, et reste vide quand sync échoue
 (une erreur d'usage, code 2, ou une erreur comme PyPI injoignable, code 1) ; la progression,
-les diffs et les erreurs vont sur stderr. L'objet contient `exit_code`
-et `targets`. Chaque cible indique `target`, `action`, `changed`, `edited`, `written`, `model`,
+les diffs et les erreurs vont sur stderr. L'objet contient `exit_code`, `tip` (ce que sync
+dit d'AGENTS.md et de CLAUDE.md, ou null) et `targets`. Chaque cible indique `target`, `action`, `changed`, `edited`, `written`, `model`,
 `cutoff`, `scope`, `notes`, `changes` (`package`, `done` et `state` de chaque paquet), `retest` et
 `diff_lines`. `written` distingue une proposition appliquée d'un aperçu ou d'une modification à la
 main refusée. Les codes de sortie habituels et le comportement de `--force` s'appliquent toujours.
@@ -341,7 +341,10 @@ dans AGENTS.md seul quand CLAUDE.md l'importe, et dans les deux fichiers sinon
 ([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)) ; `scan`, `sync` et
 `status` disent alors comment n'en garder qu'une copie : ajoutez la ligne `@AGENTS.md` à
 CLAUDE.md et lancez `since-cutoff unapply --target CLAUDE.md`. Un bloc déjà dans AGENTS.md seul
-y reste, et ils le signalent quand CLAUDE.md ne l'importe pas.
+y reste, et ils le signalent quand CLAUDE.md ne l'importe pas. Quand les deux fichiers ont un
+bloc et que CLAUDE.md importe ensuite AGENTS.md, ils signalent que CLAUDE.md en contient une
+deuxième copie, avec la même commande `unapply`. Un `@AGENTS.md` dans du code en ligne ou un
+bloc de code n'est pas une importation.
 
 ### Mesurer votre modèle
 
@@ -450,8 +453,11 @@ agent.
 Les dates limites d'entraînement proviennent de [models.dev](https://models.dev) (un instantané
 est inclus pour une utilisation hors ligne). `since-cutoff models sonnet` les affiche
 (`--makers` laisse de côté les passerelles et les revendeurs, `--json` sert aux scripts). Un
-modèle qu'une passerelle ou un revendeur répertorie prend la date limite de l'entrée de son
-fabricant, ou de n'importe quelle entrée qui en a une quand celle du fabricant n'en a pas encore ;
+modèle que plusieurs fournisseurs répertorient prend la date limite de l'entrée du fournisseur
+demandé (`opencode:glm-5.1`), sinon celle de son fabricant, sinon la plus ancienne qu'une
+passerelle ou un revendeur indique : plus de notes, le côté sûr. La ligne du modèle nomme
+une entrée qui n'est pas celle du fabricant, et `since-cutoff models <id>` se termine par
+celle que prend `--model <id>` ;
 `--cutoff 2025-07` remplace la date, et `since-cutoff scan --cutoff 2025-07` sans `--model`
 analyse par rapport à cette seule date. `--cutoff-margin 30` (la valeur par défaut ;
 `SINCE_CUTOFF_CUTOFF_MARGIN` la fixe aussi) compare depuis la dernière version publiée 30 jours ou

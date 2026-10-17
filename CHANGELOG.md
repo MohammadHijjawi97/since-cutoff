@@ -62,24 +62,38 @@
 - With both AGENTS.md and CLAUDE.md and no block yet, `sync` and `run --apply` write the block
   to both files when CLAUDE.md does not import AGENTS.md, and to AGENTS.md alone when it does,
   is not UTF-8 or is a link to AGENTS.md (#13): Claude Code reads only CLAUDE.md unless it
-  imports AGENTS.md with `@AGENTS.md` (outside code spans and fenced blocks, as Claude Code
-  reads imports), and Codex, Cursor and Copilot read only AGENTS.md. The block went to
-  AGENTS.md alone, where Claude Code never saw it. `scan`, `sync` and now `status` (its text
-  and `status --json`; `status --hook` stays quiet) say "CLAUDE.md does not import AGENTS.md,
-  so the notes go to both files: to keep one copy, add a line `@AGENTS.md` to CLAUDE.md and
-  run `since-cutoff unapply --target CLAUDE.md`". A block already in AGENTS.md alone stays the
-  only one, with the tip that Claude Code does not read it, now also from `status`.
-- The model registry takes the first listing of a model id that has a training cutoff, and
-  only among those prefers the requested provider, then the maker's own listing (#87). The
-  maker's entry for a new model often has no cutoff yet while a gateway's or reseller's has,
-  so `opencode/glm-5.1`, Together's and DeepInfra's GLM-5 and the routes of Qwen3.5-397B-A17B
-  stopped with "models.dev has no knowledge cutoff"; a dated snapshot without a cutoff
-  (`claude-sonnet-4-20250514`) takes the model's. A model the maker does not list is found in
-  the gateway's or reseller's own listing by its bare id: Amazon Bedrock's
-  `qwen.qwen3-coder-480b-a35b-v1:0`, Cloudflare's `@cf/meta/llama-3.2-3b-instruct`,
-  OpenRouter's `aion-labs/aion-rp-llama-3.1-8b`. `meta` is no longer an alias of `llama`:
-  models.dev has a provider `meta` of its own (Meta's Muse Spark models); Meta's Llama API
-  stays `llama`.
+  imports AGENTS.md with `@AGENTS.md`, and Codex, Cursor and Copilot read only AGENTS.md.
+  CLAUDE.md is read as Markdown, as Claude Code reads imports: not inside a code span (which
+  ends with its paragraph, so a stray backtick does not hide a later import) or a fenced block
+  (` ``` ` or `~~~`, closed by a fence of the same character at least as long), and after a
+  byte order mark. The block went to AGENTS.md alone, where Claude Code never saw it. `scan`,
+  `sync`, `run --apply` and now `status` (its text and `status --json`; `status --hook` stays
+  quiet) say "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one
+  copy, add a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target
+  CLAUDE.md`", and `sync --json` has it as `tip`. When both files have the block and CLAUDE.md
+  then imports AGENTS.md, they say "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a
+  second copy of the notes: run `since-cutoff unapply --target CLAUDE.md` to keep one". A
+  block already in AGENTS.md alone stays the only one, with the tip that Claude Code does not
+  read it, now also from `status`.
+- A model that models.dev lists several times, by its maker and by gateways and resellers,
+  takes the cutoff of the requested provider's own listing when it has one, also under the
+  provider's own spelling (`cloudflare-workers-ai:@cf/meta/llama-3.2-3b-instruct`,
+  `nvidia:meta/llama-3.2-3b-instruct`); else of the maker's own listing, for a dated snapshot
+  without a cutoff the maker's model (`claude-sonnet-4-20250514` takes `claude-sonnet-4`'s,
+  not a gateway's cutoff for the dated id); else the earliest cutoff among the listings that
+  have one, whichever route's spelling of the id is asked for (#87). The maker's entry for a
+  new model often has no cutoff yet while gateways' and resellers' have, and they disagree
+  (Qwen3.5-397B-A17B: 2025-01 to 2026-01): `opencode/glm-5.1`, Together's and DeepInfra's
+  GLM-5 and the routes of Qwen3.5-397B-A17B stopped with "models.dev has no knowledge
+  cutoff", and an earlier cutoff gives more notes, the safe side. The model line names a
+  listing that is not the maker's ("from models.dev, deepinfra's listing"), as do the MCP
+  tools, and `since-cutoff models <id>` ends with the listing `--model <id>` takes. A model
+  the maker does not list is found in the gateway's or reseller's own listing by its bare id:
+  Amazon Bedrock's `qwen.qwen3-coder-480b-a35b-v1:0`, Cloudflare's
+  `@cf/meta/llama-3.2-3b-instruct`, OpenRouter's `aion-labs/aion-rp-llama-3.1-8b`. `meta` is
+  no longer an alias of `llama`: models.dev has a provider `meta` of its own (Meta's Muse
+  Spark models), a maker whose listing is preferred and which `models --makers` lists; Meta's
+  Llama API stays `llama`.
 - `since-cutoff models` takes `--json` (#25): `{"source": ..., "models": [...]}`, each model
   with `provider`, `id`, `name`, `family`, `training_cutoff` as models.dev writes it,
   `cutoff_date` as since-cutoff uses it and `released`, in the table's order, whether or not

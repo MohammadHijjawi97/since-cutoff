@@ -78,7 +78,12 @@ call. These are client symptoms; their wording depends on the MCP client.
 
 `CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md`
 means the notes were written to AGENTS.md while CLAUDE.md does not import them. Add a line
-`@AGENTS.md` to CLAUDE.md to keep one copy, as the rest of the message says. See the
+`@AGENTS.md` to CLAUDE.md to keep one copy, as the rest of the message says.
+`CLAUDE.md does not import AGENTS.md, so the notes go to both files` means both files got the
+block so that every agent reads it;
+`CLAUDE.md imports AGENTS.md, so its since-cutoff block is a second copy of the notes`
+means the import was added after that. In either case, `since-cutoff unapply --target CLAUDE.md`
+(after adding the import) leaves one copy. See the
 [file-selection guidance](https://github.com/MohammadHijjawi97/since-cutoff#faq) for keeping
 notes in both files, and `agents_import_tip()` in
 [`notes.py`](https://github.com/MohammadHijjawi97/since-cutoff/blob/main/src/since_cutoff/notes.py)

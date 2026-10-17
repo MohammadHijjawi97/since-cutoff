@@ -854,7 +854,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
 
     from since_cutoff.cache import DiskCache
     from since_cutoff.engine import ERROR, STALE, TASK_WRITER_FAILED, ModelTarget
-    from since_cutoff.notes import apply_block, block_targets
+    from since_cutoff.notes import agents_import_tip, apply_block, block_targets
     from since_cutoff.project import load_project
     from since_cutoff.report import (
         fail_reason,
@@ -923,12 +923,16 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     if args.command == "run" and run is not None:
         if run.block:
             if args.apply:
-                for path in block_targets(project.root, args.target):
+                paths = block_targets(project.root, args.target)
+                for path in paths:
                     action = apply_block(path, run.block)
                     ui.print(
                         f"\n[green]✓[/green] {action.capitalize()} {_escape(str(path))} with "
                         f"{len(run.notes)} notes"
                     )
+                tip = agents_import_tip(project.root, paths)  # as sync says it (issue #13)
+                if tip:
+                    ui.print(f"[yellow]![/yellow] {_escape(tip)}.")
             elif not json_mode:
                 ui.print(
                     "\n[bold]Notes for AGENTS.md[/bold] [dim](run again with --apply to write them)[/dim]"
@@ -1186,10 +1190,16 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
     ]
     changed = [p for p in proposals if p.changed]
     written: set[str] = set()
+    # Both AGENTS.md and CLAUDE.md, and no `@AGENTS.md` in CLAUDE.md: how to keep one copy, or
+    # what Claude Code needs to read a block in AGENTS.md alone; or a second copy (issue #13).
+    tip = agents_import_tip(project.root, [t.path for t in targets])
+    if not any(p.block for p in proposals):
+        tip = None
 
     def finish(code: int) -> int:
         if args.json:
-            STDOUT.write(json.dumps(sync_json(proposals, code, written), indent=2) + "\n")
+            listed = sync_json(proposals, code, written, tip=tip)
+            STDOUT.write(json.dumps(listed, indent=2) + "\n")
         return code
 
     for p in changed:
@@ -1197,10 +1207,7 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         for line in diff_lines(p):
             out.print(_diff_text(line))
     out.print()
-    # Both AGENTS.md and CLAUDE.md, and no `@AGENTS.md` in CLAUDE.md: how to keep one copy, or
-    # what Claude Code needs to read a block in AGENTS.md alone (issue #13).
-    tip = agents_import_tip(project.root, [t.path for t in targets])
-    if tip and any(p.block for p in proposals):
+    if tip:
         out.print(f"[yellow]![/yellow] {_escape(tip)}.")
     edited = [p for p in changed if p.edited and not args.force]
     if edited:
@@ -1503,6 +1510,14 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
         )
     out.print(table)
     out.print(f"[dim]{len(models)} models (source: {_escape(registry.source)})[/dim]")
+    # Which of the listings `--model <query>` takes the cutoff of (issue #87).
+    used = registry.lookup(args.query) if args.query.strip() else None
+    if used is not None and used.knowledge is not None:
+        out.print(
+            f"[dim]--model {_escape(args.query)} takes the training cutoff of "
+            f"{_escape(used.provider)}'s listing {_escape(used.id)}, "
+            f"{_escape(used.knowledge_raw or '')}[/dim]"
+        )
     return 0
 
 

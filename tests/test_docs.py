@@ -280,6 +280,8 @@ def test_every_readme_says_how_to_install_run_and_what_the_cache_commands_are(na
         "run checks the model's answers with the basedpyright type checker, which is not",
         'installed: pip install "since-cutoff[run]", or uvx --with basedpyright since-cutoff run',
         "CLAUDE.md does not import AGENTS.md, so Claude Code does not read the notes in AGENTS.md",
+        "CLAUDE.md does not import AGENTS.md, so the notes go to both files",
+        "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a second copy of the notes",
     ),
 )
 def test_troubleshooting_quotes_current_source_text(fragment: str) -> None:

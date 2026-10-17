@@ -66,6 +66,7 @@ from since_cutoff.models import (
     ModelInfo,
     ModelRegistry,
     compare_date,
+    listing_note,
     parse_cutoff,
     parse_margin,
 )
@@ -578,7 +579,10 @@ class Tools:
             info, note = self._resolve_model(model)
             assert info.knowledge is not None
             source = self.registry.source.split(" (")[0]
-            label = f"training cutoff of {info.id}, from {source}"
+            listing = listing_note(info)
+            label = f"training cutoff of {info.id}, from {source}" + (
+                f" ({listing})" if listing else ""
+            )
             return Target(info.knowledge, label, info.id, note, margin=days)
         alternatives = f", or {needs}" if needs else ""
         raise SinceCutoffError(

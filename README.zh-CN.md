@@ -177,7 +177,7 @@ uvx --with basedpyright since-cutoff run
 
 区块被手动修改过时，`sync` 和 `sync --check` 会显示 diff，不写入任何内容，并以退出码 4 结束；`sync --force` 会替换它。说明所涉及的某个包无法检查时（例如 PyPI 无法访问），`sync` 不写入任何内容，并以退出码 1 结束。
 
-`sync --json` 需要搭配 `--yes`、`--check` 或 `--dry-run`；缺少其中之一时，它不询问，直接以退出码 2 结束。标准输出只包含 JSON；sync 失败时标准输出为空（用法错误，退出码 2；或其他错误，例如无法访问 PyPI，退出码 1）；进度、diff 和错误都输出到 stderr。对象包含 `exit_code` 和 `targets`。每个目标文件报告 `target`、`action`、`changed`、`edited`、`written`、`model`、`cutoff`、`scope`、`notes`、`changes`（每个包的 `package`、`done` 和 `state`）、`retest` 和 `diff_lines`。`written` 用来区分已应用的提议、预览和被拒绝的手动修改。通常的退出码和 `--force` 的行为仍然适用。
+`sync --json` 需要搭配 `--yes`、`--check` 或 `--dry-run`；缺少其中之一时，它不询问，直接以退出码 2 结束。标准输出只包含 JSON；sync 失败时标准输出为空（用法错误，退出码 2；或其他错误，例如无法访问 PyPI，退出码 1）；进度、diff 和错误都输出到 stderr。对象包含 `exit_code`、`tip`（sync 关于 AGENTS.md 和 CLAUDE.md 的提示，没有时为 null）和 `targets`。每个目标文件报告 `target`、`action`、`changed`、`edited`、`written`、`model`、`cutoff`、`scope`、`notes`、`changes`（每个包的 `package`、`done` 和 `state`）、`retest` 和 `diff_lines`。`written` 用来区分已应用的提议、预览和被拒绝的手动修改。通常的退出码和 `--force` 的行为仍然适用。
 
 `since-cutoff status` 不联网，也不读取代码：它列出每个包的说明所对应的版本和 lockfile 中的版本、其他依赖是否有变化，以及你的编程 Agent 所配置的模型的训练截止日期是否早于说明所用的截止日期（并给出相应的 `sync --model` 命令）。`status --json` 供脚本使用。`status --hook` 只在说明过时时输出一行，并且总是以 0 退出，例如：
 
@@ -191,7 +191,7 @@ since-cutoff: the library notes in AGENTS.md are out of date: anthropic 1.8.0 in
 - `sync --suggestions` 会加上锁定版本中那些只是与被移除内容相似的名称，并标为 `[not confirmed]`。区块会记录这两个选择，之后的 sync 会沿用它们。
 - `since-cutoff run --apply` 写入的说明带有 `[type-checked]` 标签。只要它所在的包版本不变、你的代码仍在用那个 API，`sync` 就会保留它，代替同一 API 由 diff 得出的说明。
 
-Claude Code 会读取 CLAUDE.md；只有在没有 CLAUDE.md，或者 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时，才会读取 AGENTS.md（[记忆文档](https://code.claude.com/docs/en/memory)，英文）；Codex、Cursor 和 Copilot 读取 AGENTS.md。两个文件都在、还没有说明块时，如果 CLAUDE.md 导入了 AGENTS.md，说明只写进 AGENTS.md；没有导入时，两个文件都写（[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)），`scan`、`sync` 和 `status` 会说明怎样只保留一份：在 CLAUDE.md 中加一行 `@AGENTS.md`，再运行 `since-cutoff unapply --target CLAUDE.md`。已经只在 AGENTS.md 中的说明块会留在那里；CLAUDE.md 没有导入它时，它们会给出提示。
+Claude Code 会读取 CLAUDE.md；只有在没有 CLAUDE.md，或者 CLAUDE.md 用一行 `@AGENTS.md` 导入了 AGENTS.md 时，才会读取 AGENTS.md（[记忆文档](https://code.claude.com/docs/en/memory)，英文）；Codex、Cursor 和 Copilot 读取 AGENTS.md。两个文件都在、还没有说明块时，如果 CLAUDE.md 导入了 AGENTS.md，说明只写进 AGENTS.md；没有导入时，两个文件都写（[#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)），`scan`、`sync` 和 `status` 会说明怎样只保留一份：在 CLAUDE.md 中加一行 `@AGENTS.md`，再运行 `since-cutoff unapply --target CLAUDE.md`。已经只在 AGENTS.md 中的说明块会留在那里；CLAUDE.md 没有导入它时，它们会给出提示。两个文件都有说明块、之后 CLAUDE.md 又导入了 AGENTS.md 时，它们会提示 CLAUDE.md 中是第二份副本，并给出同样的 `unapply` 命令。代码片段或代码块中的 `@AGENTS.md` 不算导入。
 
 ### 测量你的模型
 
@@ -257,7 +257,7 @@ npx skills add MohammadHijjawi97/since-cutoff
 
 如果没有任何设置指定模型，它会使用 Claude Code 的默认模型，并明确说明这一点。它只读取这些文件中的模型字段；遇到无法识别的模型名称时会停止运行，并在提示中指出是哪个设置。Agent 通过其他服务（GitHub Copilot、Amazon Bedrock、Vertex AI）使用的模型，会按开发它的厂商来命名，因此 `run` 调用的是该厂商的 API（`openai:` 需要 `OPENAI_API_KEY`）。`sync` 会沿用区块写入时的模型，不管你的 Agent 现在用的是哪个。
 
-训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期（`--makers` 不列出网关和转售商，`--json` 供脚本使用）。网关或转售商收录的模型采用其制造商条目的截止日期；制造商的条目还没有截止日期时，采用任何有截止日期的条目。`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`--cutoff-margin 30`（默认值；也可以用 `SINCE_CUTOFF_CUTOFF_MARGIN` 设置）从截止日期前 30 天或更早发布的最新版本开始对比，因为模型对截止日期前几周的了解最少；`--cutoff-margin 0` 则从截止日期当天的最新版本开始对比。模型行会同时显示这两个日期。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
+训练截止日期来自 [models.dev](https://models.dev)（内置一份快照，可离线使用）。`since-cutoff models sonnet` 可以列出这些日期（`--makers` 不列出网关和转售商，`--json` 供脚本使用）。多个服务商收录的模型，采用所请求服务商条目的截止日期（`opencode:glm-5.1`）；没有时采用其制造商的条目；再没有时，采用网关或转售商所列的最早截止日期：说明更多，更稳妥。模型行会写出不属于制造商的条目，`since-cutoff models <id>` 的最后一行会写出 `--model <id>` 采用的条目。`--cutoff 2025-07` 可以覆盖截止日期；不加 `--model` 运行 `since-cutoff scan --cutoff 2025-07`，则只按这个日期扫描。`--cutoff-margin 30`（默认值；也可以用 `SINCE_CUTOFF_CUTOFF_MARGIN` 设置）从截止日期前 30 天或更早发布的最新版本开始对比，因为模型对截止日期前几周的了解最少；`--cutoff-margin 0` 则从截止日期当天的最新版本开始对比。模型行会同时显示这两个日期。`scan` 和 `sync` 只需要训练截止日期，所以也接受不带服务商的模型 id（`claude-haiku-4-5`、`sonnet`），以及带有 models.dev 收录的任一服务商前缀的模型 id（例如 `google:gemini-2.5-pro`，也包括 Amazon Bedrock 和 Vertex AI 的 id）；`run` 则需要上表中的服务商。
 
 ## 常见问题
 

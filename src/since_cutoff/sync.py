@@ -814,7 +814,8 @@ def _model_change(target: TargetFile, detected: DetectedModel | None) -> str | N
 def note_import_tip(root: Path, statuses: Sequence[TargetStatus]) -> None:
     """Say in ``status`` what ``scan`` and ``sync`` say (notes.agents_import_tip) when CLAUDE.md
     does not import AGENTS.md: that both files have the block and how to keep one copy, or
-    that Claude Code does not read the block in AGENTS.md. Added to the AGENTS.md block's
+    that Claude Code does not read the block in AGENTS.md; and when it does import it and both
+    files have the block, that CLAUDE.md's is a second copy. Added to the AGENTS.md block's
     notes, so the text and ``status --json`` both have it (#13)."""
     tip = agents_import_tip(root, [s.target.path for s in statuses])
     if tip is None:
@@ -886,10 +887,14 @@ def hook_line(statuses: Sequence[TargetStatus]) -> str | None:
     )
 
 
-def sync_json(proposals: Sequence[Proposal], code: int, written: set[str]) -> dict[str, Any]:
-    """Describe proposals separately from writes, including check/dry-run refusals."""
+def sync_json(
+    proposals: Sequence[Proposal], code: int, written: set[str], *, tip: str | None = None
+) -> dict[str, Any]:
+    """Describe proposals separately from writes, including check/dry-run refusals; ``tip``
+    is what sync says about AGENTS.md and CLAUDE.md (notes.agents_import_tip), or None."""
     return {
         "exit_code": code,
+        "tip": tip,
         "targets": [
             {
                 "target": p.target.name,

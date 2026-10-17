@@ -1010,6 +1010,24 @@ def test_run_apply_updates_the_block_where_it_is(tmp_path, scripted_cli) -> None
     assert claude.startswith("# Claude\n\n" + BLOCK_START) and "old notes" not in claude
 
 
+@pytest.mark.pyright
+def test_run_apply_says_how_to_keep_one_copy(tmp_path, scripted_cli, capsys) -> None:
+    """Issue #13: with AGENTS.md and a CLAUDE.md that does not import it, run --apply writes
+    the block to both, and says what sync says about it."""
+    from since_cutoff.notes import TWO_COPIES_TIP
+    from tests.conftest import ScriptedModel
+
+    root = make_app(tmp_path, pins=("toylib==2.0",))
+    write(root / "AGENTS.md", MINE)
+    write(root / "CLAUDE.md", "# Claude\n\nUse tabs.\n")
+    argv = ["run", str(root), *SONNET, "--max-probes", "1", "--heldout", "1"]
+    scripted_cli.append(ScriptedModel())
+    assert cli.main([*argv, "--regression", "0", "--apply"]) == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert BLOCK_START in agents(root) and BLOCK_START in (root / "CLAUDE.md").read_text()
+    assert f"! {TWO_COPIES_TIP}." in out
+
+
 # ------------------------------------------------------------ reading the file
 def test_a_file_that_is_not_utf8_is_reported(tmp_path) -> None:
     from since_cutoff.notes import NotesFileError, has_markers, read_text

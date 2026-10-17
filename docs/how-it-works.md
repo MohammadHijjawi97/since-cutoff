@@ -45,6 +45,15 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
    (`2025-07` means 31 July 2025). Without `--model`, the model is the one your coding agent is
    set up with (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
+   models.dev often lists one model several times: by its maker and by gateways and resellers,
+   which disagree. The cutoff is the requested provider's listing's when it has one
+   (`opencode:glm-5.1`, `cloudflare-workers-ai:@cf/meta/llama-3.2-3b-instruct`), else the
+   maker's own (for a dated snapshot without a cutoff, the maker's model:
+   `claude-sonnet-4-20250514` takes `claude-sonnet-4`'s), else the earliest that any gateway or
+   reseller lists, whichever spelling of the id is asked for: an earlier cutoff gives more
+   notes, the safe side ([#87](https://github.com/MohammadHijjawi97/since-cutoff/issues/87)).
+   The model line names a listing that is not the maker's ("from models.dev, deepinfra's
+   listing"), and `since-cutoff models <id>` ends with the listing `--model <id>` takes.
 3. **The comparison release** is the newest final, non-yanked release published at least 30
    days before the cutoff date (PyPI upload time): the latest release published on or before
    the cutoff minus the margin. The margin is `--cutoff-margin DAYS`, or
@@ -384,10 +393,14 @@ file:
    ([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)). Claude Code reads
    CLAUDE.md, and AGENTS.md only when there is no CLAUDE.md or when CLAUDE.md imports it with
    `@AGENTS.md` outside code ([memory docs](https://code.claude.com/docs/en/memory)); Codex,
-   Cursor and Copilot read AGENTS.md. When CLAUDE.md does not import AGENTS.md, `scan`, `sync`
-   and `status` say how to keep one copy (the import, then
+   Cursor and Copilot read AGENTS.md. CLAUDE.md is read as Markdown: not inside a code span
+   (which ends with its paragraph) or a fenced block (closed by a fence of the same character
+   at least as long), and after a byte order mark. When CLAUDE.md does not import AGENTS.md,
+   `scan`, `sync`, `run --apply` and `status` say how to keep one copy (the import, then
    `since-cutoff unapply --target CLAUDE.md`), or, for a block in AGENTS.md alone, that Claude
-   Code does not read it.
+   Code does not read it; when it does import AGENTS.md and both files still have a block,
+   they say that CLAUDE.md's is a second copy, with the same `unapply` command. `sync --json`
+   has the same text as `tip`.
 2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
    teammates whose agents use other models do not rewrite it back and forth; with no block, the
    model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and

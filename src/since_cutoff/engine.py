@@ -78,6 +78,7 @@ from since_cutoff.models import (
     ModelInfo,
     ModelRegistry,
     compare_date,
+    listing_note,
 )
 from since_cutoff.notes import (
     IMPORTED_APIS,
@@ -1219,9 +1220,10 @@ class Engine:
             )
         info = self.registry.require(model_id, provider_name or None)
         assert info.knowledge is not None
-        return ModelTarget(
-            spec, info.id, info.knowledge, "models.dev" + source_note, info, effort, margin
-        )
+        # Whose listing the cutoff is from, when not the maker's (issue #87).
+        listing = listing_note(info)
+        source = "models.dev" + (f", {listing}" if listing else "") + source_note
+        return ModelTarget(spec, info.id, info.knowledge, source, info, effort, margin)
 
     def _check_spec(self, allow_calls: bool) -> None:
         """:func:`check_spec` for the tested model, with the vendors the registry knows (read

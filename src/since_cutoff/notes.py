@@ -1689,11 +1689,18 @@ def block_targets(root: Path, explicit: str | None = None) -> list[Path]:
 # import, which it does not read inside a code span or a fenced block. Lines keep a ``\r``
 # (files are read as they are), which a closing fence may end with.
 _AGENTS_IMPORT = re.compile(r"(?<!\S)@(?:\./)?AGENTS\.md(?![\w/-])")
-_FENCED = re.compile(r"(?ms)^[ \t]{0,3}(`{3,}|~{3,}).*?(?:^[ \t]{0,3}\1[ \t]*\r?$|\Z)")
-_CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
+# A fenced block closes at a fence of the same character at least as long as the opening one
+# (Markdown), or at the end of the file.
+_FENCED = re.compile(
+    r"(?ms)^[ \t]{0,3}((`)\2{2,}|(~)\3{2,}).*?(?:^[ \t]{0,3}\1(?:\2|\3)*[ \t]*\r?$|\Z)"
+)
+# A code span does not run past a blank line (the end of a paragraph): a stray backtick does
+# not pair with one in a later paragraph and hide what is between them.
+_CODE_SPAN = re.compile(r"(`+)(?!`)(?:(?!\n[ \t]*\r?\n).)+?(?<!`)\1(?!`)", re.S)
 
 
 def _imports(text: str) -> bool:
+    text = text.removeprefix("\ufeff")  # the byte order mark some editors put first
     return bool(_AGENTS_IMPORT.search(_CODE_SPAN.sub("", _FENCED.sub("", text))))
 
 
@@ -1737,19 +1744,29 @@ TWO_COPIES_TIP = (
     "CLAUDE.md does not import AGENTS.md, so the notes go to both files: to keep one copy, add "
     "a line `@AGENTS.md` to CLAUDE.md and run `since-cutoff unapply --target CLAUDE.md`"
 )
+# Both files have the block, and CLAUDE.md imports AGENTS.md (added after the blocks were).
+SECOND_COPY_TIP = (
+    "CLAUDE.md imports AGENTS.md, so its since-cutoff block is a second copy of the notes: run "
+    "`since-cutoff unapply --target CLAUDE.md` to keep one"
+)
 
 
 def agents_import_tip(root: Path, targets: Sequence[Path]) -> str | None:
-    """What to do when CLAUDE.md does not import AGENTS.md (:func:`imports_agents`) and the
-    notes go to AGENTS.md (``targets``): :data:`TWO_COPIES_TIP` when they go to CLAUDE.md
-    too, :data:`AGENTS_IMPORT_TIP` when they do not (a block already in AGENTS.md alone), as
-    Claude Code then reads only CLAUDE.md. None otherwise, also when CLAUDE.md is a link to
-    AGENTS.md or cannot be read.
+    """What to do when the notes go to AGENTS.md (``targets``) and CLAUDE.md does not import
+    it (:func:`imports_agents`): :data:`TWO_COPIES_TIP` when they go to CLAUDE.md too,
+    :data:`AGENTS_IMPORT_TIP` when they do not (a block already in AGENTS.md alone), as Claude
+    Code then reads only CLAUDE.md. When they go to both files and CLAUDE.md does import
+    AGENTS.md (a block in each, then the import): :data:`SECOND_COPY_TIP`. None otherwise,
+    also when CLAUDE.md is a link to AGENTS.md or cannot be read.
     """
     agents, claude = root / "AGENTS.md", root / "CLAUDE.md"
-    if agents not in targets or not _misses_agents(agents, claude):
+    if agents not in targets:
         return None
-    return TWO_COPIES_TIP if claude in targets else AGENTS_IMPORT_TIP
+    if _misses_agents(agents, claude):
+        return TWO_COPIES_TIP if claude in targets else AGENTS_IMPORT_TIP
+    if claude in targets and not _same_file(agents, claude) and imports_agents(claude):
+        return SECOND_COPY_TIP
+    return None
 
 
 _MARKER_LINE = re.compile(

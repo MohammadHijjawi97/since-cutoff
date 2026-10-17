@@ -284,7 +284,8 @@ checked (PyPI unreachable), `sync` writes nothing and exits with code 1.
 `sync --json` requires `--yes`, `--check` or `--dry-run`; without one it exits with code 2
 without prompting. Stdout contains only JSON, and stays empty when sync fails (a usage error,
 exit code 2, or an error such as PyPI being unreachable, exit code 1); progress, diffs and
-errors go to stderr. The object contains `exit_code` and `targets`. Each target
+errors go to stderr. The object contains `exit_code`, `tip` (what sync says about
+AGENTS.md and CLAUDE.md, or null) and `targets`. Each target
 reports `target`, `action`, `changed`, `edited`, `written`, `model`, `cutoff`, `scope`,
 `notes`, `changes` (each package's `package`, `done` and `state`), `retest` and `diff_lines`.
 `written` distinguishes an applied proposal from a preview or a refused hand edit. The usual
@@ -319,7 +320,9 @@ imports it, and to both files when it does not
 ([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)); `scan`, `sync` and
 `status` then say how to keep one copy: add the line `@AGENTS.md` to CLAUDE.md and run
 `since-cutoff unapply --target CLAUDE.md`. A block already in AGENTS.md alone stays there, and
-they say so when CLAUDE.md does not import it.
+they say so when CLAUDE.md does not import it. When both files have a block and CLAUDE.md
+then imports AGENTS.md, they say CLAUDE.md holds a second copy, with the same `unapply`
+command. An `@AGENTS.md` in a code span or a fenced block is not an import.
 
 ### Measure your model
 
@@ -422,9 +425,11 @@ Vertex AI) is named after its maker, so `run` calls the maker's API (`openai:` n
 
 Training cutoffs come from [models.dev](https://models.dev) (a snapshot is bundled for offline
 use). `since-cutoff models sonnet` lists them (`--makers` leaves out gateways and resellers,
-`--json` is for scripts). A model that a gateway or reseller lists takes the cutoff of its
-maker's listing, or of any listing that has one when the maker's has none yet. `--cutoff 2025-07`
-overrides the date, and `since-cutoff scan --cutoff 2025-07` without `--model` scans against that
+`--json` is for scripts). A model that several providers list takes the cutoff of the
+requested provider's listing (`opencode:glm-5.1`), else of its maker's, else the earliest
+that a gateway or reseller lists: more notes, the safe side. The model line names a listing
+that is not the maker's, and `since-cutoff models <id>` ends with the one `--model <id>`
+takes. `--cutoff 2025-07` overrides the date, and `since-cutoff scan --cutoff 2025-07` without `--model` scans against that
 date alone. `--cutoff-margin 30` (the default; `SINCE_CUTOFF_CUTOFF_MARGIN` sets it too) compares from the
 latest release published 30 days or more before the cutoff, since models know the weeks before
 their cutoff least; `--cutoff-margin 0` compares from the latest release at the cutoff itself.

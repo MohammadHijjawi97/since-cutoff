@@ -297,7 +297,8 @@ las notas (PyPI inaccesible), `sync` no escribe nada y sale con el código 1.
 `sync --json` requiere `--yes`, `--check` o `--dry-run`; sin uno de ellos sale con el código 2 sin
 preguntar. La salida estándar contiene solo JSON, y queda vacía cuando sync falla (un error de
 uso, código 2, o un error como PyPI inaccesible, código 1); el progreso, los diffs y los
-errores van a stderr. El objeto contiene `exit_code` y `targets`. Cada
+errores van a stderr. El objeto contiene `exit_code`, `tip` (lo que sync dice sobre
+AGENTS.md y CLAUDE.md, o null) y `targets`. Cada
 destino informa de `target`, `action`, `changed`, `edited`, `written`, `model`, `cutoff`, `scope`,
 `notes`, `changes` (`package`, `done` y `state` de cada paquete), `retest` y `diff_lines`.
 `written` distingue una propuesta aplicada de una vista previa o de una edición a mano rechazada.
@@ -333,7 +334,10 @@ las notas van solo a AGENTS.md cuando CLAUDE.md lo importa, y a los dos archivos
 ([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)); `scan`, `sync` y
 `status` indican entonces cómo quedarse con una sola copia: añade la línea `@AGENTS.md` a
 CLAUDE.md y ejecuta `since-cutoff unapply --target CLAUDE.md`. Un bloque que ya está solo en
-AGENTS.md se queda ahí, y lo avisan cuando CLAUDE.md no lo importa.
+AGENTS.md se queda ahí, y lo avisan cuando CLAUDE.md no lo importa. Cuando los dos archivos
+tienen un bloque y CLAUDE.md pasa a importar AGENTS.md, avisan de que CLAUDE.md tiene una
+segunda copia, con el mismo comando `unapply`. Un `@AGENTS.md` dentro de código en línea o
+de un bloque de código no es una importación.
 
 ### Medir tu modelo
 
@@ -443,8 +447,11 @@ modelo para el que se escribió un bloque, sea cual sea el que use ahora tu agen
 Las fechas de corte de entrenamiento se obtienen de [models.dev](https://models.dev) (el paquete
 incluye una instantánea para usarla sin conexión). `since-cutoff models sonnet` las lista
 (`--makers` deja fuera las pasarelas y los revendedores, `--json` es para scripts). Un modelo que
-lista una pasarela o un revendedor toma la fecha de corte de la entrada de su fabricante, o de
-cualquier entrada que la tenga cuando la del fabricante aún no la tiene.
+listan varios proveedores toma la fecha de corte de la entrada del proveedor pedido
+(`opencode:glm-5.1`), si no la de su fabricante, y si no la más temprana que liste una
+pasarela o un revendedor: más notas, el lado seguro. La línea del modelo nombra una entrada
+que no es la del fabricante, y `since-cutoff models <id>` termina con la que toma
+`--model <id>`.
 `--cutoff 2025-07` fija la fecha manualmente, y `since-cutoff scan --cutoff 2025-07` sin `--model`
 analiza tomando solo esa fecha como referencia. `--cutoff-margin 30` (el valor por defecto;
 `SINCE_CUTOFF_CUTOFF_MARGIN` también lo fija) compara desde la última versión publicada 30 días o

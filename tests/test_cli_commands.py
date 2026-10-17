@@ -297,6 +297,18 @@ def test_models_prints_a_table_in_a_terminal(models_cache, monkeypatch) -> None:
     assert " ".join(rows[-1]) == "2 models (source: models.dev (cached))"
 
 
+def test_models_says_whose_listing_a_model_id_takes(models_cache, monkeypatch) -> None:
+    """Issue #87: of the listings shown, the one ``--model <query>`` takes the cutoff of."""
+    screen = io.StringIO()
+    terminal = Console(file=screen, force_terminal=True, color_system=None, width=200)
+    monkeypatch.setattr(cli, "_console", lambda output: terminal)
+    assert cli.main(["models", "llama-3.3-70b-versatile", "--offline"]) == 0
+    assert screen.getvalue().splitlines()[-1] == (
+        "--model llama-3.3-70b-versatile takes the training cutoff of llama's listing "
+        "llama-3.3-70b-versatile, 2024-12"
+    )
+
+
 # ----------------------------------------------------------------- unapply
 BLOCK = "<!-- since-cutoff:start -->\nx\n<!-- since-cutoff:end -->\n"
 

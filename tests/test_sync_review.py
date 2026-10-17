@@ -37,6 +37,7 @@ from since_cutoff.notes import (
     BLOCK_END,
     BLOCK_START,
     NOTE_MODEL,
+    SECOND_COPY_TIP,
     TAG_TYPE_CHECKED,
     TWO_COPIES_TIP,
     Note,
@@ -517,6 +518,68 @@ def test_a_claude_md_that_is_not_utf8_gets_no_block(sc, status, tmp_path) -> Non
     assert status(root)[0] == EXIT_OK
 
 
+@pytest.mark.parametrize(
+    ("text", "imports"),
+    [
+        # A byte order mark before the import on the first line.
+        ("\ufeff@AGENTS.md\n", True),
+        ("\ufeff# Claude\r\n\r\n@AGENTS.md\r\n", True),
+        # A stray backtick does not pair with one in a later paragraph across the import.
+        ("Quote a backtick (`) as `` ` ``.\n\n@AGENTS.md\n\nRun `make`.\n", True),
+        ("A stray ` here.\n\n@AGENTS.md\n\nand ` there.\n", True),
+        # Within a paragraph a code span may still run over a line break.
+        ("Write `\n@AGENTS.md\n` to import it.\n", False),
+        # A closing fence longer than the opening one closes it.
+        ("```\nmake test\n`````\n\n@AGENTS.md\n", True),
+        ("~~~\nmake test\n~~~~\n@AGENTS.md\n", True),
+        # A ~~~ fence, which only a ~~~ fence closes; a shorter one does not.
+        ("~~~\n@AGENTS.md\n~~~\n", False),
+        ("~~~\n```\n@AGENTS.md\n```\n~~~\n", False),
+        ("````\n```\n@AGENTS.md\n````\n", False),
+    ],
+)
+def test_the_import_is_read_as_markdown_reads_it(tmp_path, text, imports) -> None:
+    """As Claude Code reads CLAUDE.md, a Markdown document: code spans end with their
+    paragraph, a fence closes at a fence of its own character at least as long, and a byte
+    order mark is not text before the ``@``."""
+    (tmp_path / "CLAUDE.md").write_bytes(text.encode())
+    assert imports_agents(tmp_path / "CLAUDE.md") is imports
+
+
+def test_a_second_copy_in_claude_md_after_the_import_is_added(
+    sc, status, tmp_path, cache, pypi
+) -> None:
+    """Both files got the block (CLAUDE.md did not import AGENTS.md); then the import is added
+    and the copy in CLAUDE.md left. Claude Code reads both blocks: scan, sync and status say
+    so, with the command that removes the second copy, and stop once it is gone."""
+    root = make_app(tmp_path)
+    write(root / "AGENTS.md", MINE)
+    write(root / "CLAUDE.md", "# Claude\n\nUse tabs.\n")
+    assert sc("sync", root, *SONNET, "--yes")[0] == EXIT_OK
+    write(root / "CLAUDE.md", (root / "CLAUDE.md").read_text() + "\n@AGENTS.md\n")
+    targets = [root / "AGENTS.md", root / "CLAUDE.md"]
+    assert block_targets(root) == targets
+    assert agents_import_tip(root, targets) == SECOND_COPY_TIP
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK and f"! {SECOND_COPY_TIP}." in " ".join(out.split())
+    assert "unapply --target CLAUDE.md" in SECOND_COPY_TIP
+    assert f"  ({SECOND_COPY_TIP})" in status(root)[1].splitlines()
+    code, out = status(root, "--json")
+    notes = {t["file"]: t["notes"] for t in json.loads(out)["targets"]}
+    assert SECOND_COPY_TIP in notes["AGENTS.md"]
+    scan = scan_app(root, cache, pypi, date(2025, 7, 31))
+    assert f"{SECOND_COPY_TIP}." in _said(scan_lines(scan))
+    code, out = sc("sync", root, "--json", "--dry-run")  # sync --json says it as well
+    assert code == EXIT_OK and json.loads(out)["tip"] == SECOND_COPY_TIP
+    assert sc("unapply", root, "--target", "CLAUDE.md")[0] == EXIT_OK
+    code, out = sc("sync", root, "--json", "--dry-run")
+    assert code == EXIT_OK and json.loads(out)["tip"] is None
+    code, out = sc("sync", root, "--yes")
+    assert code == EXIT_OK and "second copy" not in out
+    assert "second copy" not in status(root)[1]
+    assert "second copy" not in _said(scan_lines(scan))
+
+
 # ---------------------------------------------------------------- wording
 def test_sync_without_a_model_setting_does_not_say_it_tests_the_model(sc, tmp_path) -> None:
     root = make_app(tmp_path)
@@ -535,6 +598,36 @@ def test_fail_on_may_be_given_twice(sc, tmp_path, capsys) -> None:
     assert sc(*argv, "--fail-on", "old-form")[0] == EXIT_OK
     code, out = sc(*argv, "--fail-on", "used", "--fail-on", "old-form")
     assert code == 3 and "--fail-on used: your code uses 1 API" in out
+
+
+def test_sync_says_a_metapackage_is_information_not_a_warning(sc, tmp_path, monkeypatch) -> None:
+    """A metapackage's parts are dependencies of their own, checked like any other: sync says
+    so after a ``•``, not as a dependency that could not be checked, after a ``!``."""
+    root = make_app(tmp_path)
+    reason = (
+        "meta 1.0 is a metapackage with no API of its own; its parts are dependencies of "
+        "their own, checked like any other: toylib"
+    )
+    make_engine = cli.Engine
+
+    def engine(settings: Any, **kw: Any) -> Engine:
+        made = make_engine(settings, **kw)
+        scan = made.scan
+
+        def with_a_metapackage(project: Project, target: ModelTarget) -> ScanResult:
+            result = scan(project, target)
+            result.packages.append(PackageScan("meta", "1.0", "uv.lock", True, reason=reason))
+            return result
+
+        made.scan = with_a_metapackage  # type: ignore[method-assign]
+        return made
+
+    monkeypatch.setattr(cli, "Engine", engine)
+    code, out = sc("sync", root, *SONNET, "--dry-run")
+    lines = [" ".join(line.split()) for line in out.splitlines()]
+    assert code == EXIT_OK and f"• {reason}" in lines
+    assert not any(line.startswith("!") and "meta 1.0" in line for line in lines)
+    assert "could not be checked" not in out
 
 
 def test_a_scan_warning_is_printed_once(sc, tmp_path) -> None:
