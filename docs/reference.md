@@ -8,7 +8,7 @@ row here, or no longer reads one that has.
 
 | Group | Variable | Read by | Effect when set |
 |---|---|---|---|
-| since-cutoff | `SINCE_CUTOFF_MODEL` | Model detection in `run`, `scan`, `sync` and `status` | The model as `provider:model`, ahead of every coding-agent setting; `--model` takes precedence. `sync` keeps the model of an existing block unless `--model` or `--cutoff` is given, and `scan --cutoff` without `--model` uses no model. |
+| since-cutoff | `SINCE_CUTOFF_MODEL` | Model detection in `run`, `scan`, `sync` and `status` | The model as `provider:model`, ahead of every coding-agent setting; `--model` takes precedence. `sync` keeps the model of an existing block unless `--model` or `--cutoff` is given, and `scan` or `sync` with `--cutoff` and no `--model` uses no model. |
 | since-cutoff | `SINCE_CUTOFF_CUTOFF_MARGIN` | `run`, `scan`, `sync`, `status`; the MCP tools | How many days before the training cutoff the comparison release must have been published: a whole number, 0 or more (default 30; 0 compares from the latest release at the cutoff). `--cutoff-margin`, or a tool's `cutoff_margin`, takes precedence. Any other value is an error. |
 | since-cutoff | `SINCE_CUTOFF_CACHE` | Every command and MCP tool that uses the cache; `cache path`, `cache info` and `cache clear` | The cache root, with `~` expanded, instead of the platform default (see `XDG_CACHE_HOME` and `LOCALAPPDATA`). |
 | since-cutoff | `SINCE_CUTOFF_CACHE_MAX_MB` | Source extraction in `run`, `scan`, `sync` and the MCP tools; `cache info` | The cap on the extracted package sources, in MB (default 2048; 0 or less: no cap). Over it, after a new version is extracted, the least recently used trees are removed, never one the running scan uses or one used in the last hour (another process may be reading it); the first removal prints one line. A value that is not a number gives a warning and the default. |
@@ -34,8 +34,8 @@ row here, or no longer reads one that has.
 | GitHub Actions | `GITHUB_WORKSPACE` | `scan --annotate github` and `scan --markdown` | Annotations name files relative to the workspace, and the summary's links point at them there, when the project is inside it. |
 | GitHub Actions | `GITHUB_REPOSITORY`, `GITHUB_SHA` | `scan --markdown` | The repository and commit the summary links source files at; both are needed for the links. |
 | GitHub Actions | `GITHUB_SERVER_URL` | `scan --markdown` | The server of those links; default `https://github.com`. |
-| Network | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | Python's `urllib`, for every request (PyPI, models.dev, the model APIs) | The proxy, as Python reads it (the lowercase names too). since-cutoff does not read them itself. |
-| Network | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Python's `ssl`, for the same requests | A CA bundle or folder to trust as well, such as a company's. since-cutoff does not read them itself. |
+| Network | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | Python's `urllib`, for every request (PyPI, models.dev, the model APIs) | The proxy, as Python reads it (the lowercase names too); without them, on Windows and macOS, the system's proxy settings. since-cutoff does not read them itself. |
+| Network | `SSL_CERT_FILE`, `SSL_CERT_DIR` | Python's `ssl`, for the same requests | The CA certificates to trust, as a bundle file or a folder (one with a company's certificate, say), in place of OpenSSL's default ones; on Windows, the system's certificate store is trusted too. since-cutoff does not read them itself. |
 
 The model-detection variables are `hosts.ENV_VARS`. Detection ranks environment variables, then
 the project's settings, then the user's; between equally specific settings the agent order is
@@ -62,7 +62,7 @@ folder or above it.
 | `.gemini/settings.json`; the user's `~/.gemini/settings.json` | Model detection | Read only: `model`, a string or `model.name`. |
 | `opencode.json`, `opencode.jsonc`; the same in the user's `~/.config/opencode/` | Model detection | Read only: `model`. The user's folder follows `XDG_CONFIG_HOME`. |
 | `.aider.conf.yml`; the user's `~/.aider.conf.yml` | Model detection | Read only: `model:`. |
-| `AGENTS.md` and `CLAUDE.md`, or the `--target` file | `sync`, `status`, `run --apply`, `unapply` | Without `--target`, the block goes into the files that already have one; else into `AGENTS.md`, or `CLAUDE.md` when only that one exists, and into both when both exist and `CLAUDE.md` does not import `AGENTS.md` with `@AGENTS.md` (#13). `sync` writes after you confirm, or with `--yes`; `--check` and `--dry-run` write nothing. `run --apply` writes the block; `unapply` removes it, from both files unless `--target` names one. Text outside the block stays byte for byte. |
+| `AGENTS.md` and `CLAUDE.md`, or the `--target` file | `sync`, `status`, `run --apply`, `unapply` | Without `--target`, the block goes into the files that already have one; else into `AGENTS.md`, or `CLAUDE.md` when only that one exists, and into both when both exist and `CLAUDE.md` does not import `AGENTS.md` with `@AGENTS.md` (#13). `sync` writes after you confirm, or with `--yes`; `--check` and `--dry-run` write nothing, and `sync --json` prints to stdout what it proposed and wrote. `run --apply` writes the block; `unapply` removes it, from both files unless `--target` names one. Text outside the block stays byte for byte. |
 | `.since-cutoff/report.md`, `.since-cutoff/results.json`, `.since-cutoff/.gitignore` | `run` and `scan` | Written on every run and scan; `--out` names another folder, relative to the project. The `.gitignore` (`*`) keeps the reports out of git, and is written only into a folder since-cutoff created or one named `.since-cutoff`. `sync`, `status` and the MCP tools write no reports. |
 | `--markdown FILE` (`scan`), `--tasks-out FILE` and `--tasks-from FILE` (`run`) | `scan`, `run` | Relative to the current folder. `--markdown` and `--tasks-out` write the file (`--markdown -` writes to stdout); `--tasks-from` is read only. |
 | Cache `pypi/` | Package lookup | PyPI's metadata: release lists (used for 12 hours; an older copy when PyPI cannot be reached), project URLs and summaries. |
@@ -84,19 +84,19 @@ notes blocks. See [PRIVACY.md](../PRIVACY.md) for what is sent where.
 
 ## Exit codes
 
-These are the CLI's `EXAMPLES` and the `sync.EXIT_*` constants. On every command, `--help` and
-`--version` exit with 0, a usage error (an unknown option or value, options that do not go
-together) with 2, an interrupted command (Ctrl+C) with 130, and one whose output was closed
-early (piped into `head`) with 141, also when it would otherwise succeed. `since-cutoff`
+These are the CLI's `EXAMPLES` and the `sync.EXIT_*` constants. `--help`, on every command, and
+`since-cutoff --version` exit with 0, a usage error (an unknown option or value, options that do
+not go together) with 2, an interrupted command (Ctrl+C) with 130, and one whose output was
+closed early (piped into `head`) with 141, also when it would otherwise succeed. `since-cutoff`
 without a command is `since-cutoff run`.
 
 | Command | Codes and meaning |
 |---|---|
 | `run` | 0: done; 1: an error, including no model answer that could be scored (every model call failed, no API change could be probed, or the task writer failed for half of them) and no type checker (basedpyright: `pip install "since-cutoff[run]"`); 2: usage error; 3: stale API use found, with `--fail-on-stale`. |
 | `scan` | 0: done; 1: an error, including no dependency that could be checked; 2: usage error; 3: the `--fail-on` condition: `changes` (a dependency changed its API after the cutoff; `--fail-on-changes` is the same), `used` (your code uses a changed API) or `old-form` (it uses one in the old form). |
-| `sync` | 0: the notes are current or were written, or `--dry-run` without `--check`; 1: an error; 2: usage error, including `--json` without `--yes`, `--check` or `--dry-run`; 3: out of date and not written (`--check`, the answer was no, or there was no terminal to ask in); 4: a block edited by hand would change, and nothing was written without `--force` (`--dry-run` without `--check` exits with 0). With `--json`, the output's `exit_code` is the exit code. |
-| `status` | 0: the notes are current, or there is no block (`since-cutoff sync --check` says whether the code needs one); 1: an error; 2: usage error; 3: a block is out of date. `--hook` always exits with 0, also when the project cannot be read. |
-| `unapply` | 0: removed, or no block to remove; 1: an error (the folder does not exist, or a file cannot be written); 2: usage error. |
+| `sync` | 0: the notes are current or were written, or `--dry-run` without `--check`; 1: an error; 2: usage error, including `--json` without `--yes`, `--check` or `--dry-run`; 3: out of date and not written (`--check`, the answer was no, or there was no terminal to ask in); 4: a block edited by hand would change, and nothing was written without `--force` (`--dry-run` without `--check` exits with 0). With `--json`, the JSON's `exit_code` is the exit code; an error (1) prints no JSON. |
+| `status` | 0: the notes are current, or there is no block (`since-cutoff sync --check` says whether the code needs one); 1: an error; 2: usage error; 3: a block is out of date. `--hook` exits with 0 unless the options are wrong, also when the project cannot be read. |
+| `unapply` | 0: removed, or no block to remove; 1: an error (the folder does not exist, a file cannot be read or written, or its since-cutoff markers cannot be read); 2: usage error. |
 | `models`, `cache` | 0: done; 1: an error; 2: usage error, including `cache path` or `cache info` with `--sources`, `--diffs` or `--pypi`, which go with `clear`. |
 | `mcp` | 0 when the client closes the connection. A tool that fails answers with an error result; the server keeps running. |
 

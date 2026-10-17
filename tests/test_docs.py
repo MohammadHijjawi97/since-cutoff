@@ -93,7 +93,8 @@ def _env_reads(sources: Iterable[str]) -> set[str]:
     """The environment variables the code reads by name: ``os.environ.get("X")``,
     ``os.getenv("X")``, ``os.environ["X"]``, ``"X" in os.environ``, the same on a mapping given
     for the environment (``env.get("X")``, ``(env or {}).get("X")``), hosts' ``places.var("X")``,
-    and each of them with a module constant for the name (``os.environ.get(CUTOFF_MARGIN_VAR)``).
+    and each of them with a module constant for the name, from any of the modules
+    (``os.environ.get(CUTOFF_MARGIN_VAR)``, ``os.environ.get(models.CUTOFF_MARGIN_VAR)``).
     """
     trees = [ast.parse(source) for source in sources]
     constants = {
@@ -111,6 +112,8 @@ def _env_reads(sources: Iterable[str]) -> set[str]:
         value = node.value if isinstance(node, ast.Constant) else None
         if isinstance(node, ast.Name):
             value = constants.get(node.id)
+        elif isinstance(node, ast.Attribute):  # models.CUTOFF_MARGIN_VAR
+            value = constants.get(node.attr)
         return value if isinstance(value, str) and _ENV_NAME.fullmatch(value) else None
 
     def environment(node: ast.expr) -> bool:
@@ -177,8 +180,12 @@ f = (os.environ if env is None else env).get("SINCE_CUTOFF_MAPPING")
 g = (env or {}).get("SINCE_CUTOFF_OR"), self.env.get("SINCE_CUTOFF_ATTRIBUTE")
 h = places.var("SINCE_CUTOFF_VAR")
 i = settings.get("NOT_THE_ENVIRONMENT"), os.environ.get("lowercase"), os.environ.get(name)
+j = os.environ.get(models.MODULE_VAR), environ.get("SINCE_CUTOFF_BARE"), getenv(MODULE_VAR)
 """
-    assert _env_reads([source]) == {
+    other_module = 'MODULE_VAR = "SINCE_CUTOFF_MODULE"\n'
+    assert _env_reads([source, other_module]) == {
+        "SINCE_CUTOFF_MODULE",
+        "SINCE_CUTOFF_BARE",
         "SINCE_CUTOFF_CONSTANT",
         "SINCE_CUTOFF_TYPED",
         "SINCE_CUTOFF_GET",
