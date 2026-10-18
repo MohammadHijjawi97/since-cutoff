@@ -1,6 +1,6 @@
 # since-cutoff for pre-commit (https://pre-commit.com). The hooks run when a lockfile,
-# requirements file or pyproject.toml changes (the notes hooks also when AGENTS.md or CLAUDE.md
-# does). None calls a model.
+# requirements file, conda environment file or pyproject.toml changes (the notes hooks also when
+# AGENTS.md or CLAUDE.md does). None calls a model.
 #
 # since-cutoff-scan lists API changes in your pinned dependencies since your coding model's
 # training cutoff. Pass the model in `args`, e.g. [--model=anthropic:claude-sonnet-4-5]; add
@@ -24,7 +24,7 @@
   entry: since-cutoff scan
   language: python
   pass_filenames: false
-  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|pyproject\.toml)$'
+  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml)$'
   verbose: true
 - id: since-cutoff-sync
   name: since-cutoff sync
@@ -32,11 +32,11 @@
   entry: since-cutoff sync --yes
   language: python
   pass_filenames: false
-  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|pyproject\.toml|AGENTS\.md|CLAUDE\.md)$'
+  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|AGENTS\.md|CLAUDE\.md)$'
 - id: since-cutoff-status
   name: since-cutoff status
   description: Check offline that the notes in AGENTS.md / CLAUDE.md match the lockfile (exit code 3 when they do not).
   entry: since-cutoff status
   language: python
   pass_filenames: false
-  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|pyproject\.toml|AGENTS\.md|CLAUDE\.md)$'
+  files: '(^|/)(uv\.lock|poetry\.lock|pdm\.lock|pylock(\.[^/]+)?\.toml|Pipfile(\.lock)?|requirements[^/]*\.txt|requirements/[^/]+\.txt|environment\.ya?ml|pyproject\.toml|AGENTS\.md|CLAUDE\.md)$'

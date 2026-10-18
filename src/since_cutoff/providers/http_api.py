@@ -85,8 +85,9 @@ class OpenAICompatibleProvider:
         self.provider_name = provider
         self.model = model
         self.timeout = timeout
-        env_url = os.environ.get("OPENAI_BASE_URL") if provider == "openai" else None
-        self.base_url = (env_url or base_url).rstrip("/")
+        # ``base_url`` is final: make_provider has chosen between --base-url, OPENAI_BASE_URL
+        # and the provider's default.
+        self.base_url = base_url.rstrip("/")
         self.api_key = os.environ.get(key_env) if key_env else None
         if key_env and not self.api_key:
             raise ProviderError(f"{key_env} is not set")

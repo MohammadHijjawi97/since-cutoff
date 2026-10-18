@@ -37,67 +37,104 @@ welcome, and first-time contributors are very welcome.
 | `report.py` | Terminal, Markdown and JSON reports |
 | `mcp_server.py` | The `since-cutoff mcp` server and its tools (`Tools` diffs in-process; `Tools(processes=True)`, as the server uses, in worker processes) |
 | `providers/` | Model providers (Claude Code CLI, Anthropic, OpenAI-compatible APIs) |
-| `cli.py` | Command-line interface |
+| `cache.py` | The disk cache: JSON entries, the sizes `cache info` shows, and the cap on the extracted sources |
+| `cli.py` | Command-line interface; it imports the modules above only in the commands that use them, so that `--help` and `status --hook` start fast |
+| `progress.py` | The CLI's progress output with rich: stage lines, a live bar in a terminal, lines in a log |
 
 ### Module relationships and I/O boundaries
 
-The arrows below represent **imports or calls present in the source**, not an
-assertion that every branch executes for every command. `scan`, `sync`,
-`status` and the MCP tools do not invoke a model; `Engine.run()` does.
+The diagram groups the stages by command: a **scan** follows the lockfile to the
+release at the model's knowledge cutoff, diffs its API, finds uses in the
+project and prepares evidence-backed notes. Only **run** invokes a model.
+Solid arrows show imports or calls verified in the source; dotted arrows show
+the *order of stages orchestrated by the engine*, not additional direct imports.
+Modules shared by both paths are shown with scan to keep the diagram compact.
 
 ```mermaid
-flowchart LR
+flowchart TB
   CLI["cli.py (commands)"] --> ENG["engine.py (scan / run)"]
   MCP["mcp_server.py (tools)"] --> ENG
-  CLI --> REPORT["report.py (outputs)"]
-  CLI --> SYNC["sync.py (notes/status)"]
+  CLI --> REPORT["report.py (output)"]
+  CLI --> SYNC["sync.py (notes / status)"]
   SYNC --> ENG
-  ENG --> PROJECT["project.py (lockfiles / code imports)"]
-  ENG --> HOSTS["hosts.py (agent model settings)"]
-  ENG --> MODELS["models.py (training cutoffs)"]
-  ENG --> PYPI["pypi.py (releases / sources)"]
-  ENG --> API["apidiff.py (static API changes)"]
-  ENG --> SEL["selection.py (used changes)"]
-  ENG --> NOTES["notes.py (evidence-tagged notes)"]
-  ENG --> CACHE["cache.py (disk cache)"]
-  ENG --> PROMPTS["prompts.py (run tasks)"]
-  ENG --> CHECK["checker.py (static type checks)"]
-  ENG --> BASE["baselines.py (comparators)"]
-  ENG --> TASK["taskfile.py (task I/O)"]
-  ENG --> PROVIDERS["providers/ (run only)"]
-  PYPI --> NET["net.py (PyPI / downloads)"]
-  MODELS --> NET
-  PROVIDERS --> MODEL(("model API / Claude CLI"))
-  subgraph "Additional result and aggregation modules"
-    STATS["stats.py (statistical analysis)"]
+
+  subgraph SCAN["scan: lockfile to versioned notes"]
+    direction LR
+    PROJECT["project.py (lockfiles / imports)"]
+    PYPI["pypi.py (releases / sources)"]
+    API["apidiff.py (static API diff)"]
+    SEL["selection.py (uses in code)"]
+    NOTES["notes.py (evidence / notes)"]
+    CACHE["cache.py (disk cache)"]
+    MODELS["models.py (cutoff registry)"]
+    HOSTS["hosts.py (agent settings)"]
+    PROJECT -.-> PYPI -.-> API -.-> SEL -.-> NOTES
   end
+
+  subgraph RUN["run: model probes and evaluation"]
+    direction LR
+    PROMPTS["prompts.py (run tasks)"]
+    PROVIDERS["providers/ (model invocation)"]
+    CHECK["checker.py (type checks)"]
+    BASE["baselines.py (comparators)"]
+    TASK["taskfile.py (task files)"]
+    STATS["stats.py (statistics)"]
+    PROMPTS -.-> PROVIDERS -.-> CHECK -.-> BASE -.-> TASK
+  end
+
+  ENG --> PROJECT
+  ENG --> PYPI
+  ENG --> API
+  ENG --> SEL
+  ENG --> NOTES
+  ENG --> CACHE
+  ENG --> MODELS
+  ENG --> HOSTS
+  ENG --> PROMPTS
+  ENG --> PROVIDERS
+  ENG --> CHECK
+  ENG --> BASE
+  ENG --> TASK
+  NOTES -.-> REPORT
+  NOTES -.-> SYNC
+  REPORT --> STATS
+  PYPI --> NET["net.py (PyPI / models.dev / HTTP)"]
+  MODELS --> NET
+  PROVIDERS --> NET
+  PROVIDERS --> MODEL(("model API / Claude CLI"))
+
   classDef network stroke:#d78400,stroke-width:2px,stroke-dasharray:5 4;
   classDef model stroke:#c358ad,stroke-width:3px;
   class NET network;
   class MODEL model;
 ```
 
-Network boundaries (dashed outline) are reached by `pypi.py` and `models.py`
-through `net.py`; the model boundary (solid outline) is reached via
-`providers/` from the `run` path. `stats.py` computes result statistics;
-its absence of a direct arrow deliberately avoids inventing a direct
-import from the engine. UI/report output is handled by `report.py` through
-the CLI; note synchronization enters via `sync.py`.
+The network boundary (dashed outline) is reached through \`net.py\` by
+\`pypi.py\` (PyPI), \`models.py\` (models.dev), and the HTTP providers in
+\`providers/http_api.py\` (Anthropic and OpenAI-compatible APIs). The Claude Code
+provider instead starts the \`claude\` CLI. Only \`Engine.run()\` calls model
+providers; \`scan\`, \`sync\` and \`status\` do not.
 
-Source cross-checks: `cli.py` imports `engine`, `sync` and `report`;
-`mcp_server.py` imports `engine`; `sync.py` imports `engine`;
-`engine.py` imports the project, host/model, PyPI, diff, selection,
-notes, cache, prompt, checker, baseline, taskfile and provider modules;
-`pypi.py` and `models.py` explicitly import `net`.
+The source-level relationships are: \`cli.py\` calls the engine, report and sync;
+\`mcp_server.py\` and \`sync.py\` use the engine; the engine imports the scan and
+run modules shown; \`report.py\` imports \`stats.py\`; and \`pypi.py\`, \`models.py\`,
+and \`providers/http_api.py\` import \`net.py\`. The dotted stage order is a
+readable summary of \`Engine.scan()\` / \`Engine.run()\`, not an extra dependency
+graph.
 
 ## Development setup
+
+See the [environment, files and exit-code reference](docs/reference.md) for runtime settings.
 
 ```bash
 git clone https://github.com/MohammadHijjawi97/since-cutoff
 cd since-cutoff
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e . pytest pytest-cov hypothesis ruff mypy
+pip install -e ".[run]" pytest pytest-cov hypothesis ruff mypy
 ```
+
+`[run]` adds basedpyright, which `since-cutoff run` and the tests marked `pyright` need; the
+other commands do without it.
 
 ## Checks
 
@@ -132,6 +169,20 @@ and the test pins every dependency the scan reads from it. To add a project, fet
 at a commit (not a branch), cut them down to what makes the project hard to read (keeping each
 kept line as it is), write the `SOURCE.md`, and add its table to `GOLDEN`. The fixtures ship in
 the sdist, so keep them small (the test allows 300 KB for all of them).
+
+`tests/fixtures/diffs` holds real API diffs that tests read instead of PyPI: mcp 1.28.1 -> 2.2.0,
+the `dependency_switched` change of openai 2.44.0 -> 3.19.2, and httpx 0.27.2 -> 0.28.1 and
+click 8.1.8 -> 8.2.0, whose changelogs `tests/test_golden_diffs.py` checks them against (each
+file at most 150 KB: the fixtures ship in the sdist). They are diffed from the two releases
+alone, without the distributions a release star-imports (`engine.Sibling`): a scan reads
+mcp-types next to mcp 2.2.0 and reports its renames under `mcp.types` too, which the fixture
+would not hold within its size. After a `DIFF_SCHEMA` bump, or
+an `apidiff.py` change that changes what they report, re-record them from PyPI with
+`python scripts/record_diff_fixtures.py` (`--check` writes nothing and exits with code 1 when one
+would change; `pytest -m network` runs the same check), then read the fixtures' diff and update
+the tests and docs that quote them. To add a pair, write a file there with its `package`,
+`from_version` and `to_version` (and `kinds`, to keep only those changes) and run the script
+with its file name.
 
 Run one file or one test while you work: `pytest tests/test_project.py -k conda -q`.
 CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so keep paths
@@ -173,8 +224,9 @@ CI runs the same checks on Linux, macOS and Windows with Python 3.10 to 3.13, so
      `gemini-extension.json`, and the skill's `metadata.version` in
      `skills/since-cutoff/SKILL.md`;
    - the pinned MCP launchers `.mcp.json` and `mcp.json` (`since-cutoff==X.Y.Z`);
-   - the README pins: the pre-commit `rev: vX.Y.Z` in `README.md` and `README.zh-CN.md`, and
-     the `since-cutoff-version` default in the action's input table;
+   - the README pins, in each of the four READMEs (`README.md`, `README.zh-CN.md`,
+     `README.es.md` and `README.fr.md`): the pre-commit `rev: vX.Y.Z` and the
+     `since-cutoff-version` default in the action's input table;
    - for 0.4.0 only: rename `hooks/hooks.json.in` to `hooks/hooks.json` (the plugin's
      SessionStart hook runs `since-cutoff status`, which 0.4.0 added), and from then on keep
      its `since-cutoff==X.Y.Z` pin current;

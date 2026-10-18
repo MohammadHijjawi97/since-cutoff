@@ -1,5 +1,5 @@
 {
- "schema": 19,
+ "schema": 21,
  "package": "mcp",
  "from_version": "1.28.1",
  "to_version": "2.2.0",
@@ -31,6 +31,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp",
     "mcp.client.auth.OAuthClientProvider",
@@ -329,7 +330,8 @@
     ],
     "still_named_at": [],
     "still_named_count": 0
-   }
+   },
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -355,6 +357,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.McpError",
     "mcp.shared.exceptions.McpError"
@@ -374,7 +377,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -400,6 +404,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.cli.claude.MCP_PACKAGE"
    ],
@@ -413,7 +418,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -439,6 +445,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.JWTParameters"
    ],
@@ -452,7 +459,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -478,6 +486,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.RFC7523OAuthClientProvider"
    ],
@@ -494,7 +503,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -520,6 +530,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.oauth2.OAuthContext.timeout"
    ],
@@ -533,7 +544,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -559,6 +571,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.experimental"
    ],
@@ -572,7 +585,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -600,6 +614,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.add_response_router",
     "mcp.ServerSession.add_response_router",
@@ -616,7 +631,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -642,6 +658,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.experimental",
     "mcp.client.session.ClientSession.experimental"
@@ -656,7 +673,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -682,6 +700,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.get_server_capabilities",
     "mcp.client.session.ClientSession.get_server_capabilities"
@@ -696,7 +715,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -722,6 +742,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess"
    ],
@@ -735,7 +756,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -761,6 +783,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.ACCEPT"
    ],
@@ -774,7 +797,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -800,6 +824,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.CONTENT_TYPE"
    ],
@@ -813,7 +838,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -839,6 +865,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.GetSessionIdCallback"
    ],
@@ -852,7 +879,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -878,6 +906,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.JSON"
    ],
@@ -891,7 +920,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -917,6 +947,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.MCP_PROTOCOL_VERSION"
    ],
@@ -930,7 +961,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -956,6 +988,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.headers"
    ],
@@ -969,7 +1002,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -995,6 +1029,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.sse_read_timeout"
    ],
@@ -1008,7 +1043,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1034,6 +1070,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.SSE"
    ],
@@ -1047,7 +1084,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1073,6 +1111,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.get_session_id"
    ],
@@ -1086,7 +1125,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1112,6 +1152,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.protocol_version"
    ],
@@ -1125,7 +1166,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1151,6 +1193,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.streamablehttp_client"
    ],
@@ -1166,7 +1209,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1192,6 +1236,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.websocket"
    ],
@@ -1205,7 +1250,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1231,6 +1277,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.__aenter__",
     "mcp.os.win32.utilities.FallbackProcess.__aenter__"
@@ -1245,7 +1292,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1271,6 +1319,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.__aexit__",
     "mcp.os.win32.utilities.FallbackProcess.__aexit__"
@@ -1285,7 +1334,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1311,6 +1361,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.stderr",
     "mcp.os.win32.utilities.FallbackProcess.stderr"
@@ -1325,7 +1376,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1351,6 +1403,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.stdin_raw",
     "mcp.os.win32.utilities.FallbackProcess.stdin_raw"
@@ -1365,7 +1418,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1391,6 +1445,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.FallbackProcess.stdout_raw",
     "mcp.os.win32.utilities.FallbackProcess.stdout_raw"
@@ -1405,7 +1460,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1431,6 +1487,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.os.win32.utilities.JobHandle"
    ],
@@ -1444,7 +1501,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1470,6 +1528,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.os.win32.utilities.terminate_windows_process"
    ],
@@ -1485,7 +1544,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1511,6 +1571,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.FastMCP",
     "mcp.server.fastmcp.FastMCP",
@@ -1531,7 +1592,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1557,6 +1619,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.auth.handlers.authorize.AnyUrlModel"
    ],
@@ -1570,7 +1633,90 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
+  },
+  {
+   "package": "mcp",
+   "from_version": "1.28.1",
+   "to_version": "2.2.0",
+   "kind": "removed",
+   "path": "mcp.server.auth.handlers.register.RegistrationRequest.root",
+   "name": "root",
+   "owner": "RegistrationRequest",
+   "parameter": null,
+   "old_signature": "root: OAuthClientMetadata",
+   "new_signature": null,
+   "old_doc": null,
+   "new_doc": null,
+   "moved_to": null,
+   "deprecation": null,
+   "hint": null,
+   "suggestions": [],
+   "occurrences": 1,
+   "also": [],
+   "old_kind": null,
+   "new_kind": null,
+   "namesake": null,
+   "deprecated_by": null,
+   "call_form": null,
+   "call_form_only": null,
+   "import_paths": [
+    "mcp.server.auth.handlers.register.RegistrationRequest.root"
+   ],
+   "hint_source": null,
+   "move_evidence": null,
+   "alias_of": null,
+   "still_handled_at": null,
+   "still_handled_text": null,
+   "library_names": [],
+   "hint_file": null,
+   "deprecation_file": null,
+   "renamed": false,
+   "request_extras": null,
+   "dependency": null,
+   "tier": "internal"
+  },
+  {
+   "package": "mcp",
+   "from_version": "1.28.1",
+   "to_version": "2.2.0",
+   "kind": "removed",
+   "path": "mcp.server.auth.handlers.token.TokenSuccessResponse.root",
+   "name": "root",
+   "owner": "TokenSuccessResponse",
+   "parameter": null,
+   "old_signature": "root: OAuthToken",
+   "new_signature": null,
+   "old_doc": null,
+   "new_doc": null,
+   "moved_to": null,
+   "deprecation": null,
+   "hint": null,
+   "suggestions": [],
+   "occurrences": 1,
+   "also": [],
+   "old_kind": null,
+   "new_kind": null,
+   "namesake": null,
+   "deprecated_by": null,
+   "call_form": null,
+   "call_form_only": null,
+   "import_paths": [
+    "mcp.server.auth.handlers.token.TokenSuccessResponse.root"
+   ],
+   "hint_source": null,
+   "move_evidence": null,
+   "alias_of": null,
+   "still_handled_at": null,
+   "still_handled_text": null,
+   "library_names": [],
+   "hint_file": null,
+   "deprecation_file": null,
+   "renamed": false,
+   "request_extras": null,
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1596,6 +1742,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.experimental"
    ],
@@ -1609,7 +1756,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1635,6 +1783,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.Audio",
     "mcp.server.fastmcp.utilities.types.Audio"
@@ -1653,7 +1802,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1679,6 +1829,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.Context",
     "mcp.server.fastmcp.server.Context"
@@ -1697,7 +1848,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1723,6 +1875,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.FastMCP",
     "mcp.server.fastmcp.FastMCP",
@@ -1738,7 +1891,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1764,6 +1918,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.types.Icon",
     "mcp.server.fastmcp.Icon",
@@ -1779,7 +1934,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1805,6 +1961,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.Image",
     "mcp.server.fastmcp.utilities.types.Image"
@@ -1823,7 +1980,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1849,6 +2007,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.exceptions"
    ],
@@ -1867,7 +2026,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -1893,6 +2053,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.prompts"
    ],
@@ -1911,7 +2072,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1937,6 +2099,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.resources"
    ],
@@ -1955,7 +2118,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -1981,6 +2145,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.server"
    ],
@@ -1999,7 +2164,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2025,6 +2191,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.tools"
    ],
@@ -2043,7 +2210,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2069,6 +2237,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.fastmcp.utilities"
    ],
@@ -2087,7 +2256,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2113,6 +2283,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.experimental"
    ],
@@ -2126,7 +2297,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2152,6 +2324,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.func_inspection"
    ],
@@ -2165,7 +2338,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2191,6 +2365,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.CombinationContent"
    ],
@@ -2204,7 +2379,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2230,6 +2406,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.call_tool",
     "mcp.server.lowlevel.Server.call_tool",
@@ -2245,7 +2422,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2271,6 +2449,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.completion",
     "mcp.server.lowlevel.Server.completion",
@@ -2286,7 +2465,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2312,6 +2492,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.experimental",
     "mcp.server.lowlevel.Server.experimental",
@@ -2327,7 +2508,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2353,6 +2535,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.get_prompt",
     "mcp.server.lowlevel.Server.get_prompt",
@@ -2368,7 +2551,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2394,6 +2578,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_prompts",
     "mcp.server.lowlevel.Server.list_prompts",
@@ -2409,7 +2594,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2435,6 +2621,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_resource_templates",
     "mcp.server.lowlevel.Server.list_resource_templates",
@@ -2450,7 +2637,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2476,6 +2664,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_resources",
     "mcp.server.lowlevel.Server.list_resources",
@@ -2491,7 +2680,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2517,6 +2707,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.list_tools",
     "mcp.server.lowlevel.Server.list_tools",
@@ -2532,7 +2723,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2558,6 +2750,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.notification_handlers",
     "mcp.server.lowlevel.Server.notification_handlers",
@@ -2573,7 +2766,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2599,6 +2793,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.progress_notification",
     "mcp.server.lowlevel.Server.progress_notification",
@@ -2614,7 +2809,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2640,6 +2836,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.read_resource",
     "mcp.server.lowlevel.Server.read_resource",
@@ -2655,7 +2852,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2681,6 +2879,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.request_context",
     "mcp.server.lowlevel.Server.request_context",
@@ -2696,7 +2895,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2722,6 +2922,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.request_handlers",
     "mcp.server.lowlevel.Server.request_handlers",
@@ -2737,7 +2938,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2763,6 +2965,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.set_logging_level",
     "mcp.server.lowlevel.Server.set_logging_level",
@@ -2778,7 +2981,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2804,6 +3008,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.subscribe_resource",
     "mcp.server.lowlevel.Server.subscribe_resource",
@@ -2819,7 +3024,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2845,6 +3051,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.unsubscribe_resource",
     "mcp.server.lowlevel.Server.unsubscribe_resource",
@@ -2860,7 +3067,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -2886,6 +3094,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.StructuredContent"
    ],
@@ -2899,7 +3108,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2925,6 +3135,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.UnstructuredContent"
    ],
@@ -2938,7 +3149,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -2964,6 +3176,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.lowlevel.server.request_ctx"
    ],
@@ -2977,7 +3190,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3003,6 +3217,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.session.InitializationState"
    ],
@@ -3016,7 +3231,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3042,6 +3258,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.session.ServerRequestResponder"
    ],
@@ -3055,7 +3272,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3081,6 +3299,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__aenter__",
     "mcp.server.session.ServerSession.__aenter__"
@@ -3095,7 +3314,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3121,6 +3341,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__aexit__",
     "mcp.server.session.ServerSession.__aexit__"
@@ -3135,7 +3356,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3161,6 +3383,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.experimental",
     "mcp.server.session.ServerSession.experimental"
@@ -3175,7 +3398,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3201,6 +3425,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.incoming_messages",
     "mcp.server.session.ServerSession.incoming_messages"
@@ -3215,7 +3440,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3241,6 +3467,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.send_message",
     "mcp.server.session.ServerSession.send_message"
@@ -3255,7 +3482,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3281,6 +3509,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.websocket"
    ],
@@ -3294,7 +3523,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3320,6 +3550,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.auth.OAuthClientMetadata.validate_redirect_uri"
    ],
@@ -3333,7 +3564,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3359,6 +3591,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.auth.OAuthClientMetadata.validate_scope"
    ],
@@ -3372,7 +3605,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3398,6 +3632,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.context.RequestContext"
    ],
@@ -3411,7 +3646,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3437,6 +3673,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.McpError",
     "mcp.shared.exceptions.McpError"
@@ -3456,7 +3693,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3482,6 +3720,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.experimental"
    ],
@@ -3495,7 +3734,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3521,6 +3761,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.memory.create_connected_server_and_client_session"
    ],
@@ -3534,7 +3775,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3560,6 +3802,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.progress"
    ],
@@ -3573,7 +3816,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3599,6 +3843,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.response_router"
    ],
@@ -3612,7 +3857,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3638,6 +3884,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.session"
    ],
@@ -3651,7 +3898,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3677,6 +3925,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.shared.version"
    ],
@@ -3690,7 +3939,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -3718,6 +3968,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider.__init__"
    ],
@@ -3731,7 +3982,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3759,6 +4011,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.extensions.client_credentials.PrivateKeyJWTOAuthProvider.__init__"
    ],
@@ -3772,7 +4025,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3798,6 +4052,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.OAuthClientProvider.__init__",
     "mcp.client.auth.oauth2.OAuthClientProvider.__init__"
@@ -3812,7 +4067,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3838,6 +4094,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.auth.oauth2.OAuthContext.__init__"
    ],
@@ -3851,7 +4108,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3877,6 +4135,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.__init__",
     "mcp.client.ClientSession.__init__",
@@ -3892,7 +4151,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3918,6 +4178,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_prompts",
     "mcp.client.ClientSession.list_prompts",
@@ -3935,7 +4196,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -3961,6 +4223,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_resource_templates",
     "mcp.client.ClientSession.list_resource_templates",
@@ -3978,7 +4241,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4004,6 +4268,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_resources",
     "mcp.client.ClientSession.list_resources",
@@ -4021,7 +4286,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4047,6 +4313,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.list_tools",
     "mcp.client.ClientSession.list_tools",
@@ -4064,7 +4331,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4083,17 +4351,24 @@
    "deprecation": null,
    "hint": null,
    "suggestions": [],
-   "occurrences": 1,
-   "also": [],
+   "occurrences": 3,
+   "also": [
+    "mcp.ClientSession.send_notification",
+    "mcp.ServerSession.send_notification",
+    "mcp.server.session.ServerSession.send_notification"
+   ],
    "old_kind": null,
    "new_kind": null,
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.send_notification",
+    "mcp.ServerSession.send_notification",
     "mcp.client.ClientSession.send_notification",
     "mcp.client.session.ClientSession.send_notification",
+    "mcp.server.session.ServerSession.send_notification",
     "mcp.shared.session.BaseSession.send_notification"
    ],
    "hint_source": null,
@@ -4106,7 +4381,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4132,6 +4408,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSessionGroup.call_tool",
     "mcp.client.session_group.ClientSessionGroup.call_tool"
@@ -4146,7 +4423,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4172,6 +4450,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.__init__"
    ],
@@ -4185,7 +4464,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4211,6 +4491,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.RequestContext.__init__"
    ],
@@ -4224,7 +4505,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4250,6 +4532,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4263,7 +4546,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4289,6 +4573,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4302,7 +4587,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4328,6 +4614,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4341,7 +4628,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4367,6 +4655,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.streamable_http.StreamableHTTPTransport.__init__"
    ],
@@ -4380,7 +4669,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4406,6 +4696,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.client.stdio.terminate_windows_process_tree",
     "mcp.os.win32.utilities.terminate_windows_process_tree"
@@ -4420,7 +4711,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4446,6 +4738,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.Server.run",
     "mcp.server.lowlevel.Server.run",
@@ -4461,7 +4754,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4487,6 +4781,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4501,7 +4796,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4527,6 +4823,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4541,7 +4838,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4567,6 +4865,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4581,7 +4880,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4607,6 +4907,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.__init__",
     "mcp.server.session.ServerSession.__init__"
@@ -4621,7 +4922,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4649,6 +4951,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.elicit",
     "mcp.server.session.ServerSession.elicit"
@@ -4663,7 +4966,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4691,6 +4995,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.elicit_form",
     "mcp.server.session.ServerSession.elicit_form"
@@ -4705,7 +5010,8 @@
    "deprecation_file": null,
    "renamed": true,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4731,6 +5037,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.server.auth.handlers.token.TokenRequest"
    ],
@@ -4744,7 +5051,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "internal"
   },
   {
    "package": "mcp",
@@ -4770,6 +5078,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.send_progress_notification",
     "mcp.client.ClientSession.send_progress_notification",
@@ -4785,7 +5094,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4811,6 +5121,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.send_roots_list_changed",
     "mcp.client.ClientSession.send_roots_list_changed",
@@ -4826,7 +5137,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4852,6 +5164,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.set_logging_level",
     "mcp.client.ClientSession.set_logging_level",
@@ -4867,7 +5180,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4893,6 +5207,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.subscribe_resource",
     "mcp.client.ClientSession.subscribe_resource",
@@ -4910,7 +5225,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4936,6 +5252,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ClientSession.unsubscribe_resource",
     "mcp.client.ClientSession.unsubscribe_resource",
@@ -4953,7 +5270,8 @@
    "deprecation_file": "mcp/client/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -4979,6 +5297,11 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": "__init__(self, name: str, *, version: str = '', title: str | None = None, description: str | None = None, instructions: str | None = None, website_url: str | None = None, icons: list[types.Icon] | None = None, cache_hints: Mapping[CacheableMethod, CacheHint] | None = None, lifespan: Callable[[Server[LifespanResultT]], AbstractAsyncContextManager[LifespanResultT]] = lifespan, on_list_tools: Call...",
+   "call_form_only": [
+    "on_set_logging_level",
+    "on_roots_list_changed",
+    "on_progress"
+   ],
    "import_paths": [
     "mcp.server.Server.__init__",
     "mcp.server.lowlevel.Server.__init__",
@@ -4996,7 +5319,8 @@
    "deprecation_file": "mcp/server/lowlevel/server.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -5022,6 +5346,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.create_message",
     "mcp.server.session.ServerSession.create_message"
@@ -5036,7 +5361,8 @@
    "deprecation_file": "mcp/server/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -5062,6 +5388,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.list_roots",
     "mcp.server.session.ServerSession.list_roots"
@@ -5076,7 +5403,8 @@
    "deprecation_file": "mcp/server/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "mcp",
@@ -5102,6 +5430,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "mcp.ServerSession.send_log_message",
     "mcp.server.session.ServerSession.send_log_message"
@@ -5116,7 +5445,8 @@
    "deprecation_file": "mcp/server/session.py",
    "renamed": false,
    "request_extras": null,
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   }
  ]
 }

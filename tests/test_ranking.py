@@ -559,8 +559,13 @@ def test_a_name_bound_to_a_method_and_the_method_are_one_api(tmp_path) -> None:
         assert [n.line for n in scan.scope_notes(SCOPE_USED)] == [note.line]
     scan = _scan(tmp_path, package, "import pkg\n")
     notes = scan.scope_notes(SCOPE_IMPORTED)
-    assert [n.api for n in notes] == ["pkg.duplicate_space", "pkg.upload", "pkg.other"]
+    # ``upload`` and ``other`` say the same (removed, no text): one bullet for both.
+    assert [n.api for n in notes] == ["pkg.duplicate_space", "pkg.other"]
     assert notes[0].line == note.line
+    assert notes[1].line == (
+        "`pkg.other` and `pkg.upload` were removed; do not use them. since-cutoff found no "
+        "replacement in pkg's deprecation text. [diff]"
+    )
 
 
 # ----------------------------------------------------------- 3. the ranking
@@ -757,7 +762,7 @@ def _fixture(name: str) -> tuple[PackageScan, dict[str, Any]]:
 
 def test_the_real_mcp_diff_fixture_is_current() -> None:
     _, data = _fixture("mcp-1.28.1-2.2.0")
-    assert data["schema"] == DIFF_SCHEMA, "re-record the fixture from the cache after a schema bump"
+    assert data["schema"] == DIFF_SCHEMA, "re-record it: python scripts/record_diff_fixtures.py"
 
 
 def test_mcp_2_leads_with_the_package_move_and_the_renames(tmp_path) -> None:
@@ -794,15 +799,23 @@ def test_mcp_2_leads_with_the_package_move_and_the_renames(tmp_path) -> None:
         "[diff + move checked]",
         "`FastMCP` is now `MCPServer`: `mcp.server.FastMCP` moved to `mcp.server.MCPServer`; "
         "import it with `from mcp.server import MCPServer`. [diff + move checked]",
-        "`mcp.client.streamable_http.streamablehttp_client` was removed; do not use it. Use "
-        "`mcp.client.streamable_http.streamable_http_client` instead. [diff + library]",
+        # Its text, "Use :class:`X` for ..., or :class:`Y` for ... instead.", states both.
+        "`mcp.client.auth.extensions.client_credentials.RFC7523OAuthClientProvider` was removed; "
+        "do not use it. Use `mcp.client.auth.extensions.client_credentials."
+        "ClientCredentialsOAuthProvider` or `mcp.client.auth.extensions.client_credentials."
+        "PrivateKeyJWTOAuthProvider` instead. [diff + library]",
     ]
-    # With a bigger budget the next ones follow; the package's move still counts once.
+    # With a bigger budget the next ones follow; the package's move still counts once, and
+    # two APIs that say the same share one bullet (8 APIs, 7 notes).
     more = scan.scope_notes(SCOPE_IMPORTED, per_package=8)
-    assert more[:5] == scan.scope_notes(SCOPE_IMPORTED) and len(more) == 8
+    assert more[:5] == scan.scope_notes(SCOPE_IMPORTED) and len(more) == 7
     assert more[5].line == (
-        "`ClientSession.list_prompts()` no longer accepts `cursor`; do not pass it. Use `params` "
-        "instead of `cursor`. [diff + library]"
+        "`mcp.client.streamable_http.streamablehttp_client` was removed; do not use it. Use "
+        "`mcp.client.streamable_http.streamable_http_client` instead. [diff + library]"
+    )
+    assert more[6].line == (
+        "`ClientSession.list_prompts()` and `ClientSession.list_resource_templates()` no longer "
+        "accept `cursor`; do not pass it. Use `params` instead of `cursor`. [diff + library]"
     )
     assert sum(n.change.is_package_move for n in more) == 1
     # A server written for mcp 1 uses the package's move and the rename, in the old form.
@@ -823,7 +836,7 @@ def test_scan_all_lists_the_changes_in_the_imported_order(tmp_path) -> None:
     console = Console(record=True, width=200, force_terminal=False, color_system=None)
     render_scan_changes(console, scan, limit=3)
     text = console.export_text()
-    assert "mcp 1.28.1 -> 2.2.0: 96 breaking, 9 deprecated" in text
+    assert "mcp 1.28.1 -> 2.2.0: 73 breaking, 9 deprecated (+25 internal)" in text
     lines = [line.strip() for line in text.splitlines() if line.strip().startswith("- ")]
     assert lines == [
         "- mcp requires httpx2 instead of httpx (23 places in its public API that named httpx "
@@ -850,7 +863,10 @@ def test_project_changes_lists_a_package_in_the_imported_order(tmp_path) -> None
     package, _ = _fixture("mcp-1.28.1-2.2.0")
     scan = _scan(tmp_path, package, "import mcp\n")
     text = "\n".join(_package_section(scan, package, 4))
-    assert "## mcp 1.28.1" in text and "96 breaking, 9 deprecated. Your code imports it." in text
+    assert (
+        "## mcp 1.28.1" in text
+        and "73 breaking, 9 deprecated (+25 internal). Your code imports it." in text
+    )
     assert _bullets(text, "### Dependencies switched")[0].startswith(
         "mcp requires `httpx2` instead of `httpx`; its Requires-Dist lists `httpx2>=2.5.0` and "
         "no `httpx`; 23 places in its public API"
@@ -873,13 +889,13 @@ def test_the_markdown_reports_list_a_package_in_the_imported_order(tmp_path) -> 
     package, _ = _fixture("mcp-1.28.1-2.2.0")
     scan = _scan(tmp_path, package, "import mcp\n")
     full = render_markdown(scan)
-    items = _bullets(full, "### mcp 1.28.1 -> 2.2.0: 96 breaking, 9 deprecated")
+    items = _bullets(full, "### mcp 1.28.1 -> 2.2.0: 73 breaking, 9 deprecated (+25 internal)")
     # The switch's counts and places are an item of their own under it ("Places:").
     places = (
         "Places: its Requires-Dist lists `httpx2>=2.5.0` and no `httpx`; 23 places in its "
         "public API that named `httpx` types name the `httpx2` types of the same name: "
     )
-    assert len(items) == 106 and items[1].startswith(places)
+    assert len(items) == 108 and items[1].startswith(places)
     assert [i.split(" (")[0] for i in [items[0], *items[2:5]]] == [
         "mcp requires `httpx2` instead of `httpx`",
         "`mcp.McpError` moved to `mcp.MCPError`",
@@ -895,7 +911,7 @@ def test_the_markdown_reports_list_a_package_in_the_imported_order(tmp_path) -> 
         "the package `mcp.server.fastmcp` moved to `mcp.server.mcpserver`",
         "`mcp.server.FastMCP` moved to `mcp.server.MCPServer`",
     ]
-    assert items[5] == "... and 101 more in the full report"
+    assert items[5] == "... and 78 more in the full report"
 
 
 @pytest.mark.parametrize("scope", [SCOPE_USED, SCOPE_IMPORTED])

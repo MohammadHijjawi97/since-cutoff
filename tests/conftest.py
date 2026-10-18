@@ -259,17 +259,23 @@ def _dt(s: str) -> datetime:
 
 
 class FakePyPI(PyPI):
-    """PyPI with in-memory release dates and local source trees."""
+    """PyPI with in-memory release dates and local source trees. ``info`` is what PyPI's
+    ``info`` says of a package (``summary``, ``project_urls``), by package; {} for the rest."""
 
     def __init__(
         self,
         cache: DiskCache,
         releases: dict[str, list[tuple[str, str]]],
         sources: dict[tuple[str, str], SourceTree],
+        info: dict[str, dict[str, Any]] | None = None,
     ):
         super().__init__(cache)
         self._releases = releases
         self._trees = sources
+        self._info = info or {}
+
+    def project(self, name: str) -> dict[str, Any]:
+        return {"info": dict(self._info.get(name, {})), "releases": {}}
 
     def releases(self, name: str) -> list[Release]:
         out = [
@@ -283,13 +289,50 @@ class FakePyPI(PyPI):
         return self._trees[(name, version)]
 
 
+def compiled_fastlib(
+    root: Path, cache: DiskCache, module: str = "fastlib.fast", *, drop: bool = True
+) -> FakePyPI:
+    """fastlib 1.0 and 2.0, where 2.0 ships ``module`` compiled without a stub (issue #52):
+    with ``drop``, its ``__init__`` still imports ``speedy`` from it but no longer ``gone``,
+    and ``slow`` is gone; without, nothing else changed. The extension module itself is never
+    extracted, only named."""
+    code = "def speedy(x: int) -> int:\n    return x\n\ndef gone() -> None: ...\n"
+    v1 = write_tree(
+        root / "fastlib-1.0",
+        {
+            "fastlib/__init__.py": f"from {module} import gone, speedy\n",
+            f"fastlib/{module.rpartition('.')[2]}.py": code,
+            "fastlib/slow.py": "def crawl() -> None: ...\n",
+        },
+    )
+    names = "speedy" if drop else "gone, speedy"
+    v2_files = {"fastlib/__init__.py": f"from {module} import {names}\n"}
+    if not drop:
+        v2_files["fastlib/slow.py"] = "def crawl() -> None: ...\n"
+    v2 = write_tree(root / "fastlib-2.0", v2_files)
+    return FakePyPI(
+        cache,
+        {"fastlib": [("1.0", "2025-01-10"), ("2.0", "2025-10-01")]},
+        {
+            ("fastlib", "1.0"): SourceTree("fastlib", "1.0", v1, ("fastlib",)),
+            ("fastlib", "2.0"): SourceTree("fastlib", "2.0", v2, ("fastlib",), compiled=(module,)),
+        },
+    )
+
+
 @pytest.fixture
 def fake_pypi(cache: DiskCache, toylib: tuple[SourceTree, SourceTree]) -> FakePyPI:
     v1, v2 = toylib
+    # 0.9 has 1.0's API: the comparison release of a scan whose comparison date (the cutoff
+    # minus --cutoff-margin) falls before 2025-01-10.
     return FakePyPI(
         cache,
         {"toylib": [("0.9", "2024-06-01"), ("1.0", "2025-01-10"), ("2.0", "2025-10-01")]},
-        {("toylib", "1.0"): v1, ("toylib", "2.0"): v2},
+        {
+            ("toylib", "0.9"): SourceTree("toylib", "0.9", v1.root, ("toylib",)),
+            ("toylib", "1.0"): v1,
+            ("toylib", "2.0"): v2,
+        },
     )
 
 

@@ -299,15 +299,14 @@ def test_a_removed_request_field_points_to_extra_body_not_to_dropping_it() -> No
     note = diff_note(changes)
     assert note.line == (
         "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword "
-        "arguments. If the API still needs them, pass them through its `extra_body` or "
-        "`extra_query` argument. since-cutoff found no replacement in anthropic's deprecation "
-        "text. [diff]"
+        "arguments. If the API still needs them, pass them through its `extra_body` argument. "
+        "[diff]"
     )
     assert "do not pass" not in note.line
     one = diff_note([change(param="temperature", new_signature=ANTHROPIC_180_CREATE)])
     assert one.line.startswith(
         "`Messages.create()` no longer accepts `temperature` as a keyword argument. If the API "
-        "still needs it, pass it through its `extra_body` or `extra_query` argument."
+        "still needs it, pass it through its `extra_body` argument."
     )
 
 
@@ -340,7 +339,7 @@ def test_the_diff_records_request_extras_from_every_parameter(tmp_path: Path) ->
     create, send = found["temperature"], found["retries"]
     assert "extra_body" not in (create.new_signature or "")  # past the cut
     assert create.request_extras == ["extra_body", "extra_query"] and send.request_extras == []
-    assert "pass it through its `extra_body` or `extra_query` argument" in diff_note([create]).line
+    assert "pass it through its `extra_body` argument. [diff]" in diff_note([create]).line
     assert "do not pass it" in diff_note([send]).line
 
 
@@ -501,9 +500,11 @@ def test_advice_about_the_api_itself_does_not_repeat_its_name() -> None:
         new="1.2.12",
     )
     line = diff_note([graph]).line
+    # The sentence says more than the name ("with a 'messages' key"): it is quoted, and it
+    # states StateGraph as the replacement.
     assert line == (
         "`langgraph.graph.MessageGraph` is deprecated; avoid it in new code. langgraph 1.2.12 "
-        "says: \"Please use StateGraph with a 'messages' key instead.\" [diff]"
+        "says: \"Please use StateGraph with a 'messages' key instead.\" [diff + library]"
     )
 
 
@@ -522,8 +523,9 @@ def test_the_same_sentence_is_said_once() -> None:
         for i in range(3)
     ]
     line = diff_note(same).line
-    assert line.count("is deprecated; avoid it in new code.") == 1
+    assert line.count("are deprecated; avoid them in new code.") == 1
     assert line.count("it is faster") == 1
+    assert line.startswith("`anthropic.m0.Proc`, `anthropic.m1.Proc` and `anthropic.m2.Proc` are")
 
 
 # ------------------------------------------------------------------- runtime

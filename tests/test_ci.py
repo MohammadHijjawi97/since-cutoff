@@ -76,7 +76,10 @@ def test_markdown_summary_lists_what_the_code_uses_first(tmp_path, cache, fake_p
     md = render_scan_markdown(scan, limit=3)
 
     assert md.startswith("## since-cutoff scan\n")
-    assert "Model `claude-sonnet-4-5`, training cutoff **2025-07-31** (source: --cutoff)" in md
+    assert (
+        "Model `claude-sonnet-4-5`, training cutoff **2025-07-31**, comparing from releases up "
+        "to **2025-07-01** (source: --cutoff)"
+    ) in md
     assert "- 1 of 1 dependency changed its API after the cutoff" in md
     assert "- Static diff: 5 breaking changes, 1 new deprecation" in md
     # The same columns, in the same order, as the terminal table and report.md.
@@ -265,15 +268,24 @@ def test_scan_with_only_a_cutoff_names_no_model(tmp_path, capsys, fake_cli, monk
     assert cli.main(argv) == 0
 
     out = capsys.readouterr().out
-    assert "Custom cutoff 2025-02-28 (from --cutoff; no model given)" in out
+    assert (
+        "Custom cutoff 2025-02-28, comparing from releases up to 2025-01-29 "
+        "(from --cutoff; no model given)" in out
+    )
     assert "Your code uses 1 API that changed after the cutoff (2025-02-28)" in out
     assert cli.main([*argv, "--all"]) == 0  # 0.3's summary panel
     assert "since-cutoff · custom cutoff 2025-02-28" in capsys.readouterr().out
     assert "sonnet" not in out and "assuming" not in out
     md = summary_md.read_text(encoding="utf-8")
-    assert "\nCustom cutoff **2025-02-28** (given with --cutoff, no model) · project `app`" in md
+    assert (
+        "\nCustom cutoff **2025-02-28**, comparing from releases up to **2025-01-29** (given with --cutoff, no model) · project `app`"
+        in md
+    )
     report = (root / ".since-cutoff" / "report.md").read_text(encoding="utf-8")
-    assert "- Custom cutoff **2025-02-28** (given with --cutoff, no model)" in report
+    assert (
+        "- Custom cutoff **2025-02-28**, comparing from releases up to **2025-01-29** (given with --cutoff, no model)"
+        in report
+    )
     data = json.loads((root / ".since-cutoff" / "results.json").read_text(encoding="utf-8"))
     assert (data["model"], data["model_spec"], data["cutoff"]) == (None, None, "2025-02-28")
 
@@ -422,6 +434,9 @@ def test_scorecard_can_publish_its_results() -> None:
         ("requirements.txt", True),
         ("requirements-dev.txt", True),
         ("requirements/prod.txt", True),
+        ("environment.yml", True),
+        ("envs/environment.yaml", True),
+        ("environment.yml.bak", False),
         ("pyproject.toml", True),
         ("src/app/main.py", False),
         ("README.md", False),
@@ -433,9 +448,38 @@ def test_pre_commit_hook_runs_when_dependencies_change(path: str, hit: bool) -> 
     assert "- id: since-cutoff-scan" in manifest
     assert "entry: since-cutoff scan" in manifest
     assert "pass_filenames: false" in manifest
-    files = re.search(r"^\s*files: '(.+)'$", manifest, re.M)
-    assert files is not None
-    assert bool(re.search(files.group(1), path)) is hit
+    # Every hook: scan, and sync and status, which also run when AGENTS.md or CLAUDE.md does.
+    files = re.findall(r"^\s*files: '(.+)'$", manifest, re.M)
+    assert len(files) == manifest.count("\n- id: ") == 3
+    assert [bool(re.search(pattern, path)) for pattern in files] == [hit] * 3
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    """A glob of hashFiles or a workflow's ``paths:``: ``**/`` any directories, ``*`` any
+    characters but ``/``."""
+    parts = re.split(r"(\*\*/|\*)", pattern)
+    wild = {"**/": "(?:.*/)?", "*": "[^/]*"}
+    return re.compile("".join(wild.get(p) or re.escape(p) for p in parts))
+
+
+@pytest.mark.parametrize("name", ["environment.yml", "environment.yaml"])
+def test_the_action_cache_and_the_readme_workflows_watch_conda_environment_files(
+    name: str,
+) -> None:
+    # The Action's cache key hashes the files the versions come from, and the workflow in each
+    # README runs when one of them changes, at the root or in a directory.
+    action = _read("action.yml")
+    key = re.search(r"hashFiles\(([^)]*)\)", action)
+    assert key is not None
+    globs = re.findall(r"'([^']+)'", key.group(1))
+    for path in (name, f"envs/{name}"):
+        assert any(_glob(g).fullmatch(path) for g in globs), (path, globs)
+        assert not any(_glob(g).fullmatch(f"{path}.bak") for g in globs)
+    for readme in ("README.md", "README.es.md", "README.fr.md", "README.zh-CN.md"):
+        [paths] = re.findall(r"^\s+paths: \[(.+)\]$", _read(readme), re.M)
+        globs = re.findall(r'"([^"]+)"', paths)
+        for path in (name, f"envs/{name}"):
+            assert any(_glob(g).fullmatch(path) for g in globs), (readme, path, globs)
 
 
 def _check_versions() -> Any:
@@ -454,9 +498,9 @@ def test_every_version_field_names_this_release(capsys) -> None:
     found = check.versions()
     # The package, server.json (twice), the Claude Code, Agent Plugins, Codex and Gemini
     # manifests, the skill's metadata.version, both MCP launcher pins, CITATION.cff, the action's
-    # default, the changelog and the README pins; the plugin's SessionStart hook is checked on
-    # its own (see below).
-    assert len(found) == 17
+    # default, the changelog and, in each of the four READMEs, the pre-commit rev and the
+    # action's default; the plugin's SessionStart hook is checked on its own (see below).
+    assert len(found) == 22
     assert dict.fromkeys(found, __version__) == found
     assert check.problems() == []  # including CITATION's date = the changelog's release date
     assert check.main(["check_versions.py", f"v{__version__}"]) == 0
