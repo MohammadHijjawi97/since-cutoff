@@ -46,7 +46,7 @@ welcome, and first-time contributors are very welcome.
 The diagram groups the stages by command: a **scan** follows the lockfile to the
 release at the model's knowledge cutoff, diffs its API, finds uses in the
 project and prepares evidence-backed notes. Only **run** invokes a model.
-Solid arrows show imports or calls verified in the source; dotted arrows show
+Solid arrows show imports or calls confirmed against the source; dotted arrows show
 the *order of stages orchestrated by the engine*, not additional direct imports.
 Modules shared by both paths are shown with scan to keep the diagram compact.
 
