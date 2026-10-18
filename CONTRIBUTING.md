@@ -109,17 +109,17 @@ flowchart TB
   class MODEL model;
 ```
 
-The network boundary (dashed outline) is reached through \`net.py\` by
-\`pypi.py\` (PyPI), \`models.py\` (models.dev), and the HTTP providers in
-\`providers/http_api.py\` (Anthropic and OpenAI-compatible APIs). The Claude Code
-provider instead starts the \`claude\` CLI. Only \`Engine.run()\` calls model
-providers; \`scan\`, \`sync\` and \`status\` do not.
+The network boundary (dashed outline) is reached through `net.py` by
+`pypi.py` (PyPI), `models.py` (models.dev), and the HTTP providers in
+`providers/http_api.py` (Anthropic and OpenAI-compatible APIs). The Claude Code
+provider instead starts the `claude` CLI. Only `Engine.run()` calls model
+providers; `scan`, `sync` and `status` do not.
 
-The source-level relationships are: \`cli.py\` calls the engine, report and sync;
-\`mcp_server.py\` and \`sync.py\` use the engine; the engine imports the scan and
-run modules shown; \`report.py\` imports \`stats.py\`; and \`pypi.py\`, \`models.py\`,
-and \`providers/http_api.py\` import \`net.py\`. The dotted stage order is a
-readable summary of \`Engine.scan()\` / \`Engine.run()\`, not an extra dependency
+The source-level relationships are: `cli.py` calls the engine, report and sync;
+`mcp_server.py` and `sync.py` use the engine; the engine imports the scan and
+run modules shown; `report.py` imports `stats.py`; and `pypi.py`, `models.py`,
+and `providers/http_api.py` import `net.py`. The dotted stage order is a
+readable summary of `Engine.scan()` / `Engine.run()`, not an extra dependency
 graph.
 
 ## Development setup
