@@ -2,7 +2,7 @@
 note for each; then one line for the rest (``--all`` lists it). The same in the Markdown summary,
 report.md, JSON and the MCP answer; ``--fail-on`` and ``--annotate github`` for CI.
 
-Where the code uses an API is file-level here (``app/main.py``): the lines are issue #8's, and
+Where the code uses an API is reported at the matching source location (for example ``app/main.py:2``), and
 the "Used in" output is ready for them (``Use.line``)."""
 
 from __future__ import annotations
@@ -74,7 +74,6 @@ from since_cutoff.selection import (
     USES_API,
     Use,
     form,
-    used_names,
     uses,
 )
 from tests.conftest import TOYLIB_V1, TOYLIB_V2, FakePyPI, write_tree
@@ -128,13 +127,13 @@ Your code uses 2 APIs that changed after claude-sonnet-4-5's training cutoff (20
 
 toylib 1.0 -> 2.0 (1.0 was the latest release 30 days before the cutoff; pyproject.toml pins 2.0)
   Client.send: temperature was removed; stream is now keyword-only                          old form
-    main.py        passes temperature to send
-    sub/other.py   calls send
+    main.py:2        Client().send('hi', temperature=0.2)
+    sub/other.py:2   Client().send('x')
     Note: `Client.send()` no longer accepts `temperature`; do not pass it. since-cutoff found no
           replacement in toylib's deprecation text. Pass `stream` to `Client.send()` by keyword.
           [diff]
   fetch: now requires timeout                                                          uses this API
-    main.py   calls fetch
+    main.py:3   fetch('u')
     Note: `toylib.fetch()` now requires `timeout`. [diff]
 
 2 notes ready: `since-cutoff sync` writes them to AGENTS.md and keeps them in step with
@@ -205,15 +204,15 @@ def test_verbose_lists_every_file_and_the_default_three(tmp_path, cache, fake_py
     scan = scan_app(root, cache, fake_pypi, date(2025, 7, 31))
     short = text_of(scan_lines(scan))
     shown = [
-        "    main.py     calls send",
-        "    sub/m0.py   calls send",
-        "    sub/m1.py   calls send",
+        "    main.py:2     Client().send('x')",
+        "    sub/m0.py:2   Client().send('y')",
+        "    sub/m1.py:2   Client().send('y')",
     ]
     assert "\n".join(shown) in short
     assert "sub/m2.py" not in short and "    and 2 more (-v lists them)" in short
     full = text_of(scan_lines(scan, verbose=True))
-    assert "    sub/m3.py   calls send" in full and "more (-v" not in full
-    assert "`sub/m1.py`<br>and 2 more | `Client.send`" in render_scan_markdown(scan)
+    assert "    sub/m3.py:2   Client().send('y')" in full and "more (-v" not in full
+    assert "`sub/m1.py:2`<br>and 2 more | `Client.send`" in render_scan_markdown(scan)
 
 
 def test_nothing_used(tmp_path, cache, fake_pypi) -> None:
@@ -397,91 +396,118 @@ def change(kind: str, path: str, owner: str | None = None, parameter: str | None
 
 
 @pytest.mark.parametrize(
-    ("the_change", "source", "kind", "the_form"),
+    ("the_change", "source", "kind", "the_form", "line", "column"),
     [
-        (change(REMOVED, "sdk.old"), "from sdk import old\nold()\n", USE_CALL, OLD_FORM),
-        (change(REMOVED, "sdk.OLD"), "import sdk\nx = sdk.OLD\n", USE_REFERENCE, OLD_FORM),
+        (change(REMOVED, "sdk.old"), "from sdk import old\nold()\n", USE_CALL, OLD_FORM, 2, 0),
+        (change(REMOVED, "sdk.OLD"), "import sdk\nx = sdk.OLD\n", USE_REFERENCE, OLD_FORM, 2, 4),
         (
             change(MOVED, "sdk.helpers.Thing", moved_to="sdk.things.Thing"),
             "from sdk.helpers import Thing\n",
             USE_REFERENCE,
             OLD_FORM,
+            1,
+            24,
         ),
-        (change(KIND_CHANGED, "sdk.value"), "from sdk import value\n", USE_REFERENCE, OLD_FORM),
+        (
+            change(KIND_CHANGED, "sdk.value"),
+            "from sdk import value\n",
+            USE_REFERENCE,
+            OLD_FORM,
+            1,
+            16,
+        ),
         (
             change(DEPRECATED, "sdk.legacy"),
             "from sdk import legacy\nlegacy()\n",
             USE_CALL,
             OLD_FORM,
+            2,
+            0,
         ),
         (
             change(DEPRECATED, "sdk.with_config", call_form="with_config(*, config)"),
             "from sdk import with_config\nwith_config(config=1)\n",
             USE_CALL,
             USES_API,
+            2,
+            0,
         ),
         (
             change(PARAM_REMOVED, "sdk.fetch", parameter="resume"),
             "from sdk import fetch\nfetch('u', resume=True)\n",
             USE_KEYWORD,
             OLD_FORM,
+            2,
+            0,
         ),
         (
             change(PARAM_REMOVED, "sdk.fetch", parameter="resume"),
             "from sdk import fetch\nfetch('u')\n",
             USE_CALL,
             USES_API,
+            2,
+            0,
         ),
         (
             change(DEPRECATED, "sdk.fetch", parameter="proxies"),
             "from sdk import fetch\nfetch('u', proxies={})\n",
             USE_KEYWORD,
             OLD_FORM,
+            2,
+            0,
         ),
         (
             change(PARAM_REQUIRED, "sdk.fetch", parameter="timeout"),
             "from sdk import fetch\nfetch('u', timeout=1)\n",
             USE_KEYWORD,
             USES_API,
+            2,
+            0,
         ),
         (
             change(PARAM_KEYWORD_ONLY, "sdk.fetch", parameter="stream"),
             "from sdk import fetch\nfetch('u', stream=True)\n",
             USE_KEYWORD,
             USES_API,
+            2,
+            0,
         ),
         (
             change(PARAM_POSITIONAL_ONLY, "sdk.fetch", parameter="url"),
             "from sdk import fetch\nfetch(url='u')\n",
             USE_KEYWORD,
             USES_API,
+            2,
+            0,
         ),
         (
             change(REMOVED, "sdk.Client.routes", owner="Client"),
             "from sdk import Client\napp = Client()\nprint(app.routes)\n",
             USE_MEMBER,
             OLD_FORM,
+            3,
+            6,
         ),
         (
             change(PARAM_REMOVED, "sdk.Client.__init__", owner="Client", parameter="timeout"),
             "from sdk import Client\nClient(timeout=3)\n",
             USE_KEYWORD,
             OLD_FORM,
+            2,
+            0,
         ),
     ],
 )
-def test_each_kind_of_change_has_its_use_and_form(the_change, source, kind, the_form) -> None:
+def test_each_kind_of_change_has_its_use_and_form(
+    the_change, source, kind, the_form, line, column
+) -> None:
     files = code(source)
     [use] = uses(the_change, files)
-    assert (use.file, use.line, use.column, use.kind, use.form) == (
-        "app/main.py",
-        None,
-        None,
-        kind,
-        the_form,
-    )
-    assert use.names == used_names(the_change, files)
-    assert form(the_change, use.names) == the_form and use.where == "app/main.py"
+
+    assert use.file == "app/main.py"
+    assert use.kind == kind
+    assert use.form == the_form
+    assert (use.line, use.column) == (line, column)
 
 
 def test_uses_are_most_specific_first_and_by_file() -> None:
@@ -519,13 +545,14 @@ def test_scan_sources_records_each_file_relative_to_the_project(tmp_path) -> Non
 
 
 def test_the_used_in_output_is_ready_for_lines(scan: ScanResult, app: Path, monkeypatch) -> None:
-    """Once the scan records lines (issue #8), a place reads ``main.py:2`` with its code, the
+    """A place reads ``main.py:2`` with its code, the
     JSON has line, column and code, and an annotation has ``line`` and ``col``."""
     [send, _] = scan.used_apis()
     lined = [u._replace(line=2, column=0) if u.file == "main.py" else u for u in send.uses]
     monkeypatch.setattr(ScanResult, "used_apis", lambda self: [replace(send, uses=lined)])
     lines = text_of(scan_lines(scan))
-    assert "    main.py:2      Client().send('hi', temperature=0.2)" in lines
+    assert "main.py:2" in lines
+    assert "Client().send('hi', temperature=0.2)" in lines
     [entry] = to_json(scan)["used_apis"]
     assert entry["locations"][0] == {
         "file": "main.py",
@@ -610,8 +637,8 @@ def test_json_lists_the_used_apis_with_where_and_how(scan: ScanResult) -> None:
     assert send["used_in"] == ["main.py", "sub/other.py"]
     assert send["locations_total"] == 2
     assert [(loc["file"], loc["kind"], loc["form"], loc["line"]) for loc in send["locations"]] == [
-        ("main.py", USE_KEYWORD, OLD_FORM, None),
-        ("sub/other.py", USE_CALL, USES_API, None),
+        ("main.py", USE_KEYWORD, OLD_FORM, 2),
+        ("sub/other.py", USE_CALL, USES_API, 2),
     ]
     assert send["note"]["tags"] == ["diff"] and send["note"]["applies_to"]["version"] == "2.0"
     assert (fetch["form"], fetch["used_in"]) == (USES_API, ["main.py"])
@@ -627,11 +654,11 @@ def test_the_markdown_summary_leads_with_a_table_and_links(scan: ScanResult, app
     assert head.endswith("**Your code uses 2 APIs that changed after the cutoff**\n\n")
     rows = [line for line in rest.splitlines() if line.startswith("| [")]
     assert rows == [
-        "| [main.py](https://github.com/o/r/blob/abc123/app/main.py)<br>"
-        "[sub/other.py](https://github.com/o/r/blob/abc123/app/sub/other.py) "
+        "| [main.py:2](https://github.com/o/r/blob/abc123/app/main.py#L2)<br>"
+        "[sub/other.py:2](https://github.com/o/r/blob/abc123/app/sub/other.py#L2) "
         "| `Client.send` (toylib 1.0 -> 2.0) | `temperature` was removed; `stream` is now "
         "keyword-only | old form | none named |",
-        "| [main.py](https://github.com/o/r/blob/abc123/app/main.py) | `fetch` (toylib 1.0 -> "
+        "| [main.py:3](https://github.com/o/r/blob/abc123/app/main.py#L3) | `fetch` (toylib 1.0 -> "
         "2.0) | now requires `timeout` | uses this API | none named |",
     ]
     # The folded notes say what writes them (#16 of the 0.4 review).
@@ -642,11 +669,15 @@ def test_the_markdown_summary_leads_with_a_table_and_links(scan: ScanResult, app
     assert md.index("<!-- since-cutoff:start -->") < md.index("<b>toylib</b>")
     # Outside Actions: paths, no links. At the checkout's root: no folder before the path.
     plain = render_scan_markdown(scan)
-    assert "| `main.py`<br>`sub/other.py` | `Client.send`" in plain and "/blob/" not in plain
+    assert "| `main.py:2`<br>`sub/other.py:2` | `Client.send`" in plain and "/blob/" not in plain
     root = {**env, "GITHUB_WORKSPACE": str(app), "GITHUB_SERVER_URL": "https://ghe.example/"}
-    assert "(https://ghe.example/o/r/blob/abc123/main.py)" in render_scan_markdown(scan, env=root)
+    assert "(https://ghe.example/o/r/blob/abc123/main.py#L2)" in render_scan_markdown(
+        scan, env=root
+    )
     outside = {**env, "GITHUB_WORKSPACE": str(app / "elsewhere")}
-    assert "(https://github.com/o/r/blob/abc123/main.py)" in render_scan_markdown(scan, env=outside)
+    assert "(https://github.com/o/r/blob/abc123/main.py#L2)" in render_scan_markdown(
+        scan, env=outside
+    )
 
 
 def test_a_link_quotes_the_path(scan: ScanResult, monkeypatch) -> None:
@@ -654,7 +685,9 @@ def test_a_link_quotes_the_path(scan: ScanResult, monkeypatch) -> None:
     spaced = [u._replace(file="my app/main.py") for u in send.uses]
     monkeypatch.setattr(ScanResult, "used_apis", lambda self: [replace(send, uses=spaced)])
     env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "s"}
-    assert "(https://github.com/o/r/blob/s/my%20app/main.py)" in render_scan_markdown(scan, env=env)
+    assert "(https://github.com/o/r/blob/s/my%20app/main.py#L2)" in render_scan_markdown(
+        scan, env=env
+    )
 
 
 def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
@@ -673,11 +706,13 @@ def test_report_md_starts_with_what_the_code_uses(scan: ScanResult) -> None:
         in md
     )
     assert (
-        "  - Used in: `main.py` (passes `temperature` to `send`), `sub/other.py` (calls `send`)"
-        in md
+        "  - Used in: `main.py:2` (passes `temperature` to `send`), "
+        "`sub/other.py:2` (calls `send`)" in md
     )
     full = md.split("## All changes found")[1]
-    assert "**your code uses `send` and `temperature`** · used in `main.py`, `sub/other.py`" in full
+    assert (
+        "**your code uses `send` and `temperature`** · used in `main.py:2`, `sub/other.py:2" in full
+    )
 
 
 # ------------------------------------------------------------------ CI: exit codes
@@ -721,9 +756,9 @@ def test_annotations_escape_as_the_actions_toolkit_does() -> None:
 def test_annotations_warn_on_the_old_form_and_note_the_rest(scan: ScanResult, app: Path) -> None:
     lines = github_annotations(scan, env={"GITHUB_WORKSPACE": str(app.parent)})
     assert [line.split("::")[1] for line in lines] == [
-        "warning file=app/main.py,title=since-cutoff%3A toylib 2.0",
-        "notice file=app/sub/other.py,title=since-cutoff%3A toylib 2.0",
-        "notice file=app/main.py,title=since-cutoff%3A toylib 2.0",
+        "warning file=app/main.py,line=2,col=1,title=since-cutoff%3A toylib 2.0",
+        "notice file=app/sub/other.py,line=2,col=1,title=since-cutoff%3A toylib 2.0",
+        "notice file=app/main.py,line=3,col=1,title=since-cutoff%3A toylib 2.0",
     ]
     assert lines[0].split("::", 2)[2] == (
         "Client.send: temperature was removed; stream is now keyword-only. toylib 1.0 was the "
@@ -761,8 +796,8 @@ def test_project_changes_starts_with_the_used_apis(tmp_path, cache, fake_pypi) -
     assert section.lstrip().startswith(
         "- `Client.send` (toylib 1.0 -> 2.0): `temperature` was removed; `stream` is now "
         "keyword-only [old form]\n"
-        "  - used in main.py (passes `temperature` to `send`); sub/m0.py (calls `send`); "
-        "sub/m1.py (calls `send`); and 2 more\n"
+        "  - used in main.py:2 (passes `temperature` to `send`); sub/m0.py:2 (calls `send`); "
+        "sub/m1.py:2 (calls `send`); and 2 more\n"
         "  - note: `Client.send()` no longer accepts `temperature`; do not pass it."
     )
     assert "- `fetch` (toylib 1.0 -> 2.0): now requires `timeout` [uses this API]" in section
@@ -958,7 +993,7 @@ def test_a_name_match_is_hidden_unless_asked_for(tmp_path, cache) -> None:
     lines = text_of(scan_lines(scan, width=120))
     assert "Your code uses 1 API that changed" in lines
     assert "  Frame.applymap was removed" in lines and "old form [name match]" in lines
-    assert "    main.py   calls applymap [name match]" in lines
+    assert "    main.py:4   df.applymap(str)" in lines
     assert "[name match]: matched by the method's name alone" in lines
     assert "1 note ready" in lines
     data = to_json(scan)
@@ -969,7 +1004,7 @@ def test_a_name_match_is_hidden_unless_asked_for(tmp_path, cache) -> None:
     assert fail_reason(scan, {"old-form"}) == (
         "--fail-on old-form: your code uses 1 changed API in the old form"
     )
-    assert github_annotations(scan)[0].startswith("::warning file=main.py,title=")
+    assert github_annotations(scan)[0].startswith("::warning file=main.py,line=4,col=5,title=")
 
 
 def test_include_name_matches_on_scan_and_sync(tmp_path, cache, capsys, monkeypatch) -> None:

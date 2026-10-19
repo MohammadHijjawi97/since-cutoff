@@ -70,6 +70,174 @@ def change(path: str, owner: str | None = None, parameter: str | None = None) ->
 
 
 # ------------------------------------------------------------ "your code uses"
+def test_uses_reports_call_lines() -> None:
+    removed = change("pkg.fetch")
+    files = code(
+        """
+        from pkg import fetch
+
+        result = fetch(url)
+        other = fetch(url)
+        """
+    )
+
+    found = uses(removed, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 4, 9),
+        ("", 5, 8),
+    ]
+
+
+def test_uses_reports_import_alias_call_location():
+    fetch = change("pkg.fetch")
+
+    files = code(
+        """
+        from pkg import fetch as get
+        result = get(url)
+        """
+    )
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 9)]
+
+
+def test_uses_reports_plain_name_reference_location():
+    fetch = change("pkg.fetch")
+
+    files = code(
+        """
+        from pkg import fetch
+        handler = fetch
+        """
+    )
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 10)]
+
+
+def test_uses_reports_chained_method_call_location():
+    send = change("pkg.Client.send", owner="Client")
+
+    files = code(
+        """
+        from pkg import Client
+        Client().send("hello")
+        """
+    )
+
+    found = uses(send, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_keyword_on_chained_method_call():
+    send = change("pkg.Client.send", owner="Client", parameter="timeout")
+
+    files = code(
+        """
+        from pkg import Client
+        Client().send("hello", timeout=10)
+        """
+    )
+
+    found = uses(send, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_constructor_location():
+    init = change("pkg.Client.__init__", owner="Client", parameter="timeout")
+
+    files = code(
+        """
+        from pkg import Client
+        client = Client(timeout=10)
+        """
+    )
+
+    found = uses(init, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 9)]
+
+
+def test_uses_reports_subclass_self_member_location():
+    routes = change("pkg.Base.routes", owner="Base")
+
+    files = code(
+        """
+        from pkg import Base
+
+        class Child(Base):
+            def read(self):
+                return self.routes
+        """
+    )
+
+    found = uses(routes, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 6, 15)]
+
+
+def test_uses_does_not_match_same_member_name_on_other_class():
+    routes = change("pkg.Client.routes", owner="Client")
+
+    files = code(
+        """
+        from pkg import Client
+        from flask import Flask
+
+        app = Client()
+        other = Flask()
+
+        app.routes
+        other.routes
+        """
+    )
+
+    found = uses(routes, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 8, 0)]
+
+
+def test_uses_does_not_match_same_function_name_from_other_module():
+    fetch = change("pkg.fetch")
+
+    files = code(
+        """
+        from pkg import fetch
+        from other import fetch as other_fetch
+
+        fetch(url)
+        other_fetch(url)
+        """
+    )
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 5, 0)]
+
+
+def test_uses_reports_parameter_at_call_line() -> None:
+    removed = change("pkg.fetch", parameter="resume")
+    files = code(
+        """
+        from pkg import fetch
+
+        result = fetch(url, resume=True)
+        """
+    )
+
+    found = uses(removed, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [
+        ("", 4, 9),
+    ]
+
+
 def test_a_module_level_name_counts_only_under_its_own_path() -> None:
     files = code(
         """
@@ -656,6 +824,42 @@ def test_mcp_says_where_a_hint_comes_from() -> None:
     assert "the old version warned: `resume` is deprecated" in change_line(removed)
     removed.hint_source = HINT_PARAM_DOC
     assert "the old docs said: `resume` is deprecated" in change_line(removed)
+
+
+def test_uses_reports_resource_chain_call_location() -> None:
+    created = change("sdk.resources.messages.create", owner="Messages")
+    files = code("import sdk as s\nclient = s.Client()\nclient.messages.create()\nother.create()\n")
+
+    found = uses(created, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_keyword_on_resource_chain_call() -> None:
+    created = change(
+        "sdk.resources.messages.create",
+        owner="Messages",
+        parameter="temperature",
+    )
+    files = code(
+        "import sdk as s\n"
+        "client = s.Client()\n"
+        "client.messages.create(temperature=1)\n"
+        "other.create(temperature=1)\n"
+    )
+
+    found = uses(created, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 3, 0)]
+
+
+def test_uses_reports_star_import_reference_location() -> None:
+    fetch = change("pkg.fetch")
+    files = code("from pkg import *\nhandler = fetch\n")
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column) for u in found] == [("", 2, 10)]
 
 
 # ------------------------------------------------ receivers typed from the API (0.6)
@@ -1347,3 +1551,14 @@ def test_a_class_that_became_a_function_is_the_old_form_only_with_a_refused_keyw
     kind.new_kind = "attribute"
     [use] = uses(kind, same)
     assert use.form == OLD_FORM
+
+
+def test_reference_is_not_misclassified_by_an_unrelated_call() -> None:
+    fetch = change("pkg.fetch")
+    files = code("from pkg import fetch\ncb = fetch\nother.x.fetch()\n")
+
+    found = uses(fetch, files)
+
+    assert [(u.file, u.line, u.column, u.kind) for u in found] == [
+        ("", 2, 5, "reference"),
+    ]

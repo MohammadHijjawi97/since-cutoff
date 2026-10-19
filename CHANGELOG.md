@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `scan` now reports the source location of changed API uses and resolves member and reference
+  uses by their imported API path to avoid same-name false positives.
+
 - Add a reference for environment variables, files and exit codes, with a docs drift check
   (docs/reference.md, #69). The check fails when the code reads a variable the page has no row
   for (`os.getenv` and a constant for the name included), or the page has a row for one the code
@@ -515,6 +518,9 @@
   later syncs keep it, as with `--suggestions`.
 - When `sync` has no notes to write, it says how many changes `--scope imported` would write,
   and for how many packages.
+
+## Unreleased
+
 
 ## 0.4.0 - 2026-09-28
 

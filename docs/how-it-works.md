@@ -277,10 +277,8 @@ Each use is one of two **forms**:
 | **old form** | the code uses the API as the comparison release allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword. A class that became a function, or the reverse (pandas 3's `option_context`), is called the same way, so a call of it is "uses this API" unless it passes a keyword the new signature does not take (a subclass or an `isinstance()` of it stays the old form); the note still says to check its signature |
 | **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
 
-The terminal and the MCP tool `project_changes` show at most 3 files per API (`scan -v` shows
-every one). Locations are files for now (`app/main.py`); line numbers are
-[#8](https://github.com/MohammadHijjawi97/since-cutoff/issues/8), and the JSON already has
-`line`, `column` and `code` (null until then) in `used_apis[].locations`.
+The terminal and the MCP tool `project_changes` show at most 3 source locations per API (`scan -v` shows
+every one). Locations are reported at the matching source location (for example `app/main.py:2`). The JSON includes `line`, `column` and `code` in `used_apis[].locations`.
 
 ### The note for each API
 

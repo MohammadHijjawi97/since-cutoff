@@ -225,8 +225,8 @@ _NEVER_OLD_FORM = (PARAM_REQUIRED, PARAM_KEYWORD_ONLY, PARAM_POSITIONAL_ONLY)
 class Use(NamedTuple):
     """Where the project's code uses a change (:func:`uses`).
 
-    File-level for now: ``line`` and ``column`` (1-based and 0-based) stay None until the scan
-    records where in the file each name is used (issue #8, ``FileUse.sites``); the reports
+    ``line`` and ``column`` identify the recorded source location when the scan can match it;
+    a file-level fallback keeps them None when no specific site can be matched. The reports
     show ``app/main.py`` until then, and ``app/main.py:7`` with them.
     """
 
@@ -561,7 +561,7 @@ def _best(change: APIChange, files: Sequence[FileUse]) -> tuple[tuple[str, ...],
     found = [_in_file(merged, f) for f in files]
     for how in (PATH_MATCH, NAME_MATCH, NAME_ONLY):
         best: tuple[str, ...] = ()
-        for _, names, matched in found:
+        for _, names, matched, _ in found:
             if matched == how and _weight(change, names) > _weight(change, best):
                 best = names
         if best:
@@ -584,7 +584,7 @@ def _with_paths(change: APIChange) -> list[tuple[APIChange, frozenset[str]]]:
 
 def _in_file(
     merged: list[tuple[APIChange, frozenset[str]]], f: FileUse
-) -> tuple[APIChange | None, tuple[str, ...], str | None]:
+) -> tuple[APIChange | None, tuple[str, ...], str | None, frozenset[str]]:
     """The names of a change that one file uses, the merged change they are of, and how they
     were matched: through a path (PATH_MATCH); else, for a change without import paths, by its
     package and name (NAME_MATCH); else, for a member read on a value the file shows nothing
@@ -595,7 +595,7 @@ def _in_file(
         if len(names) > len(best[1]):
             best = (c, names)
     if best[1]:
-        return best[0], best[1], PATH_MATCH
+        return best[0], best[1], PATH_MATCH, next(paths for c, paths in merged if c is best[0])
     for c, _ in merged:
         if c.import_paths is not None:
             continue  # the diff recorded its paths: the name alone is not enough
@@ -603,25 +603,76 @@ def _in_file(
         if len(names) > len(best[1]):
             best = (c, names)
     if best[1]:
-        return best[0], best[1], NAME_MATCH
+        return (
+            best[0],
+            best[1],
+            NAME_MATCH,
+            frozenset(_same_name(best[0], f)) if best[0] is not None else frozenset(),
+        )
     for c, _ in merged:
         names = _loose_names(c, f)
         if len(names) > len(best[1]):
             best = (c, names)
-    return best[0], best[1], NAME_ONLY if best[1] else None
+    return best[0], best[1], NAME_ONLY if best[1] else None, frozenset()
+
+
+def _site_matches(
+    kind: str,
+    name: str,
+    site_kind: str | None,
+    names: tuple[str, ...],
+    by_path: frozenset[str],
+    matching_chains: frozenset[str],
+    how: str | None,
+) -> bool:
+    if site_kind == "call" and kind == "chain-call":
+        return name in matching_chains
+    if site_kind == "keyword" and kind == "chain-keyword":
+        if ":" not in name:
+            return False
+        chain, parameter = name.rsplit(":", 1)
+        return (
+            len(names) == 2
+            and parameter == names[1]
+            and (chain in matching_chains or (how == NAME_ONLY and chain == names[0]))
+        )
+
+    if kind != site_kind:
+        return False
+    if site_kind == "keyword":
+        if ":" not in name:
+            return False
+        path, parameter = name.rsplit(":", 1)
+        if how == NAME_ONLY:
+            return len(names) == 2 and path == names[0] and parameter == names[1]
+        return (
+            len(names) == 2
+            and parameter == names[1]
+            and (
+                path in by_path
+                or any(p.rsplit(".", 1)[0] == path for p in by_path if p.endswith(".__init__"))
+            )
+        )
+    if site_kind == "call":
+        if how == NAME_ONLY:
+            return name == names[0]
+        return name in by_path or any(
+            p.rsplit(".", 1)[0] == name for p in by_path if p.endswith(".__init__")
+        )
+    if site_kind in ("member", "reference"):
+        return name in by_path
+    return False
 
 
 def _loose_names(change: APIChange, f: FileUse) -> tuple[str, ...]:
-    """The names of a member change that a file uses on a value it shows nothing of
-    (FileUse.loose, kept by :func:`type_project` for the names that are one changed API's):
-    ``(name,)``, or ``(name, keyword)`` when the file also passes the changed parameter (or one
-    only a deprecated call form takes: :func:`_keywords`) to a call of that name."""
+    """Names of a member change on a receiver whose type is unknown to the file."""
     if not change.owner or change.kind == DEPENDENCY_SWITCHED or change.name not in f.loose:
         return ()
-    passed = next((w for w in _keywords(change) if (change.name, w) in f.keywords), None)
-    if passed:
-        return (change.name, passed)
-    return (change.name,)
+    passed = next(
+        (word for word in _keywords(change) if (change.name, word) in f.keywords),
+        None,
+    )
+    return (change.name, passed) if passed else (change.name,)
 
 
 def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
@@ -629,21 +680,50 @@ def uses(change: APIChange, files: Sequence[FileUse]) -> list[Use]:
     most names that file uses, as :func:`used_names` counts them), most specific first (a
     keyword, a call, a member, a reference), then by file.
 
-    File-level for now (``Use.line`` is None): recording each site's line and column is
-    issue #8, after which each file can give several uses, still most specific first.
+    Each matched source site gets its recorded line and column; when no site can be matched,
+    a file-level ``Use`` keeps them None. A file can therefore give several uses, still most
+    specific first.
     """
     if not files:
         return []
     merged = _with_paths(change)
     found = []
     for f in files:
-        c, names, how = _in_file(merged, f)
+        c, names, how, by_path = _in_file(merged, f)
         if c is not None and how is not None:
-            kind = _use_kind(c, f, names)
+            kind = _use_kind(c, f, names, by_path, how)
             shape = form(change, names, kind)
             if shape == OLD_FORM and kind in (USE_MEMBER, USE_REFERENCE) and _same_kind(c, f):
                 shape = USES_API
-            found.append(Use(f.file, None, None, kind, names, how, shape))
+
+            site_kind = {
+                USE_KEYWORD: "keyword",
+                USE_CALL: "call",
+                USE_MEMBER: "member",
+                USE_REFERENCE: "reference",
+            }.get(kind)
+            matching_chains = frozenset(_pair_chains(c, f))
+
+            matching_sites = sorted(
+                (line, column)
+                for site_kind_name, site_name, line, column in f.sites
+                if _site_matches(
+                    site_kind_name, site_name, site_kind, names, by_path, matching_chains, how
+                )
+            )
+            if not matching_sites and site_kind == "reference":
+                matching_sites = sorted(
+                    (line, column)
+                    for kind_name, name, line, column in f.sites
+                    if kind_name == "import" and name in by_path
+                )
+
+            if matching_sites:
+                for line, column in matching_sites:
+                    found.append(Use(f.file, line, column, kind, names, how, shape))
+            else:
+                found.append(Use(f.file, None, None, kind, names, how, shape))
+
     return ordered(found)
 
 
@@ -676,13 +756,53 @@ def ordered(found: Iterable[Use]) -> list[Use]:
     )
 
 
-def _use_kind(change: APIChange, f: FileUse, names: tuple[str, ...]) -> str:
+def _use_kind(
+    change: APIChange,
+    f: FileUse,
+    names: tuple[str, ...],
+    by_path: frozenset[str],
+    how: str | None,
+) -> str:
     if change.kind == DEPENDENCY_SWITCHED:
         return USE_DEPENDENCY
     if len(names) == 2:
         return USE_KEYWORD
-    if names[0] in f.calls:
+
+    # A typed member site and its call site share the AST node's start
+    # coordinates, even when the receiver variable is not an imported API path.
+    matching_member_sites = {
+        (line, column)
+        for site_kind, site_name, line, column in f.sites
+        if site_kind == "member" and site_name in by_path
+    }
+    direct_call = any(
+        site_kind == "call"
+        and (
+            site_name in by_path
+            or (line, column) in matching_member_sites
+            or any(
+                path.rsplit(".", 1)[0] == site_name
+                for path in by_path
+                if path.endswith(".__init__")
+            )
+        )
+        for site_kind, site_name, line, column in f.sites
+    )
+    typed_member_call = (
+        bool(change.owner)
+        and names[0] in f.calls
+        and any((path.rsplit(".", 1)[0], names[0]) in f.members for path in by_path)
+    )
+    if direct_call or typed_member_call or (how == NAME_ONLY and names[0] in f.calls):
         return USE_CALL
+
+    matching_chains = _pair_chains(change, f)
+    if matching_chains and any(
+        site_kind == "chain-call" and site_name in matching_chains
+        for site_kind, site_name, _, _ in f.sites
+    ):
+        return USE_CALL
+
     return USE_MEMBER if change.owner else USE_REFERENCE
 
 

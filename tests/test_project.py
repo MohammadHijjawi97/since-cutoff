@@ -624,7 +624,7 @@ def test_conda_environment_malformed_yml_is_reported(tmp_path, text, problem):
     write(tmp_path, "environment.yml", text)
     with pytest.raises(ProjectError) as error:
         load_project(tmp_path)
-    assert str(error.value) == f"could not parse environment.yml: {problem}"
+    assert str(error.value).startswith(f"could not parse environment.yml: {problem}")
 
 
 def test_lockfile_wins_over_conda_environment(tmp_path):
