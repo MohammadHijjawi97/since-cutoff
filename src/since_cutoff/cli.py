@@ -1,120 +1,79 @@
-"""Command-line interface."""
+"""Command-line interface.
+
+Importing this module costs little: ``--help``, ``--version`` and ``cache`` need nothing but
+argparse, and ``status --hook`` runs at every Claude Code session start. The engine, the
+reports, rich and the other modules that take time to import are imported by the commands that
+use them, and the few of their names the tests replace (``Engine``, ``detect_model``,
+``write_tasks``, ``RichReporter``) stand at module level as :class:`_LazyImport` proxies.
+``tests/test_startup.py`` checks what each command imports.
+"""
 
 from __future__ import annotations
 
 import argparse
 import contextlib
-import difflib
 import errno
+import importlib
 import json
-import logging
 import os
-import shutil
 import sys
-from collections import Counter
-from datetime import date
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, cast
 
-from rich.console import Console
-from rich.markup import escape
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
-from rich.table import Table
-from rich.text import Text
-
 from since_cutoff import __version__
-from since_cutoff.baselines import BASELINE_ARMS
-from since_cutoff.cache import DiskCache, default_cache_dir
-from since_cutoff.engine import (
-    ERROR,
-    SKIPPED,
-    STALE,
-    TASK_WRITER_FAILED,
-    Engine,
-    ModelTarget,
-    Reporter,
-    RunResult,
-    ScanResult,
-    Settings,
-)
-from since_cutoff.errors import SinceCutoffError
-from since_cutoff.hosts import DEFAULT_SOURCE, detect_model, not_found_hint
-from since_cutoff.models import (
-    CUTOFF_MARGIN_VAR,
-    DEFAULT_CUTOFF_MARGIN,
-    ModelRegistry,
-    parse_cutoff,
-    parse_margin,
-)
-from since_cutoff.notes import (
-    IMPORTED_APIS,
-    SCOPE_USED,
-    agents_import_tip,
-    apply_block,
-    block_targets,
-    model_names,
-    remove_block,
-)
-from since_cutoff.project import Project, load_project
-from since_cutoff.report import (
-    fail_reason,
-    github_annotations,
-    render_console,
-    render_scan,
-    render_scan_markdown,
-    to_json,
-    write_outputs,
-)
-from since_cutoff.sync import (
-    EXIT_EDITED,
-    EXIT_OK,
-    EXIT_OUT_OF_DATE,
-    DetectedModel,
-    TargetFile,
-    blocked_by,
-    current_deps_hash,
-    diff_lines,
-    edited_text,
-    exit_code,
-    hook_line,
-    lockfile_changes,
-    out_of_date_text,
-    propose,
-    read_target,
-    status_json,
-    status_lines,
-    sticky_target,
-    sync_json,
-    target_status,
-    up_to_date_text,
-    written_text,
-)
-from since_cutoff.taskfile import read_tasks, tasks_document, write_tasks
+from since_cutoff.errors import METAPACKAGE, SinceCutoffError
 
 if TYPE_CHECKING:
+    from datetime import date
+
     from _typeshed import SupportsWrite
+    from rich.console import Console
+    from rich.text import Text
+
+    from since_cutoff.cache import DiskCache, NamespaceStats
+    from since_cutoff.engine import Engine, ModelTarget, Reporter, RunResult, ScanResult, Settings
+    from since_cutoff.hosts import detect_model
+    from since_cutoff.models import ModelInfo
+    from since_cutoff.progress import RichReporter
+    from since_cutoff.project import Project
+    from since_cutoff.sync import DetectedModel, TargetFile
+    from since_cutoff.taskfile import write_tasks
+
+    # A target file, the model and cutoff its block is written for, its scope, --suggestions
+    # and --per-package.
+    _Plan = tuple[TargetFile, ModelTarget, str, bool, int]
+
+
+class _LazyImport:
+    """A callable from a module that is imported when it is first called, so that the
+    commands which do not need it do not pay for the import. The name stays a module attribute
+    of ``cli``, which is where the tests replace it (``monkeypatch.setattr(cli, "Engine",
+    ...)``)."""
+
+    def __init__(self, module: str, name: str) -> None:
+        self.module, self.name = module, name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return getattr(importlib.import_module(self.module), self.name)(*args, **kwargs)
+
+
+if not TYPE_CHECKING:
+    Engine = _LazyImport("since_cutoff.engine", "Engine")
+    RichReporter = _LazyImport("since_cutoff.progress", "RichReporter")
+    detect_model = _LazyImport("since_cutoff.hosts", "detect_model")
+    write_tasks = _LazyImport("since_cutoff.taskfile", "write_tasks")
 
 COMMANDS = ("run", "scan", "sync", "status", "models", "cache", "unapply", "mcp")
 # ``scan --fail-on``: what makes it exit with code 3 (report.fail_reason).
 FAIL_ON = ("changes", "used", "old-form")
-CACHE_NAMESPACES = (
-    "pypi",
-    "sources",
-    "sources-meta",
-    "diffs",
-    "tasks",
-    "answers",
-    "notes",
-    "envs",
-    "models",
-)
+# ``sync --per-package``'s default: since_cutoff.notes.IMPORTED_APIS, copied so that building
+# the parser (--help) does not import notes and the API diff; test_startup.py keeps them equal.
+IMPORTED_APIS = 5
+# ``--cutoff-margin``'s default and environment variable: since_cutoff.models'
+# DEFAULT_CUTOFF_MARGIN and CUTOFF_MARGIN_VAR, copied so that building the parser does not
+# import models (and the network code with it); test_startup.py keeps them equal.
+DEFAULT_CUTOFF_MARGIN = 30
+CUTOFF_MARGIN_VAR = "SINCE_CUTOFF_CUTOFF_MARGIN"
 EXAMPLES = """examples:
   since-cutoff                          probe your coding agent's model on this project
   since-cutoff scan                     the changed APIs your code uses, with a note for each
@@ -132,6 +91,8 @@ EXAMPLES = """examples:
   since-cutoff run --compare template   compare the notes with a baseline built without a model
   since-cutoff run --model openai-compatible:my-model --base-url http://localhost:8000/v1
   since-cutoff models sonnet            show known models and their training cutoffs
+  since-cutoff cache info               the size of the cache by kind, and where it is
+  since-cutoff cache clear --sources    remove the extracted sources only (also --diffs, --pypi)
   since-cutoff mcp                      serve the read-only tools to coding agents over MCP (stdio)
 
 exit codes: 0 ok, 1 error (including: no model answer could be scored), 2 usage error,
@@ -241,6 +202,8 @@ def _interactive(stream: Any) -> bool:
 def _console(output: _Output) -> Console:
     """A rich console for stdout or stderr that suits where it goes: a terminal as usual; a
     file, pipe or CI log without terminal features and :data:`LOG_WIDTH` columns wide."""
+    from rich.console import Console
+
     options: dict[str, Any] = {}
     if not _interactive(output):
         if _isatty(output):
@@ -252,58 +215,20 @@ def _console(output: _Output) -> Console:
     )
 
 
-class RichReporter(Reporter):
-    # In a log or a pipe, where there is no live progress bar, a line such as "diffed 40/71
-    # (transformers)" comes about this many times per stage whose steps name a package.
-    LOG_LINES = 10
+def _escape(text: str) -> str:
+    """``rich.markup.escape``, imported with the first rich console."""
+    from rich.markup import escape
 
-    def __init__(self, console: Console) -> None:
-        self.console = console
-        self.progress: Progress | None = None
-        self.task: object | None = None
-        self.count = self.total = self.next_line = 0
-        self.warned: list[str] = []  # what warn() printed: the results do not print it again
+    return escape(text)
 
-    def stage(self, title: str, total: int | None = None) -> None:
-        self.done()
-        self.console.print(f"[dim]•[/dim] {escape(title)}")
-        self.count, self.total = 0, total or 0
-        self.next_line = max(1, self.total // self.LOG_LINES)
-        if not self.console.is_terminal or not _interactive(self.console.file):
-            return  # no live progress bar in logs and pipes: lines from advance() instead
-        self.progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=self.console,
-            transient=True,
-        )
-        self.progress.start()
-        self.task = self.progress.add_task(escape(title), total=total)
 
-    def advance(self, n: int = 1, *, label: str | None = None) -> None:
-        self.count += n
-        if self.progress is not None and self.task is not None:
-            self.progress.advance(self.task, n)  # type: ignore[arg-type]
-        elif label and self.total and (self.count >= self.next_line or self.count == self.total):
-            # A slow stage (a cold diff can take minutes) says how far it got in a log too.
-            self.console.print(f"  [dim]diffed {self.count}/{self.total} ({escape(label)})[/dim]")
-            self.next_line = self.count + max(1, self.total // self.LOG_LINES)
+def _error(message: str) -> None:
+    _console(STDERR).print(f"[red]error:[/red] {_escape(message)}")
 
-    def info(self, message: str) -> None:
-        self.console.print(f"[dim]•[/dim] {escape(message)}")
 
-    def warn(self, message: str) -> None:
-        self.console.print(f"[yellow]![/yellow] {escape(message)}")
-        self.warned.append(message)
-
-    def done(self) -> None:
-        if self.progress is not None:
-            self.progress.stop()
-            self.progress = None
-            self.task = None
+def _usage_error(message: str) -> int:
+    _error(message)
+    return 2
 
 
 # ------------------------------------------------------------------ parsing
@@ -313,6 +238,8 @@ def _csv(value: str) -> list[str]:
 
 def _arms(value: str) -> list[str]:
     """``--compare``: baseline arms, comma-separated; ``none`` for no baseline."""
+    from since_cutoff.baselines import BASELINE_ARMS
+
     arms = list(dict.fromkeys(_csv(value)))
     choices = (*BASELINE_ARMS, "none")
     unknown = [a for a in arms if a not in choices]
@@ -341,6 +268,15 @@ def _at_least_one(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError("must be 1 or more")
     return n
+
+
+# ``scan`` and ``sync`` --include-name-matches (selection.NAME_ONLY).
+_NAME_MATCHES_HELP = (
+    "also show the uses matched by a method's name alone, on a value whose class the code "
+    "does not show (tagged [name match]): the reports list them, their notes are written, and "
+    "scan's --fail-on and --annotate see them. Off by default (no report has them), and not "
+    "kept by the block: give it on every sync"
+)
 
 
 def _margin_flag(p: argparse.ArgumentParser) -> None:
@@ -526,6 +462,13 @@ def build_parser() -> argparse.ArgumentParser:
         "summary, the dependency table and the top --limit changes of each changed dependency",
     )
     scan.add_argument(
+        "--internal",
+        action="store_true",
+        help="list the changes to internal APIs too (not reached from the package's top "
+        "level, named in an __all__ or documented), which every count gives apart; implies "
+        "--all",
+    )
+    scan.add_argument(
         "--fail-on",
         choices=FAIL_ON,
         action="append",
@@ -544,6 +487,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also print GitHub Actions annotations to stdout: a warning on each file that uses "
         "a changed API in the old form, a notice on each file that uses one otherwise",
     )
+    scan.add_argument("--include-name-matches", action="store_true", help=_NAME_MATCHES_HELP)
 
     sync = sub.add_parser(
         "sync",
@@ -589,7 +533,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync.add_argument("-y", "--yes", action="store_true", help="write without asking")
     sync.add_argument(
-        "--json", action="store_true", help="print proposals and write results as JSON"
+        "--json",
+        action="store_true",
+        help="print proposals and write results as JSON (needs --yes, --check or --dry-run)",
     )
     sync.add_argument(
         "--force",
@@ -626,6 +572,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=80.0,
         help="skip packages whose wheel is larger (default: 80)",
     )
+    sync.add_argument("--include-name-matches", action="store_true", help=_NAME_MATCHES_HELP)
     sync.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
 
     status = sub.add_parser(
@@ -660,10 +607,29 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument(
         "query", nargs="?", default="", help="filter by id substring, e.g. 'sonnet'"
     )
+    models.add_argument(
+        "--makers",
+        action="store_true",
+        help="only the model makers' own listings, not gateways' and resellers'",
+    )
+    models.add_argument("--json", action="store_true", help="print the models as JSON")
     models.add_argument("--offline", action="store_true", help="use the bundled snapshot only")
 
-    cache = sub.add_parser("cache", help="show or clear the cache")
-    cache.add_argument("action", choices=["path", "clear"])
+    cache = sub.add_parser(
+        "cache",
+        help="show, measure or clear the cache",
+        description="path: where the cache is. info: its size, by kind; tasks, answers and "
+        "notes hold what the model answered in `run`, which costs money to make again. clear: "
+        "remove it all, or with --sources, --diffs or --pypi only those kinds. The extracted "
+        "sources are capped at SINCE_CUTOFF_CACHE_MAX_MB (default 2048; 0 for no cap): over "
+        "it, the least recently used ones go, never those a running scan uses.",
+    )
+    cache.add_argument("action", choices=["path", "info", "clear"])
+    cache.add_argument(
+        "--sources", action="store_true", help="clear: only the extracted package sources"
+    )
+    cache.add_argument("--diffs", action="store_true", help="clear: only the API diffs")
+    cache.add_argument("--pypi", action="store_true", help="clear: only the PyPI metadata")
 
     unapply = sub.add_parser(
         "unapply", help="remove the since-cutoff block from AGENTS.md / CLAUDE.md"
@@ -695,6 +661,8 @@ def _argv_with_default(argv: list[str]) -> list[str]:
             argv if first in COMMANDS or first in ("-h", "--help", "--version") else ["run", *argv]
         )
     if not Path(first).exists():
+        import difflib
+
         close = difflib.get_close_matches(first, COMMANDS, n=1, cutoff=0.6)
         if close or first.isalpha():
             hint = f" Did you mean '{close[0]}'?" if close else ""
@@ -744,19 +712,18 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str] | None) -> int:
     _utf8_streams()
-    err = _console(STDERR)
     try:
         argv_ = _argv_with_default(list(sys.argv[1:] if argv is None else argv))
     except SinceCutoffError as exc:
-        err.print(f"[red]error:[/red] {escape(str(exc))}")
-        return 2
+        return _usage_error(str(exc))
     args = build_parser().parse_args(argv_)
     if getattr(args, "debug", False):
+        import logging
+
         logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
     json_mode = getattr(args, "json", False)
     if args.command == "sync" and json_mode and not (args.yes or args.check or args.dry_run):
-        err.print("[red]error:[/red] sync --json requires --yes, --check or --dry-run")
-        return 2
+        return _usage_error("sync --json requires --yes, --check or --dry-run")
     markdown = getattr(args, "markdown", None)
     to_stdout = [
         flag
@@ -768,34 +735,31 @@ def _main(argv: list[str] | None) -> int:
         if on
     ]
     if len(to_stdout) > 1:
-        both = " and ".join(to_stdout)
-        err.print(f"[red]error:[/red] {both} cannot both write to stdout")
-        return 2
-    problem = _compare_problem(args)
+        return _usage_error(f"{' and '.join(to_stdout)} cannot both write to stdout")
+    problem = _compare_problem(args) or _cache_problem(args)
     if problem:
-        err.print(f"[red]error:[/red] {escape(problem)}")
-        return 2
-    out = _console(STDOUT)
-    ui = err if json_mode or markdown == "-" else out
+        return _usage_error(problem)
     try:
-        if args.command == "models":
-            return _cmd_models(args, out)
         if args.command == "cache":
             return _cmd_cache(args)
-        if args.command == "unapply":
-            return _cmd_unapply(args, out)
+        if args.command == "status":
+            return _cmd_status(args)
         if args.command == "mcp":
             return _cmd_mcp(args)
+        out = _console(STDOUT)
+        if args.command == "models":
+            return _cmd_models(args, out)
+        if args.command == "unapply":
+            return _cmd_unapply(args, out)
+        ui = _console(STDERR) if json_mode or markdown == "-" else out
         if args.command == "sync":
             return _cmd_sync(args, ui)
-        if args.command == "status":
-            return _cmd_status(args, out)
         return _cmd_run(args, ui, json_mode)
     except SinceCutoffError as exc:
-        err.print(f"[red]error:[/red] {escape(str(exc))}")
+        _error(str(exc))
         return 1
     except KeyboardInterrupt:
-        err.print("[yellow]interrupted[/yellow]")
+        _console(STDERR).print("[yellow]interrupted[/yellow]")
         return 130
 
 
@@ -811,9 +775,21 @@ def _compare_problem(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _cache_problem(args: argparse.Namespace) -> str | None:
+    """``cache path --sources``: the kind flags choose what ``clear`` removes, nothing else."""
+    if args.command != "cache" or args.action == "clear":
+        return None
+    flags = [f"--{kind}" for kind in ("sources", "diffs", "pypi") if getattr(args, kind)]
+    if not flags:
+        return None
+    return f"cache {args.action} takes no {', '.join(flags)}: the kinds go with clear"
+
+
 def _cutoff_margin(args: argparse.Namespace) -> int:
     """``--cutoff-margin``, else ``SINCE_CUTOFF_CUTOFF_MARGIN``, else the default: how many days
     before the cutoff the comparison release must have been published."""
+    from since_cutoff.models import parse_margin
+
     given = getattr(args, "cutoff_margin", None)
     if given is not None:
         return int(given)
@@ -827,6 +803,12 @@ def _cutoff_margin(args: argparse.Namespace) -> int:
 
 
 def _settings(args: argparse.Namespace) -> Settings:
+    from datetime import date
+
+    from since_cutoff.engine import Settings
+    from since_cutoff.models import parse_cutoff
+    from since_cutoff.taskfile import read_tasks
+
     try:
         cutoff = parse_cutoff(args.cutoff) if args.cutoff else None
     except ValueError as exc:
@@ -842,6 +824,7 @@ def _settings(args: argparse.Namespace) -> Settings:
         python_version=args.python_version,
         base_url=args.base_url,
         today=date.today(),
+        include_name_matches=getattr(args, "include_name_matches", False),
     )
     if args.command == "run":
         s.task_model = args.task_model
@@ -879,6 +862,28 @@ def _check_tasks_out(path: Path, tasks_from: str | None) -> None:
 
 
 def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
+    from collections import Counter
+
+    from since_cutoff.cache import DiskCache
+    from since_cutoff.engine import ERROR, STALE, TASK_WRITER_FAILED, ModelTarget
+    from since_cutoff.notes import agents_import_tip, apply_block, block_targets
+    from since_cutoff.project import load_project
+    from since_cutoff.report import (
+        fail_reason,
+        github_annotations,
+        render_console,
+        render_scan,
+        render_scan_markdown,
+        to_json,
+        write_outputs,
+    )
+
+    if args.command == "run":
+        # The type checker scores every answer: without it, stop before the scan and the
+        # model calls, with the install line (basedpyright is the ``since-cutoff[run]`` extra).
+        from since_cutoff.checker import pyright_command
+
+        pyright_command()
     settings = _settings(args)
     project = load_project(Path(args.path), python=settings.python_version)
     if settings.python_version is None:
@@ -916,7 +921,13 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         shown = reporter.warned
         if args.command == "scan":
             render_scan(
-                ui, scan, show_all=args.all, verbose=args.verbose, limit=args.limit, shown=shown
+                ui,
+                scan,
+                show_all=args.all or args.internal,
+                verbose=args.verbose,
+                limit=args.limit,
+                shown=shown,
+                internal=args.internal,
             )
         else:
             render_console(ui, scan, run, verbose=args.verbose, shown=shown)
@@ -924,12 +935,16 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
     if args.command == "run" and run is not None:
         if run.block:
             if args.apply:
-                for path in block_targets(project.root, args.target):
+                paths = block_targets(project.root, args.target)
+                for path in paths:
                     action = apply_block(path, run.block)
                     ui.print(
-                        f"\n[green]✓[/green] {action.capitalize()} {escape(str(path))} with "
+                        f"\n[green]✓[/green] {action.capitalize()} {_escape(str(path))} with "
                         f"{len(run.notes)} notes"
                     )
+                tip = agents_import_tip(project.root, paths)  # as sync says it (issue #13)
+                if tip:
+                    ui.print(f"[yellow]![/yellow] {_escape(tip)}.")
             elif not json_mode:
                 ui.print(
                     "\n[bold]Notes for AGENTS.md[/bold] [dim](run again with --apply to write them)[/dim]"
@@ -937,13 +952,13 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
                 ui.print(run.block, markup=False, highlight=False)
         elif args.apply:
             ui.print("\n[dim]Nothing to apply: no failures needed a note.[/dim]")
-    ui.print(f"[dim]Full report: {escape(str(md))}[/dim]")
+    ui.print(f"[dim]Full report: {_escape(str(md))}[/dim]")
     if tasks_out:
         # Last, so that a failed write cannot cost the result card, the JSON or --apply.
         _write_tasks_out(Path(tasks_out), run, settings)
-        ui.print(f"[dim]Tasks: {escape(tasks_out)} (repeat this run with --tasks-from)[/dim]")
+        ui.print(f"[dim]Tasks: {_escape(tasks_out)} (repeat this run with --tasks-from)[/dim]")
     if summary_md and summary_md != "-":
-        ui.print(f"[dim]Markdown summary: {escape(summary_md)}[/dim]")
+        ui.print(f"[dim]Markdown summary: {_escape(summary_md)}[/dim]")
     if getattr(args, "annotate", None) == "github":
         # Plain lines, never wrapped: the runner reads each "::warning ..." line as one command.
         STDOUT.write("".join(line + "\n" for line in github_annotations(scan, env=os.environ)))
@@ -961,12 +976,12 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         )
     if run is not None and run.all_errored:
         first = next((a.error for a in run.probes if a.error), "unknown error")
-        ui.print(f"[red]Every model call failed[/red]: {escape(first or '')}")
+        ui.print(f"[red]Every model call failed[/red]: {_escape(first or '')}")
         return 1
     if run is not None and scan.changed and not run.probes and run.skipped_changes:
         # Nothing was measured, so a clean exit would let `--fail-on-stale` pass silently.
         reason = Counter(r for _, r in run.skipped_changes).most_common(1)[0][0]
-        ui.print(f"[red]No API change could be probed[/red]: {escape(reason)}")
+        ui.print(f"[red]No API change could be probed[/red]: {_escape(reason)}")
         return 1
     writer_failed = [
         r for _, r in (run.skipped_changes if run else []) if r.startswith(TASK_WRITER_FAILED)
@@ -979,7 +994,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         ui.print(
             f"[red]The task writer failed for {len(writer_failed)} of "
             f"{len(run.skipped_changes) + len(run.probes)} API changes[/red], so this run measured "
-            f"too little to trust: {escape(writer_failed[0])}"
+            f"too little to trust: {_escape(writer_failed[0])}"
         )
         return 1
     if (
@@ -997,7 +1012,7 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
         fail_on.add("changes")
     failing = fail_reason(scan, fail_on)
     if failing:
-        ui.print(f"[dim]Exit code 3: {escape(failing)}[/dim]")
+        ui.print(f"[dim]Exit code 3: {_escape(failing)}[/dim]")
         return 3
     return 0
 
@@ -1005,6 +1020,8 @@ def _cmd_run(args: argparse.Namespace, ui: Console, json_mode: bool) -> int:
 def _write_tasks_out(path: Path, run: RunResult | None, settings: Settings) -> None:
     """``--tasks-out``: the tasks this run used, credited to whoever wrote them: this run's task
     writer, or the writer, prompt version and tool a ``--tasks-from`` file names."""
+    from since_cutoff.taskfile import tasks_document
+
     used = run.used_tasks() if run is not None else []
     source = settings.tasks_from
     if source is None:
@@ -1036,6 +1053,8 @@ def _use_detected_model(
     """The model the coding agent is set up with, into ``settings``; when no setting names
     one, say that Claude Code's default is used, which ``run`` tests (``probes``) and ``scan``
     and ``sync`` only take the training cutoff of."""
+    from since_cutoff.hosts import DEFAULT_SOURCE, not_found_hint
+
     found = detect_model(root)
     if found is None:
         settings.model_source = DEFAULT_SOURCE
@@ -1051,30 +1070,34 @@ def _model_line(target: ModelTarget, source: str | None = None) -> str:
     2025-07-01 (from models.dev)``, as rich markup; a cutoff alone; several models (``sync
     --model a,b``) with their earliest cutoff. With ``--cutoff-margin 0`` the comparison day is
     the cutoff, and the line does not repeat it."""
+    from since_cutoff.notes import model_names
+
     day = target.cutoff.isoformat()
     from_day = (
         f", comparing from releases up to [bold]{target.compare_date.isoformat()}[/bold]"
         if target.margin > 0
         else ""
     )
-    where = f"[dim](from {escape(source or target.cutoff_source)})[/dim]"
+    where = f"[dim](from {_escape(source or target.cutoff_source)})[/dim]"
     if not target.model_id:
         return f"[dim]•[/dim] Custom cutoff [bold]{day}[/bold]{from_day} {where}"
     names = model_names(target.model_id)
     if len(names) > 1:
-        shown = ", ".join(f"[bold]{escape(n)}[/bold]" for n in names)
+        shown = ", ".join(f"[bold]{_escape(n)}[/bold]" for n in names)
         return (
             f"[dim]•[/dim] Models {shown}, earliest training cutoff [bold]{day}[/bold]"
             f"{from_day} {where}"
         )
     return (
-        f"[dim]•[/dim] Model [bold]{escape(target.model_id)}[/bold], training cutoff "
+        f"[dim]•[/dim] Model [bold]{_escape(target.model_id)}[/bold], training cutoff "
         f"[bold]{day}[/bold]{from_day} {where}"
     )
 
 
 def _resolve_target(engine: Engine, *, allow_calls: bool) -> ModelTarget:
     """The engine's target; an error about a model read from a setting names that setting."""
+    from since_cutoff.hosts import DEFAULT_SOURCE
+
     settings = engine.settings
     spec, source = settings.model, settings.model_source
     try:
@@ -1102,13 +1125,34 @@ def _write_markdown(target: str, text: str) -> None:
 
 
 # ------------------------------------------------------------ sync and status
-# A target file, the model and cutoff its block is written for, its scope, --suggestions and
-# --per-package.
-_Plan = tuple[TargetFile, ModelTarget, str, bool, int]
-
-
 def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
     """``since-cutoff sync``: write or update the notes block (see :mod:`since_cutoff.sync`)."""
+    from since_cutoff.cache import DiskCache
+    from since_cutoff.models import parse_cutoff
+    from since_cutoff.notes import (
+        IMPORTED_APIS,
+        SCOPE_USED,
+        agents_import_tip,
+        apply_block,
+        block_targets,
+        remove_block,
+    )
+    from since_cutoff.project import load_project
+    from since_cutoff.sync import (
+        EXIT_EDITED,
+        EXIT_OK,
+        EXIT_OUT_OF_DATE,
+        diff_lines,
+        edited_text,
+        out_of_date_text,
+        propose,
+        read_target,
+        sticky_target,
+        sync_json,
+        up_to_date_text,
+        written_text,
+    )
+
     try:
         cutoff = parse_cutoff(args.cutoff) if args.cutoff else None
     except ValueError as exc:
@@ -1158,10 +1202,16 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
     ]
     changed = [p for p in proposals if p.changed]
     written: set[str] = set()
+    # Both AGENTS.md and CLAUDE.md, and no `@AGENTS.md` in CLAUDE.md: how to keep one copy, or
+    # what Claude Code needs to read a block in AGENTS.md alone; or a second copy (issue #13).
+    tip = agents_import_tip(project.root, [t.path for t in targets])
+    if not any(p.block for p in proposals):
+        tip = None
 
     def finish(code: int) -> int:
         if args.json:
-            STDOUT.write(json.dumps(sync_json(proposals, code, written), indent=2) + "\n")
+            listed = sync_json(proposals, code, written, tip=tip)
+            STDOUT.write(json.dumps(listed, indent=2) + "\n")
         return code
 
     for p in changed:
@@ -1169,24 +1219,21 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         for line in diff_lines(p):
             out.print(_diff_text(line))
     out.print()
-    # Both AGENTS.md and CLAUDE.md, the notes in AGENTS.md: issue #13 (which files get the
-    # block) is not done yet, so say what Claude Code needs to read them.
-    tip = agents_import_tip(project.root, [t.path for t in targets])
-    if tip and any(p.block for p in proposals):
-        out.print(f"[yellow]![/yellow] {escape(tip)}.")
+    if tip:
+        out.print(f"[yellow]![/yellow] {_escape(tip)}.")
     edited = [p for p in changed if p.edited and not args.force]
     if edited:
         for p in edited:
-            out.print(f"[yellow]![/yellow] {escape(edited_text(p))}")
+            out.print(f"[yellow]![/yellow] {_escape(edited_text(p))}")
         return finish(EXIT_OK if args.dry_run and not args.check else EXIT_EDITED)
     for p in proposals:
         if not p.changed:
-            out.print(escape(up_to_date_text(p, scans[(p.model, p.cutoff)])))
+            out.print(_escape(up_to_date_text(p, scans[(p.model, p.cutoff)])))
     if not changed:
         return finish(EXIT_OK)
     if args.check:
         for p in changed:
-            out.print(escape(out_of_date_text(p)))
+            out.print(_escape(out_of_date_text(p)))
         return finish(EXIT_OUT_OF_DATE)
     if args.dry_run:
         out.print("Nothing written (--dry-run).")
@@ -1209,7 +1256,7 @@ def _cmd_sync(args: argparse.Namespace, out: Console) -> int:
         else:
             apply_block(p.target.path, p.block)
         written.add(p.target.name)
-        out.print(f"[green]✓[/green] {escape(written_text(p))}")
+        out.print(f"[green]✓[/green] {_escape(written_text(p))}")
     if any(p.target.text for p in changed):
         out.print("[dim]Text outside the since-cutoff markers is unchanged.[/dim]")
     return finish(EXIT_OK)
@@ -1226,10 +1273,16 @@ def _sync_scans(
     """One scan per model and cutoff the blocks are written for (the diffs are cached, so a
     second one costs little). Raises SinceCutoffError when nothing could be checked, or when a
     package the notes are about could not be (PyPI unreachable): sync then writes nothing."""
+    from datetime import date
+
+    from since_cutoff.engine import SKIPPED, Settings
+    from since_cutoff.sync import blocked_by, lockfile_changes, target_status
+
     settings = Settings(
         max_download_mb=args.max_download_mb,
         python_version=project.python_version,
         today=date.today(),
+        include_name_matches=args.include_name_matches,
     )
     engine = Engine(settings, store=store, llm_cache=store, reporter=reporter)
     scans: dict[tuple[str, date], ScanResult] = {}
@@ -1257,7 +1310,10 @@ def _sync_scans(
             )
     for scan in scans.values():
         for p in scan.skipped:
-            reporter.warn(f"{p.name} could not be checked ({p.reason}), so it has no notes")
+            if p.reason and METAPACKAGE in p.reason:  # information: its parts are checked
+                reporter.info(p.reason)
+            else:
+                reporter.warn(f"{p.name} could not be checked ({p.reason}), so it has no notes")
     return scans
 
 
@@ -1271,6 +1327,10 @@ def _sync_model(
 ) -> ModelTarget:
     """The model(s) and cutoff given on the command line, else the model the coding agent is
     set up with, as for ``scan``; several models: the earliest of their cutoffs."""
+    from datetime import date
+
+    from since_cutoff.engine import ModelTarget, Settings
+
     if not models and cutoff is not None:
         return ModelTarget.cutoff_only(cutoff, "--cutoff; no model given", margin=margin)
     found: list[ModelTarget] = []
@@ -1301,7 +1361,7 @@ def _confirm(question: str, out: Console) -> bool | None:
     agent's shell), where nobody can answer."""
     if not _interactive(sys.stdin):
         return None
-    out.print(f"{escape(question)} [y/N] ", end="")
+    out.print(f"{_escape(question)} [y/N] ", end="")
     try:
         answer = input()
     except EOFError:
@@ -1310,6 +1370,8 @@ def _confirm(question: str, out: Console) -> bool | None:
 
 
 def _diff_text(line: str) -> Text:
+    from rich.text import Text
+
     style = ""
     if line.startswith(("---", "+++")):
         style = "bold"
@@ -1322,20 +1384,36 @@ def _diff_text(line: str) -> Text:
     return Text(line, style)
 
 
-def _cmd_status(args: argparse.Namespace, out: Console) -> int:
+def _cmd_status(args: argparse.Namespace) -> int:
     """``since-cutoff status``, offline. With ``--hook``, one line when the notes are out of
     date, else nothing, and always exit code 0: a coding agent's session start must never
-    fail or wait on it."""
+    fail or wait on it (and it prints without rich, which it would wait for)."""
     if not args.hook:
-        return _status(args, out)
+        return _status(args, _console(STDOUT))
     try:
-        _status(args, out)
+        _status(args, None)
     except Exception:  # whatever goes wrong, the session starts
+        import logging
+
         logging.getLogger(__name__).debug("status --hook failed", exc_info=True)
-    return EXIT_OK
+    return 0
 
 
-def _status(args: argparse.Namespace, out: Console) -> int:
+def _status(args: argparse.Namespace, out: Console | None) -> int:
+    from since_cutoff.notes import block_targets
+    from since_cutoff.project import load_project
+    from since_cutoff.sync import (
+        EXIT_OK,
+        current_deps_hash,
+        exit_code,
+        hook_line,
+        note_import_tip,
+        read_target,
+        status_json,
+        status_lines,
+        target_status,
+    )
+
     project = load_project(Path(args.path))
     targets = [read_target(project.root, p) for p in block_targets(project.root, args.target)]
     detected = _detected_offline(project.root)
@@ -1344,6 +1422,7 @@ def _status(args: argparse.Namespace, out: Console) -> int:
     statuses = [
         target_status(project, t, deps=deps, detected=detected, margin=margin) for t in targets
     ]
+    note_import_tip(project.root, statuses)
     code = exit_code(statuses)
     if args.hook:
         line = hook_line(statuses)
@@ -1353,8 +1432,9 @@ def _status(args: argparse.Namespace, out: Console) -> int:
     if args.json:
         STDOUT.write(json.dumps(status_json(project, statuses, detected), indent=2) + "\n")
         return code
+    console = out if out is not None else _console(STDOUT)
     for line in status_lines(project, statuses):
-        out.print(escape(line))
+        console.print(_escape(line))
     return code
 
 
@@ -1365,6 +1445,13 @@ def _detected_offline(root: Path) -> DetectedModel | None:
     found = detect_model(root)
     if found is None or found.problem or not found.spec:
         return None
+    from datetime import date
+
+    from since_cutoff.cache import DiskCache
+    from since_cutoff.engine import Settings
+    from since_cutoff.models import ModelRegistry
+    from since_cutoff.sync import DetectedModel
+
     store = DiskCache()
     settings = Settings(model=found.spec, model_source=found.source, today=date.today())
     engine = Engine(
@@ -1381,9 +1468,18 @@ def _detected_offline(root: Path) -> DetectedModel | None:
 
 
 def _cmd_models(args: argparse.Namespace, out: Console) -> int:
+    from datetime import date
+
+    from rich.table import Table
+
+    from since_cutoff.cache import DiskCache
+    from since_cutoff.models import FIRST_PARTY, ModelRegistry
+
     registry = ModelRegistry(DiskCache(), offline=args.offline)
     q = args.query.lower()
     models = [m for m in registry.all_models() if q in m.id.lower() and m.knowledge]
+    if args.makers:
+        models = [m for m in models if m.provider in FIRST_PARTY]
     priority = {
         "anthropic": 0,
         "openai": 1,
@@ -1404,6 +1500,10 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
             m.id,
         )
     )
+    if args.json:
+        listed = {"source": registry.source, "models": [_model_json(m) for m in models]}
+        STDOUT.write(json.dumps(listed, indent=2) + "\n")
+        return 0
     if not out.is_terminal:
         for m in models:
             released = m.release_date.isoformat() if m.release_date else ""
@@ -1422,25 +1522,97 @@ def _cmd_models(args: argparse.Namespace, out: Console) -> int:
             m.release_date.isoformat() if m.release_date else "",
         )
     out.print(table)
-    out.print(f"[dim]{len(models)} models (source: {escape(registry.source)})[/dim]")
+    out.print(f"[dim]{len(models)} models (source: {_escape(registry.source)})[/dim]")
+    # Which of the listings `--model <query>` takes the cutoff of (issue #87).
+    used = registry.lookup(args.query) if args.query.strip() else None
+    if used is not None and used.knowledge is not None:
+        out.print(
+            f"[dim]--model {_escape(args.query)} takes the training cutoff of "
+            f"{_escape(used.provider)}'s listing {_escape(used.id)}, "
+            f"{_escape(used.knowledge_raw or '')}[/dim]"
+        )
     return 0
 
 
+def _model_json(m: ModelInfo) -> dict[str, Any]:
+    """One model of ``models --json``: the cutoff as models.dev writes it and as a date."""
+    return {
+        "provider": m.provider,
+        "id": m.id,
+        "name": m.name,
+        "family": m.family,
+        "training_cutoff": m.knowledge_raw,
+        "cutoff_date": m.knowledge.isoformat() if m.knowledge else None,
+        "released": m.release_date.isoformat() if m.release_date else None,
+    }
+
+
+# ------------------------------------------------------------------- cache
 def _cmd_cache(args: argparse.Namespace) -> int:
-    root = default_cache_dir()
+    """``since-cutoff cache path | info | clear [--sources] [--diffs] [--pypi]``: plain lines
+    on stdout, for scripts and without rich."""
+    from since_cutoff import cache
+
+    root = cache.default_cache_dir()
     if args.action == "path":
         STDOUT.write(f"{root}\n")
         return 0
-    removed = []
-    for ns in CACHE_NAMESPACES:
-        p = root / ns
-        if p.is_dir():
-            shutil.rmtree(p, ignore_errors=True)
-            removed.append(ns)
-    with contextlib.suppress(OSError):
-        root.rmdir()  # only succeeds if the directory is now empty, i.e. it was ours alone
+    if args.action == "info":
+        for line in cache_info_lines(root, cache.stats(root), cache.max_sources_bytes()):
+            STDOUT.write(line + "\n")
+        return 0
+    chosen = {
+        ns for kind, kinds in cache.CLEAR_FLAGS.items() if getattr(args, kind) for ns in kinds
+    }
+    namespaces = [ns for ns in cache.NAMESPACES if not chosen or ns in chosen]
+    removed = cache.clear(root, namespaces)
     STDOUT.write(f"cleared {', '.join(removed) or 'nothing'} in {root}\n")
     return 0
+
+
+def cache_info_lines(root: Path, kinds: list[NamespaceStats], cap: int | None) -> list[str]:
+    """``cache info``: the path, one row per kind (size, entries, files, and the oldest: when
+    its oldest entry was written, or for the sources, when the least recently used tree was
+    last used), the total, and the cap on the sources."""
+    from datetime import date
+
+    from since_cutoff.cache import MB
+
+    def day(stamp: float | None) -> str:
+        return date.fromtimestamp(stamp).isoformat() if stamp else ""
+
+    rows = [("kind", "size", "entries", "files", "oldest", "")]
+    for k in kinds:
+        note = "model output: costs money to make again" if k.model_output else ""
+        rows.append(
+            (k.name, f"{k.bytes / MB:,.1f} MB", str(k.entries), str(k.files), day(k.oldest), note)
+        )
+    used = [k.oldest for k in kinds if k.oldest]
+    rows.append(
+        (
+            "total",
+            f"{sum(k.bytes for k in kinds) / MB:,.1f} MB",
+            str(sum(k.entries for k in kinds)),
+            str(sum(k.files for k in kinds)),
+            day(min(used) if used else None),
+            "",
+        )
+    )
+    widths = [max(len(row[i]) for row in rows) for i in range(5)]
+    lines = [str(root)]
+    for name, size, entries, files, oldest, note in rows:
+        cells = [name.ljust(widths[0]), size.rjust(widths[1]), entries.rjust(widths[2])]
+        cells += [files.rjust(widths[3]), oldest.ljust(widths[4])]
+        lines.append(("  ".join(cells) + "  " + note).rstrip())
+    if cap is None:
+        setting = os.environ.get("SINCE_CUTOFF_CACHE_MAX_MB", "").strip()
+        lines.append(f"sources cap: none (SINCE_CUTOFF_CACHE_MAX_MB={setting})")
+    else:
+        lines.append(
+            f"sources cap: {cap // MB:,} MB (SINCE_CUTOFF_CACHE_MAX_MB); over it, the least "
+            "recently used trees go, never those a running scan uses"
+        )
+    return lines
 
 
 def _cmd_mcp(args: argparse.Namespace) -> int:
@@ -1452,6 +1624,8 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
 
 
 def _cmd_unapply(args: argparse.Namespace, out: Console) -> int:
+    from since_cutoff.notes import remove_block
+
     root = Path(args.path).resolve()
     if not root.is_dir():
         raise SinceCutoffError(f"{root} is not a directory")
@@ -1459,7 +1633,7 @@ def _cmd_unapply(args: argparse.Namespace, out: Console) -> int:
     removed = [t for t in targets if remove_block(t if t.is_absolute() else root / t)]
     if removed:
         out.print(
-            "removed the since-cutoff block from " + ", ".join(escape(t.name) for t in removed)
+            "removed the since-cutoff block from " + ", ".join(_escape(t.name) for t in removed)
         )
     else:
         out.print("no since-cutoff block found")

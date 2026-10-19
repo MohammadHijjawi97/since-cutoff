@@ -415,13 +415,28 @@ def test_why_a_section_goes(sc, tmp_path) -> None:
     code, out = sc("sync", root, "--check")
     assert "AGENTS.md is out of date: toylib's API did not change from 1.0 to 1.1." in out
     set_pins(root, ("toylib==2.0", "otherlib==1.0"))
-    # No toylib release on or before the cutoff: its whole API is newer.
+    # No toylib release on or before the cutoff: its whole API is newer, and the code imports
+    # it, so its section holds the one note that says so (tagged [metadata]), in place of the
+    # two notes from the diff: both changed, none dropped.
     code, out = sc("sync", root, "--cutoff", "2024-01-01", "--yes")
     assert code == EXIT_OK
     assert (
-        "✓ Removed the notes block from AGENTS.md: written for the cutoff 2024-01-01 (it was for "
-        "claude-sonnet-4-5 (cutoff 2025-07-31)); toylib dropped (first released after the "
-        "cutoff)." in out
+        "✓ Updated AGENTS.md: written for the cutoff 2024-01-01 (it was for "
+        "claude-sonnet-4-5 (cutoff 2025-07-31)); toylib 2.0: 2 changed." in out
+    )
+    assert (
+        "**toylib 2.0**\n- toylib first appeared on PyPI on 2024-06-01, after the cutoff; the "
+        "model has no training data on it. The project pins 2.0 (released 2025-10-01). "
+        "[metadata]\n" in agents(root)
+    )
+    # Once the code no longer imports it, its section goes.
+    (root / "main.py").write_text("import json\n", encoding="utf-8")
+    (root / "sub" / "other.py").write_text("import json\n", encoding="utf-8")
+    code, out = sc("sync", root, "--cutoff", "2024-01-01", "--yes")
+    assert code == EXIT_OK
+    assert (
+        "✓ Removed the notes block from AGENTS.md: toylib dropped (first released after the "
+        "cutoff, and your code no longer imports it)." in out
     )
 
 
@@ -620,6 +635,14 @@ def test_sync_json_requires_noninteractive_mode(sc, tmp_path, capsys, monkeypatc
     captured = capsys.readouterr()
     assert code == 2 and captured.out == ""
     assert "--yes" in captured.err and "--check" in captured.err and "--dry-run" in captured.err
+    # Any other failure (exit code 1) leaves stdout empty too, as the README says.
+    code = cli.main(["sync", str(tmp_path / "missing"), "--json", "--yes"])
+    captured = capsys.readouterr()
+    assert code == 1 and captured.out == "" and captured.err
+    # And the help says what --json needs.
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["sync", "--help"])
+    assert "JSON (needs --yes, --check or --dry-run)" in " ".join(capsys.readouterr().out.split())
 
 
 def test_sync_asks_before_writing(sc, tmp_path, monkeypatch) -> None:
@@ -892,8 +915,8 @@ def test_targets_are_the_files_that_have_a_block_else_the_first_choice(tmp_path)
     write(root / "CLAUDE.md", "mine\n")
     assert block_targets(root) == [root / "CLAUDE.md"]  # only CLAUDE.md
     write(root / "AGENTS.md", "mine\n")
-    # Both, and no block yet: AGENTS.md, as 0.3 chose (issue #13 is this case).
-    assert block_targets(root) == [root / "AGENTS.md"]
+    # Both, no block yet, and CLAUDE.md does not import AGENTS.md: both (issue #13).
+    assert block_targets(root) == [root / "AGENTS.md", root / "CLAUDE.md"]
     write(root / "CLAUDE.md", f"mine\n{BLOCK_START}\nx\n{BLOCK_END}\n")
     assert block_targets(root) == [root / "CLAUDE.md"]  # where the block is
     write(root / "AGENTS.md", f"{BLOCK_START}\nbroken\n")  # its reader reports it
@@ -920,13 +943,6 @@ def test_sync_updates_the_block_where_it_is(sc, tmp_path) -> None:
     assert "Updated AGENTS.md" in out and "Updated CLAUDE.md" in out
 
 
-ISSUE_13 = pytest.mark.xfail(
-    strict=True,
-    reason="issue #13 (good first issue): both AGENTS.md and CLAUDE.md, and no block yet",
-)
-
-
-@ISSUE_13
 def test_13_with_an_agents_import_only_agents_md_gets_the_block(tmp_path) -> None:
     write(tmp_path / "AGENTS.md", "mine\n")
     write(tmp_path / "CLAUDE.md", "@AGENTS.md\n")
@@ -935,7 +951,6 @@ def test_13_with_an_agents_import_only_agents_md_gets_the_block(tmp_path) -> Non
     assert block_targets(tmp_path) == [tmp_path / "AGENTS.md", tmp_path / "CLAUDE.md"]
 
 
-@ISSUE_13
 def test_13_an_import_inside_code_does_not_count(tmp_path) -> None:
     write(tmp_path / "AGENTS.md", "mine\n")
     write(tmp_path / "CLAUDE.md", "Write `@AGENTS.md` to import it.\n")
@@ -1008,6 +1023,24 @@ def test_run_apply_updates_the_block_where_it_is(tmp_path, scripted_cli) -> None
     assert agents(root) == MINE  # no second block
     claude = (root / "CLAUDE.md").read_bytes().decode("utf-8")
     assert claude.startswith("# Claude\n\n" + BLOCK_START) and "old notes" not in claude
+
+
+@pytest.mark.pyright
+def test_run_apply_says_how_to_keep_one_copy(tmp_path, scripted_cli, capsys) -> None:
+    """Issue #13: with AGENTS.md and a CLAUDE.md that does not import it, run --apply writes
+    the block to both, and says what sync says about it."""
+    from since_cutoff.notes import TWO_COPIES_TIP
+    from tests.conftest import ScriptedModel
+
+    root = make_app(tmp_path, pins=("toylib==2.0",))
+    write(root / "AGENTS.md", MINE)
+    write(root / "CLAUDE.md", "# Claude\n\nUse tabs.\n")
+    argv = ["run", str(root), *SONNET, "--max-probes", "1", "--heldout", "1"]
+    scripted_cli.append(ScriptedModel())
+    assert cli.main([*argv, "--regression", "0", "--apply"]) == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert BLOCK_START in agents(root) and BLOCK_START in (root / "CLAUDE.md").read_text()
+    assert f"! {TWO_COPIES_TIP}." in out
 
 
 # ------------------------------------------------------------ reading the file

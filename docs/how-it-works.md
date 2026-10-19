@@ -20,9 +20,26 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
 1. **Dependencies and exact versions** come from the first source found: `uv.lock`,
    `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock`; then the project's `.venv`
    (read from `*.dist-info/METADATA`, nothing is executed); then pins in `pyproject.toml`,
-   `requirements*.txt` and `Pipfile`. `setup.py` and `setup.cfg` are not read (that would mean
-   running the project's code); a project with nothing else gets an error that says so.
+   `requirements*.txt`, `Pipfile` and the `pip:` block of a conda `environment.yml` (or
+   `environment.yaml`). `setup.py` and `setup.cfg` are not read (that would mean running the
+   project's code); a project with nothing else gets an error that says so.
    The version source in the reports names every place the versions come from.
+   - A conda environment file's `pip:` block is read as a requirements file: pins, ranges,
+     extras and direct references (`pkg @ git+https://...`, not looked up on PyPI), and the
+     files it includes (`-r requirements-x.txt`, relative to the environment file, as conda
+     has pip read it), with a warning for one that does not exist. An include is followed with
+     or without a space after `-r` and with a space or `=` after `--requirement`, its name
+     being the first word after the option (`-r base.txt --pre` includes base.txt), here and
+     in any requirements file. A block that YAML aliases repeat is read once, and no more than
+     its first 10,000 lines are read, with a warning. Its conda packages (`python=3.12`,
+     `numpy=1.26`) are not read, as they do not come from PyPI, and neither are other options
+     (`-e .`) or local paths. A version pinned there or in a file it includes is labelled
+     `environment.yml` (the pins of a file that `requirements.txt` includes are labelled
+     `requirements.txt`), also when a `.venv` provides the others; a `requirements*.txt` that
+     the block includes and that is also read on its own keeps its own label. An environment
+     file that is not YAML stops the scan with an error (`could not parse environment.yml:
+     ...`), also when a lockfile provides the versions, as a `pyproject.toml` that is not TOML
+     does.
    - A lockfile the project is not set up for (a `poetry.lock` or `pdm.lock` next to a
      `pyproject.toml` without that tool's table or build backend, a `Pipfile.lock` without a
      `Pipfile`) is ignored, with a warning, when its versions disagree with the pinned
@@ -45,6 +62,15 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    bundled for offline use), or from `--cutoff`. Partial dates mean the end of the period
    (`2025-07` means 31 July 2025). Without `--model`, the model is the one your coding agent is
    set up with (see [Choosing the model](https://github.com/MohammadHijjawi97/since-cutoff#choosing-the-model)).
+   models.dev often lists one model several times: by its maker and by gateways and resellers,
+   which disagree. The cutoff is the requested provider's listing's when it has one
+   (`opencode:glm-5.1`, `cloudflare-workers-ai:@cf/meta/llama-3.2-3b-instruct`), else the
+   maker's own (for a dated snapshot without a cutoff, the maker's model:
+   `claude-sonnet-4-20250514` takes `claude-sonnet-4`'s), else the earliest that any gateway or
+   reseller lists, whichever spelling of the id is asked for: an earlier cutoff gives more
+   notes, the safe side ([#87](https://github.com/MohammadHijjawi97/since-cutoff/issues/87)).
+   The model line names a listing that is not the maker's ("from models.dev, deepinfra's
+   listing"), and `since-cutoff models <id>` ends with the listing `--model <id>` takes.
 3. **The comparison release** is the newest final, non-yanked release published at least 30
    days before the cutoff date (PyPI upload time): the latest release published on or before
    the cutoff minus the margin. The margin is `--cutoff-margin DAYS`, or
@@ -111,7 +137,19 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    now" offers only names that are new in the same owner. A positional parameter renamed in
    place is one change, with the new name as a suggestion. A removed `*args` or `**kwargs` is
    reported as such (its parameter in results.json is `*args` or `**kwargs`), unless the new
-   signature names the parameters it took.
+   signature names the parameters it took. A `**kwargs` annotated `Unpack[SomeTypedDict]`
+   (PEP 692) takes the TypedDict's keys and no other keyword, so a keyword the release at the
+   cutoff took and the pinned release's TypedDict has not is a removed parameter (pandas 3.0's
+   `read_csv(delim_whitespace=...)`, whose overloads end in `**kwds: Unpack[_read_shared]`),
+   and so is a key of the old TypedDict that the new signature does not name; a key that moved
+   to a base TypedDict is still a key, `self` and `cls` are no keywords, and a bare `**kwargs`
+   or a TypedDict that allows other keys (PEP 728's `extra_items=`, `closed=False`) takes
+   anything. A change to a method or attribute carries the paths of the public classes that
+   inherit it without overriding it (`pandas.DataFrame.fillna` for `NDFrame.fillna`), so that
+   code calling it on them is matched; a change to a method of a private class that a public
+   class inherits is reported under the shortest public inheritor. Each change says whether its
+   API is public or internal (`tier` in results.json; see [What the numbers
+   mean](#what-the-numbers-mean-and-do-not-mean)).
 
    Not reported, because code written for the old version still works or never used them:
    - a name still listed in `__all__` of a module that binds names the source does not spell
@@ -120,7 +158,18 @@ versions, and all intermediate data (changes, uses, notes, tasks, answers, diagn
    - a member a class may still inherit: from a standard-library base, from a base the package
      vendors, or from a base in another package when the removed override called the base's
      method; and a module function the old version attached to a class that is now a method of
-     it;
+     it. An attribute the old class set in a method and the new constructor hands to a base in
+     another package (fastapi 0.143's `Param(pydantic.fields.FieldInfo)` no longer assigns
+     `self.deprecated`; it passes `kwargs["deprecated"]` to `super().__init__(**use_kwargs)`),
+     by name, in position, through a `**kwargs` or by having no constructor of its own, is
+     unknown, not removed, since since-cutoff did not read that base: the scan warns once per
+     package that the class's attributes were not compared (the compiled-module warning says
+     the same of its modules). A field or constant of the class body (a pydantic model's
+     `usage: int`), an attribute the constructor neither sets nor hands on, and a key dropped
+     from a TypedDict (typing's constructs set no attributes) are removed. An attribute the new
+     class sets in a tuple target, or in a function of its module that a method gives `self`
+     to (0.143's `_populate_api_route_state(self, path, ...)` sets `route.path`), is there,
+     although griffe lists neither;
    - a function the new version declares only with `@overload`, as most stubs do;
    - names bound only under `if __name__ == "__main__":` or on some `if`/`try` paths, loggers,
      type variables, `TYPE_CHECKING`, imports that `from x import *` copies, generated
@@ -174,7 +223,22 @@ the files that import the package, and statically (nothing is run):
   when the module lists the name in `__all__`);
 - a method or attribute where the file reads it on the class, or on what the file shows is an
   instance of the class (`client = anthropic.Anthropic(); client.messages.create(...)`), or on
-  `self` or `super()` in a subclass of it;
+  `self` or `super()` in a subclass of it; or on what the pinned releases' own annotations show
+  is an instance: a name assigned from a call of a package function or class (`df =
+  pd.read_csv(...)`: `read_csv` returns a `DataFrame`; `llm = ChatOpenAI(...)`), each step of a
+  chain (`df.groupby(...).count()` is `DataFrameGroupBy.count`), a parameter or variable annotated
+  with a package class (a string annotation too), and the returns of the file's own functions. A
+  class counts with its base classes, across the project's packages whose sources the scan read:
+  `ChatOpenAI` from langchain-openai is a langchain-core `BaseChatModel`, so `llm.predict(q)` is
+  `BaseChatModel.predict` although the file never imports langchain-core. A member is read up to
+  the nearest class that defines it in the pinned release, or that the diff says changed it:
+  `df.sum()` on a `DataFrame` is `DataFrame.sum`, which pandas 3 still defines, not the
+  `NDFrame.sum` whose parameters became keyword-only, and `llm.predict` is not also its base's
+  `BaseLanguageModel.predict`. The return annotations, bases, members and re-exports come from
+  the pinned release's sources (griffe; nothing is run) and are cached per release: the first
+  scan of a release reads its sources once more for them, a few seconds for pandas. A method
+  counts under every public class that inherits it without overriding it
+  (`df.fillna(method="ffill")` on a `DataFrame` for the change to `NDFrame.fillna`);
 - a constructor where the class is called, under any name of the class;
 - a parameter only where it is passed by keyword to that very callable: `temperature=` passed to
   another library's `create` in the same file does not count. An SDK's beta mirror
@@ -183,11 +247,34 @@ the files that import the package, and statically (nothing is run):
 A change from a diff that recorded no import paths (an older cache, or a change made by hand
 through the Python API) is matched by package and name, and the report says "matched by name".
 
+Last, a method or attribute read on a bare name the file shows nothing of (a parameter without
+an annotation, a loop variable; not a literal, nor a value of the file's own classes and
+functions, of a relative import, of a builtin or of a package the scan did not read) counts by
+its name alone, when that name belongs to exactly one changed API across the changed packages
+the code imports or reaches, is not a common Python name (`get`, `set`, `run`, `create`,
+`close`, `update`, `count`, `sum`, `shape`, `view`, `to_dict`, ...) and is no member of a
+built-in or standard-library type (`union` of a set, `fromisoformat` of a datetime, `is_integer`
+of a float: every name `dir()` gives for dict, list, str, set, bytes, the numbers, tuple, the
+`datetime` types, `pathlib.Path`, `re` patterns and matches, `logging.Logger`, text files and
+`argparse`). A name the file assigns from a value of its own or of a builtin is not unknown
+either: an alias (`alias = loc`), `store = self.store` after `self.store = Store()`, tuple
+unpacking, `:=` and `except ... as err`.
+
+Such a name match is hidden by default: no report (the terminal, report.md, the JSON lists, the
+MCP answers), no note and no count of `--fail-on` or `--annotate github` has it, as on ordinary
+code most of them are another library's method of the same name. `--include-name-matches` (on
+`scan` and `sync`; `include_name_matches` for the MCP `project_changes`) shows them: the
+reports tag each such use `[name match]` (the terminal next to its label and its place, the
+Markdown summary in the form column, the JSON as `"match": "name_only"`), its note is written,
+and CI counts it. CI counts per use: an API matched through a path in one file does not bring
+its name-only places in other files along. The block does not keep the choice, so give the flag
+on every sync.
+
 Each use is one of two **forms**:
 
 | form | meaning |
 |---|---|
-| **old form** | the code uses the API as the comparison release allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword |
+| **old form** | the code uses the API as the comparison release allowed and the pinned release no longer does: it reads or imports what was removed, moved (its old path) or changed kind, uses what is deprecated, or passes a removed or deprecated parameter by keyword. A class that became a function, or the reverse (pandas 3's `option_context`), is called the same way, so a call of it is "uses this API" unless it passes a keyword the new signature does not take (a subclass or an `isinstance()` of it stays the old form); the note still says to check its signature |
 | **uses this API** | the code is fine today, but an assistant editing it may write the old form; a parameter that is now required, keyword-only or positional-only is always this, since a name match cannot tell whether a call passes it the new way |
 
 The terminal and the MCP tool `project_changes` show at most 3 source locations per API (`scan -v` shows
@@ -198,12 +285,20 @@ every one). Locations are reported at the matching source location (for example 
 One bullet per API covers all of its changes, whichever of them the code uses: parameters in the
 order of the old signature, packages in alphabetical order, and a package's bullets in the
 order of their APIs, so the text does not change when the code starts or stops passing one of
-them. A replacement is named only with evidence, and the tag says which:
+them. In the block, bullets that say the same of several APIs of one package become one bullet
+that lists them ([#5](https://github.com/MohammadHijjawi97/since-cutoff/issues/5)):
+"`Anthropic.completions`, `anthropic.AI_PROMPT` and `anthropic.HUMAN_PROMPT` were removed; do
+not use them.", "`huggingface_hub.hf_hub_download()` and `huggingface_hub.snapshot_download()`
+no longer accept `proxies` or `resume_download`; …". Two bullets say the same when they are
+equal once each one's API name is taken out: the same changes, evidence and quotes. The
+terminal, report.md, the MCP tools and the JSON keep one entry per API (report.md's list of
+sources names every API of a merged bullet). A replacement is named only with evidence, and the
+tag says which:
 
 | evidence | what the note says | tag |
 |---|---|---|
-| none | "`Client.send()` no longer accepts `temperature`; do not pass it. since-cutoff found no replacement in toylib's deprecation text." When the pinned method takes `extra_body` or `extra_query` (an SDK method that sends a request: anthropic, openai and other Stainless-generated clients), the removed parameter left the signature but perhaps not the API, so the note says so instead of "do not pass them": "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` or `extra_query` argument. since-cutoff found no replacement in anthropic's deprecation text." Where the library's own text says so: "huggingface-hub's deprecation text says there is no replacement for `resume_download`." Advice in that text that is not stated as a replacement is quoted: "On `x`, pkg 1.0 said: "…"" | `[diff]` |
-| the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement ("Use `stop` instead", "replaced by", "renamed to", "in favour of"), and the name exists in the pinned version | "Use `stop` instead of `stop_sequences`." | `[diff + library]` |
+| none | "`Client.send()` no longer accepts `temperature`; do not pass it. See https://github.com/encode/httpx/blob/master/CHANGELOG.md (0.28.1)." The pointer is where the package documents its releases, from its PyPI metadata: the project URL labelled Changelog, Changes, Release notes, Releases, History, What's new or News, else the releases page of the GitHub repository its Source, Repository or Homepage URL names (a sponsors or organisation page, `github.com/sponsors/<user>`, is no repository), with the pinned version; when PyPI lists neither, "since-cutoff found no replacement in toylib's deprecation text." When the pinned method takes `extra_body` (an SDK method that sends a request: anthropic, openai and other Stainless-generated clients), the removed parameter left the signature but perhaps not the API, so the note says so instead of "do not pass them", and nothing more: "`Messages.create()` no longer accepts `temperature`, `top_k` or `top_p` as keyword arguments. If the API still needs them, pass them through its `extra_body` argument." (`extra_query` only for a method that takes no `extra_body`: a GET, whose fields are query fields.) Where the library's own text says so: "huggingface-hub's deprecation text says there is no replacement for `resume_download`." Advice in that text that is not stated as a replacement is quoted: "On `x`, pkg 1.0 said: "…"" | `[diff]` |
+| the library's deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text) states the replacement, and the name exists in the pinned version. Stated right after the cue ("Use `stop` instead", "replaced by `X`", "renamed to `X`", "in favour of `X`", "Deprecated: use `X`", a sentence-initial "Use `X`." with nothing but the name after it), the note says "Use `X` instead". Stated in a sentence that leads up to the name ("replaced by newer agents based on `FunctionAgent`", "in favor of the http-based alternatives implemented in [`HfApi`]"), the note quotes that sentence, markup (Sphinx roles, MkDocs' `[`X`]`) dropped, so the library's own words stand. A cue in the sentence that names the deprecated API (else the first sentence) wins over a later "use ... instead": "`old` was renamed to `new`. If you need the legacy behaviour, use `compat` instead." names `new`. Otherwise the strongest cue anywhere in the text counts: "see `Helper` for the background. Use `new_func` instead." names `new_func`. "If you want to force a new download, use `force_download=True`", "see `Config` for the available options" and "Use `strict=False` to keep the previous lenient parsing" point at a name without saying that it replaces anything: advice, quoted under `[diff]`. | "Use `stop` instead of `stop_sequences`."; "llama-index-core 0.12.49 said: "FunctionCallingAgent has been rewritten and replaced by newer agents based on llama_index.core.agent.workflow.FunctionAgent."" | `[diff + library]` |
 | a moved object that looks like the same object: a class or module keeps at least half of its public names, a function its parameters, a value the same value | "`pkg.helpers.Session` moved to `pkg.sessions.Session`: import it with `from pkg.sessions import Session`." | `[diff + move checked]` |
 | the older release's Requires-Dist lists a library the pinned one does not, and the public API that named its types names another required library's types, or a copy it ships, instead ([below](#a-dependency-the-pinned-release-switched)) | "openai 3.19.2 requires `httpx2` instead of `httpx`: `OpenAI(http_client=...)` takes `httpx2.Client` (`httpx2.AsyncClient` for `AsyncOpenAI`), `OpenAI(timeout=...)` takes `httpx2.Timeout` and `OpenAI(base_url=...)` takes `httpx2.URL`. Use `httpx2` there, not `httpx`." | `[diff + metadata]` |
 | a new parameter in the same position with the same annotation, unless a version note in the pinned release's docstring (`.. versionadded::`, `.. versionchanged::`) says that one was added or the other removed (click 8.2's `CliRunner`: `catch_exceptions` where `mix_stderr` was) | "`begin` was probably renamed to `start` (same position and type)." | `[diff; probable rename]` |
@@ -211,10 +306,30 @@ them. A replacement is named only with evidence, and the tag says which:
 
 Other changes are stated as they are: "`x` is deprecated; avoid it in new code.", "… now
 requires `timeout`.", "Pass `x` to `f()` by keyword.", "`pkg.Grammar` changed from class to
-attribute; check its new signature before use." A stubs package's note (`pandas-stubs`,
-`types-*`) says what its declarations no longer have and that type checkers reject it. Text
-from a package (deprecation messages) is quoted as whole sentences and cannot close the block or
-open code.
+attribute; check its new signature before use." A function deprecated in one call form only (a
+PEP 702 `@deprecated` on one of its `@overload`s) is named by the parameters that form alone
+takes: "`Server(...)` with `on_set_logging_level=`, `on_roots_list_changed=` or `on_progress=`
+passed as keyword arguments is deprecated; avoid it in new code." (mcp 2.2's `Server.__init__`);
+its signature is quoted only when it is short, and a call site is in the old form only when it
+passes one of those parameters. When one of them cannot be passed by keyword (positional-only,
+`*args`, `**kwargs`: cachetools' `cached(cache, key, lock, info, /)`), no keyword names the
+form, so the note quotes its signature when that is short ("`cachetools.cached` called as
+`cached(cache, key, lock, info, /)` is deprecated; avoid it in new code."), else says that one
+call form (an overload) is deprecated, and every call site is "uses this API". The terminal
+heading and `--all` name the form the same way. A stubs package's note (`pandas-stubs`, `types-*`) says what its
+declarations no longer have and that type checkers reject it. Text from a package (deprecation
+messages) is quoted as whole sentences and cannot close the block or open code.
+
+A dependency first released after the cutoff that the code imports has no release at the cutoff
+to compare with, so it gets one bullet from PyPI's metadata instead of a diff, tagged
+`[metadata]`: "httpx2 first appeared on PyPI on 2026-05-11, after the cutoff; the model has no
+training data on it. The project pins 2.13.1 (released 2026-09-23). Summary: The next generation
+HTTP client. Changelog: https://github.com/pydantic/httpx2/blob/main/src/httpx2/CHANGELOG.md".
+The two dates differ (httpx2 0.0.0 reserved the name months before 2.13.1), so the note gives
+both. The summary and the URL are left out when PyPI lists none. A dependency first released
+within the margin before the cutoff, after the day the scan compares from, gets the same bullet,
+which says "within 30 days before the cutoff; the model has little or no training data on it".
+`sync` writes it with the other notes, and drops it when the code no longer imports the package.
 
 When the pinned release's source still reads a removed parameter by name (in a decorator the
 callable uses, or a function of the same module that the decorator calls), the terminal,
@@ -352,12 +467,19 @@ from, followed by its bullets.
 file:
 
 1. **Which files.** `--target` if given; otherwise every file of AGENTS.md and CLAUDE.md that
-   already has a block; otherwise AGENTS.md, or CLAUDE.md when only that one exists. Claude Code
-   reads CLAUDE.md, and AGENTS.md only when there is no CLAUDE.md or when CLAUDE.md imports it
-   with `@AGENTS.md` ([memory docs](https://code.claude.com/docs/en/memory)); when the notes go to
-   AGENTS.md and CLAUDE.md does not mention `@AGENTS.md`, `scan` and `sync` say so. Choosing the
-   files when both exist is
-   [#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13).
+   already has a block; otherwise AGENTS.md, or CLAUDE.md when only that one exists, and both
+   when both exist and CLAUDE.md does not import AGENTS.md
+   ([#13](https://github.com/MohammadHijjawi97/since-cutoff/issues/13)). Claude Code reads
+   CLAUDE.md, and AGENTS.md only when there is no CLAUDE.md or when CLAUDE.md imports it with
+   `@AGENTS.md` outside code ([memory docs](https://code.claude.com/docs/en/memory)); Codex,
+   Cursor and Copilot read AGENTS.md. CLAUDE.md is read as Markdown: not inside a code span
+   (which ends with its paragraph) or a fenced block (closed by a fence of the same character
+   at least as long), and after a byte order mark. When CLAUDE.md does not import AGENTS.md,
+   `scan`, `sync`, `run --apply` and `status` say how to keep one copy (the import, then
+   `since-cutoff unapply --target CLAUDE.md`), or, for a block in AGENTS.md alone, that Claude
+   Code does not read it; when it does import AGENTS.md and both files still have a block,
+   they say that CLAUDE.md's is a second copy, with the same `unapply` command. `sync --json`
+   has the same text as `tip`.
 2. **Which model.** The block's model and cutoff, unless `--model` or `--cutoff` is given, so
    teammates whose agents use other models do not rewrite it back and forth; with no block, the
    model your coding agent is set up with. `--model a,b` uses the earliest of their cutoffs and
@@ -369,10 +491,13 @@ file:
    cache). A
    package's notes are dropped when it is no longer a dependency, is no newer than the release at
    the cutoff, has an unchanged API, or its changed APIs are no longer used; sync says why. A
-   bullet whose API had one before counts as changed ("toylib 2.0: 1 changed").
+   bullet whose API had one before counts as changed ("toylib 2.0: 1 changed"), and so do two
+   bullets that merged into one ("2 changed") and the bullets that the one `[metadata]` bullet
+   of a package first released after the cutoff takes the place of.
 4. **Notes from `run`.** A `[type-checked]` bullet that `run --apply` wrote is kept, in place of
    the note from the diff for the same API, while its package keeps the same version and the code
-   still uses that API. After a version change the note from the diff takes its place, and sync
+   still uses that API; the other APIs that shared a merged bullet with that one keep theirs.
+   After a version change the note from the diff takes its place, and sync
    says that `since-cutoff run --only <pkg>` tests the model again.
 5. **Scope and suggestions.** `--scope imported` adds, for each changed package the code imports,
    the changes most likely to matter (up to 5 APIs per package, `--per-package N` for another
@@ -471,7 +596,8 @@ starts (0.4.0 and later).
    project files: Claude Code is run with `--tools ""`, no MCP servers, no slash commands and an
    empty working directory.
 4. **Scoring.** The code is type-checked with
-   [basedpyright](https://github.com/DetachHead/basedpyright) twice: against the locked version
+   [basedpyright](https://github.com/DetachHead/basedpyright) (the `"since-cutoff[run]"`
+   extra) twice: against the locked version
    and against the cutoff version, each in an isolated environment that contains that package
    version and its own runtime dependencies, nothing else. Only diagnostics that involve the
    package count (other imports are absent from the environment and are ignored):
@@ -585,10 +711,10 @@ was checked, and nothing else is claimed:
 
 | tag | what was checked | what was not |
 |---|---|---|
-| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release published at least 30 days before the model's training cutoff (by default), and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or that since-cutoff found no replacement in it. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
+| `[diff]` | The change is in a static comparison (griffe) of the public APIs of two releases: the latest release published at least 30 days before the model's training cutoff (by default), and the version your project pins. The sources are read, not imported. With `[diff]` alone, no replacement is named: the note says what the library's own deprecation text says ("there is no replacement for `resume_download`"), or points at the package's changelog (the Changelog URL in its PyPI metadata, else its GitHub releases page) with the pinned version, or, when PyPI lists neither, that since-cutoff found no replacement in that text. | Behaviour, and whether a call still runs: the pinned release may still accept a removed parameter with a warning, as huggingface-hub 2.0.0 does for `resume_download` ([_validators.py](https://github.com/huggingface/huggingface_hub/blob/v2.0.0/src/huggingface_hub/utils/_validators.py#L171-L191)). The terminal, report.md, the MCP tools and the JSON add a "Runtime:" line when the pinned source still handles one; the block does not, since the advice is the same. Whether your model gets it wrong. |
 | `[diff + library]` | As `[diff]`, and the library's own deprecation text (a docstring, a parameter's docstring entry, an `@deprecated` message or a `warnings.warn` text, in the older release or, for a deprecation, in the pinned one) states the replacement ("Use `stop` instead"), and that name exists in your pinned version. Text that only mentions a name as advice is quoted under `[diff]`, not taken as a replacement. | That the replacement behaves the same. |
 | `[diff + move checked]` | As `[diff]`, and the object at the new path is the same object as far as can be counted: a class or module keeps at least half of the old one's public names, a function keeps its parameters, a value is the same. | Behaviour. |
-| `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
+| `[diff + metadata]` | The older release's Requires-Dist (its wheel's METADATA) lists a library the pinned one does not, and places in the public API that named that library's types (parameters, return types, attributes, base classes, re-exports) name the types of another library the pinned release requires, or of a copy of the old one it ships, with none of the old library left: openai 3.x, anthropic 1.8, huggingface-hub 2.0 and mcp 2.2 take `httpx2` objects where they took `httpx` ones. `[metadata]` alone marks the one bullet for a package first released after the cutoff (or within the margin before it) that your code imports: there is no release to compare from, so the note gives the date of its first release, its PyPI summary and its changelog URL. | Behaviour: whether the pinned release still accepts the old library's objects (openai 3 converts some, anthropic 1.8 raises `TypeError`, according to their sources). The terminal, report.md, the MCP tools and the JSON add an "Installed:" line (whether your project, its virtual environment included, still has the old library) and a "Runtime:" line that points to where the pinned source still names it. |
 | `[diff; probable rename]` | A parameter in the same position, with the same annotation, has a new name, and no version note in the pinned release's docstring (`.. versionadded::`, `.. versionchanged::`) says that one was added or the other removed. A guess, labelled as one. | That it is the same parameter. |
 | `[type-checked]` | Written by a model during `since-cutoff run` and kept because its example passed the type check below. | Behaviour; that the bullet's explanation is true beyond the names it shows. |
 | `[not confirmed]` | Only with `sync --suggestions`: names in the pinned version that look similar to what was removed (the bullet's tag then reads `[diff; not confirmed]`). | That any of them replaces it. |
@@ -642,9 +768,25 @@ meaning the same as `checks.example_type_checks`).
   [Where the code uses a changed API](#where-the-code-uses-a-changed-api)); nothing is run, and a
   file that only calls the API is "uses this API".
 - In `scan`, "**breaking**" and "**deprecated**" count each change once, however many import
-  paths reach it. "**Imported by your code**" means a file of the project imports the package
-  (by its import names); dependencies whose API changed come first, the imported ones first
-  among them.
+  paths reach it, and only the changes to **public** APIs: an API is public when the package's
+  top level exports it (`pkg.Thing`, including a name a `from .m import *` there copies from a
+  module that re-exports it on purpose: `anthropic.AnthropicBedrock`), a module it is reached
+  through names it in `__all__` or re-exports it as `from .m import X as X`
+  (`anthropic.types.CompletionCreateParams`), or it is documented (a docstring, at a path with
+  no private part; a value made of a function, `convert = deprecated(...)(_convert)`, has the
+  function's); a member counts with its class, and a method a public class inherits is public.
+  A plain `from .m import X` in a package `__init__` is a path to the object, not a re-export
+  on purpose, so an undocumented class reached only that way is internal (openai's `types`
+  modules re-export as `X as X`; a package that does not, and documents nothing, counts as
+  internal). The rest are **internal** (fastapi 0.143's `dependencies.utils.get_flat_dependant`,
+  uvicorn's `config.LOOP_SETUPS` and its `loops.*` modules), counted once as "+N internal"
+  next to the public counts (the dependency table's breaking column reads "19 (+3)"); `scan
+  --internal` (which implies `--all`) and the MCP tools' `include_internal` list them,
+  `api_changes(symbol=...)` lists the internal changes to a symbol when they are all that
+  match it, report.md lists them after the public ones, and results.json has every change with
+  its `tier`. The notes are not affected: they cover the APIs the code uses, whichever tier.
+  "**Imported by your code**" means a file of the project imports the package (by its import
+  names); dependencies whose API changed come first, the imported ones first among them.
 - "**Stale API use in X of Y probed dependencies**": Y is the number of dependencies with at
   least one scored probe; X is how many of them had at least one probe scored *stale*.
 - Probes cover a **sample** of the breaking changes (ranked as above), not all of them.
@@ -674,6 +816,14 @@ meaning the same as `checks.example_type_checks`).
   behaviour changes (same signature, different semantics) or deprecations that only warn at run
   time.
 - Everything is cached. Re-running gives the same result; `--fresh` asks the model again.
+  `since-cutoff cache info` shows where the cache is and its size by kind; `cache clear
+  --sources` (or `--diffs`, `--pypi`) removes one kind and keeps the model's answers, which
+  cost money. The extracted package sources are capped at `SINCE_CUTOFF_CACHE_MAX_MB` (2048 by
+  default; 0 for no cap): after a new version is extracted, the least recently used trees are
+  removed until the sources fit, never one the running scan uses or one used in the last hour,
+  which another process may be reading; the first removal in a run prints one line saying how
+  many trees and MB went. In `cache info`, "oldest" is when a kind's oldest entry was written;
+  only the sources record their use, so for them it is the least recently used tree's last use.
 
 ## Safety
 

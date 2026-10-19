@@ -108,7 +108,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/since-cutoff-cache
-        key: since-cutoff-${{ runner.os }}-${{ inputs.since-cutoff-version }}-${{ hashFiles('**/uv.lock', '**/poetry.lock', '**/pdm.lock', '**/pylock*.toml', '**/Pipfile.lock', '**/requirements*.txt', '**/pyproject.toml') }}
+        key: since-cutoff-${{ runner.os }}-${{ inputs.since-cutoff-version }}-${{ hashFiles('**/uv.lock', '**/poetry.lock', '**/pdm.lock', '**/pylock*.toml', '**/Pipfile.lock', '**/requirements*.txt', '**/environment.yml', '**/environment.yaml', '**/pyproject.toml') }}
         restore-keys: |
           since-cutoff-${{ runner.os }}-${{ inputs.since-cutoff-version }}-
           since-cutoff-${{ runner.os }}-

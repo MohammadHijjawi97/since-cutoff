@@ -170,10 +170,24 @@ def test_a_dependency_first_released_within_the_margin_is_not_after_the_cutoff(
     assert "## First released after the cutoff or within 30 days before it" in mcp
     assert "- newlib 1.0 (2025-07-15); first released within 30 days of the cutoff" in mcp
 
+    # Its section is the one note on it, which goes once the code no longer imports it.
     assert _dropped(scan, newlib, "newlib", SCOPE_USED)[0] == (
-        "first released 2025-07-15, within 30 days of the cutoff"
+        "first released 2025-07-15, within 30 days of the cutoff, and your code no longer "
+        "imports it"
     )
-    assert _dropped(scan, late, "late", SCOPE_USED)[0] == "first released after the cutoff"
+    assert _dropped(scan, late, "late", SCOPE_USED)[0] == (
+        "first released after the cutoff, and your code no longer imports it"
+    )
+    # The [metadata] note says the same: newlib is no package after the cutoff.
+    notes = {n.change.package: n.bullet for n in scan.new_package_notes()}
+    assert notes["newlib"].startswith(
+        "newlib first appeared on PyPI on 2025-07-15, within 30 days before the cutoff; the "
+        "model has little or no training data on it."
+    )
+    assert notes["late"].startswith(
+        "late first appeared on PyPI on 2025-09-01, after the cutoff; the model has no "
+        "training data on it."
+    )
     assert _dropped(scan, scan.package("toylib"), "toylib", SCOPE_USED)[0] == (
         "1.0 is the latest release 30 days before the cutoff"
     )

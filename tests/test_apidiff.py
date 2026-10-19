@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import textwrap
+from datetime import date
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
 from since_cutoff.apidiff import (
     DEPRECATED,
@@ -17,13 +19,28 @@ from since_cutoff.apidiff import (
     PARAM_REMOVED,
     PARAM_REQUIRED,
     REMOVED,
+    TIER_INTERNAL,
+    TIER_PUBLIC,
     APIChange,
     diff_sources,
 )
 from since_cutoff.cache import DiskCache, stable_hash
-from since_cutoff.engine import Engine, PackageScan, Settings
+from since_cutoff.engine import Engine, ModelTarget, PackageScan, ScanResult, Settings
+from since_cutoff.mcp_server import Tools
+from since_cutoff.models import ModelRegistry
 from since_cutoff.notes import template_bullet
+from since_cutoff.project import load_project
 from since_cutoff.pypi import SourceTree
+from since_cutoff.report import (
+    headline,
+    render_console,
+    render_markdown,
+    render_scan_changes,
+    render_scan_markdown,
+    summary,
+    to_json,
+)
+from since_cutoff.selection import OLD_FORM
 from tests.conftest import FakePyPI, write_tree
 
 
@@ -531,6 +548,183 @@ def test_a_diff_cached_before_import_paths_is_recomputed(cache: DiskCache, toyli
     scan = engine.diff_package(PackageScan("toylib", "2.0", "test", True, cutoff_version="1.0"))
     assert "stale" not in {c.name for c in scan.changes}
     assert scan.changes and all(c.import_paths for c in scan.changes)
+
+
+# ------------------------------------------- the changes of a scan (DIFF_SCHEMA 21)
+CUTOFF = date(2025, 7, 31)
+
+
+def _scan(
+    tmp_path: Path, cache: DiskCache, name: str, v1: dict[str, str], v2: dict[str, str], code: str
+) -> tuple[ScanResult, FakePyPI]:
+    """Scan an app that pins ``name`` 2.0 and has ``code`` in main.py, with a fake PyPI that
+    has 1.0 (before the cutoff) and 2.0 of it."""
+    trees = {
+        version: SourceTree(
+            name, version, write_tree(tmp_path / f"{name}-{version}", files), (name,)
+        )
+        for version, files in (("1.0", v1), ("2.0", v2))
+    }
+    pypi = FakePyPI(
+        cache,
+        {name: [("1.0", "2025-01-10"), ("2.0", "2025-10-01")]},
+        {(name, v): tree for v, tree in trees.items()},
+    )
+    app = write_tree(tmp_path / "app", {"requirements.txt": f"{name}==2.0\n", "main.py": code})
+    engine = Engine(Settings(cutoff=CUTOFF), store=cache, llm_cache=cache, pypi=pypi)
+    return engine.scan(load_project(app), ModelTarget.cutoff_only(CUTOFF)), pypi
+
+
+def test_a_call_on_a_subclass_that_inherits_the_changed_method_is_a_use(tmp_path, cache):
+    """pandas 2.3.1 -> 3.0.6 (audit item 3b): ``NDFrame.fillna`` lost ``method``, and the
+    diff reported it only under ``pandas.core.generic.NDFrame.fillna``, which no code calls:
+    ``df.fillna(method="ffill")`` on a DataFrame, which inherits it, was not a use. The
+    change now carries the subclass's paths, and the scan matches the call."""
+    frames = {
+        "pkg/__init__.py": "from pkg.core.frame import DataFrame\n__all__ = ['DataFrame']\n",
+        "pkg/core/__init__.py": "",
+        "pkg/core/frame.py": "from pkg.core.generic import NDFrame\n\nclass DataFrame(NDFrame):\n    pass\n",
+    }
+    old = {
+        **frames,
+        "pkg/core/generic.py": "class NDFrame:\n    def fillna(self, value=None, method=None):\n        pass\n",
+    }
+    new = {
+        **frames,
+        "pkg/core/generic.py": "class NDFrame:\n    def fillna(self, value=None):\n        pass\n",
+    }
+    code = 'import pkg\n\ndf = pkg.DataFrame()\ndf.fillna(method="ffill")\n'
+    scan, _ = _scan(tmp_path, cache, "pkg", old, new, code)
+    (fillna,) = scan.package("pkg").distinct
+    assert fillna.import_paths == [
+        "pkg.DataFrame.fillna",
+        "pkg.core.frame.DataFrame.fillna",
+        "pkg.core.generic.NDFrame.fillna",
+    ]
+    assert [(u.note.api, u.form, u.files) for u in scan.used_apis()] == [
+        ("NDFrame.fillna", OLD_FORM, ["main.py"])
+    ]
+
+
+MIXLIB_V1 = {
+    "mixlib/__init__.py": "from mixlib.core import Client\n__all__ = ['Client']\n",
+    "mixlib/core.py": "class Client:\n    def send(self, msg, temperature=1.0):\n        pass\n\n\n"
+    "def helper(x):\n    pass\n\n\nLOOP_SETUPS = {}\n",
+}
+MIXLIB_V2 = {
+    "mixlib/__init__.py": MIXLIB_V1["mixlib/__init__.py"],
+    "mixlib/core.py": "class Client:\n    def send(self, msg):\n        pass\n",
+}
+
+
+def test_reports_count_public_changes_and_keep_internal_ones_apart(tmp_path, cache):
+    """fastapi 0.116.1 -> 0.143.0 scanned as "35 breaking changes", of which nine were
+    internal helpers (audit item 12). Every count is of the changes to public APIs, with the
+    internal ones once as "+N internal"; ``--all`` and the MCP tools list them on request;
+    results.json keeps every change with its tier."""
+    scan, pypi = _scan(tmp_path, cache, "mixlib", MIXLIB_V1, MIXLIB_V2, "import mixlib\n")
+    p = scan.package("mixlib")
+    assert {c.path: c.tier for c in p.distinct} == {
+        "mixlib.core.Client.send": TIER_PUBLIC,  # mixlib exports Client
+        "mixlib.core.helper": TIER_INTERNAL,
+        "mixlib.core.LOOP_SETUPS": TIER_INTERNAL,
+    }
+    assert (p.counts, p.internal) == ((1, 0), 2)
+    s = summary(scan)
+    assert (s["breaking_changes"], s["deprecations"], s["internal_changes"]) == (1, 0, 2)
+    assert s["packages"][0]["internal_changes"] == 2
+    assert "Static diff: 1 breaking change, 0 new deprecations (+2 internal)" in [
+        t.plain for t in headline(scan, None, s)
+    ]
+    assert all("tier" in c for c in to_json(scan)["scan"][0]["changes"])
+
+    console = Console(width=200, record=True)
+    render_scan_changes(console, scan)
+    text = console.export_text()
+    assert "mixlib 1.0 -> 2.0: 1 breaking, 0 deprecated (+2 internal)" in text
+    assert "Client.send" in text and "helper" not in text
+    assert "2 internal changes not listed; --internal lists them" in text
+    console = Console(width=200, record=True)
+    render_scan_changes(console, scan, internal=True)
+    text = console.export_text()
+    assert "helper" in text and "LOOP_SETUPS" in text and "not listed" not in text
+
+    md = render_markdown(scan)
+    assert "### mixlib 1.0 -> 2.0: 1 breaking, 0 deprecated (+2 internal)" in md
+    listing = md.split("## All changes found")[1]
+    assert (
+        listing.index("Client.send") < listing.index("Internal APIs (2):") < listing.index("helper")
+    )
+    short = render_scan_markdown(scan)
+    assert "<b>mixlib</b> 1.0 -> 2.0: 1 breaking, 0 deprecated (+2 internal)</summary>" in short
+    assert "helper" not in short
+
+    # The dependency table counts the public changes, with the internal ones next to them.
+    console = Console(width=200, record=True)
+    render_console(console, scan, None)
+    assert "1 (+2)" in console.export_text()
+    assert "| API changed, imported by your code | 1 (+2) | 0 |" in md
+
+    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
+    out = tools.api_changes("mixlib", cutoff="2025-07-31")
+    assert "- 1 breaking change, 0 new deprecations (parameters removed 1, +2 internal)" in out
+    assert "Client.send" in out and "helper" not in out
+    full = tools.api_changes("mixlib", cutoff="2025-07-31", include_internal=True)
+    assert "helper" in full and "LOOP_SETUPS" in full
+    project = tools.project_changes(str(scan.project.root), cutoff="2025-07-31")
+    assert "1 breaking, 0 deprecated (+2 internal). Your code imports it." in project
+    assert "2 internal (include_internal=true): api_changes(" in project
+    assert "helper" not in project
+    assert "helper" in tools.project_changes(
+        str(scan.project.root), cutoff="2025-07-31", include_internal=True
+    )
+
+
+def test_a_symbol_is_matched_against_internal_changes_too(tmp_path, cache):
+    """``api_changes(symbol="helper")`` filtered the public changes and answered that
+    ``helper`` did not change, although the diff has its removal (as internal). A question
+    about a symbol asks for its changes, whichever tier: internal matches are listed when
+    they are all there is, and counted next to the public ones otherwise."""
+    _, pypi = _scan(tmp_path, cache, "mixlib", MIXLIB_V1, MIXLIB_V2, "import mixlib\n")
+    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
+    out = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="helper")
+    assert (
+        '- 1 of them match symbol "helper", in internal APIs (listed since the symbol asks '
+        "for them)"
+    ) in out
+    assert "mixlib.core.helper" in out and "did not change" not in out
+    out = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="send")
+    assert '- 1 of them match symbol "send"\n' in out and "internal APIs" not in out
+    out = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="send, helper")
+    assert (
+        '- 1 of them match symbol "send, helper"; 1 more in internal APIs '
+        "(include_internal=true lists them)"
+    ) in out
+    assert "Client.send" in out and "`mixlib.core.helper`" not in out
+    out = tools.api_changes(
+        "mixlib", cutoff="2025-07-31", symbol="send, helper", include_internal=True
+    )
+    assert '- 2 of them match symbol "send, helper"\n' in out and "`mixlib.core.helper`" in out
+    none = tools.api_changes("mixlib", cutoff="2025-07-31", symbol="nothing-like-this")
+    assert "leave `symbol` out to see all 1 change." in none  # the public one
+
+
+def test_a_package_that_changed_only_internal_apis(tmp_path, cache):
+    v2 = {
+        **MIXLIB_V1,
+        "mixlib/core.py": MIXLIB_V1["mixlib/core.py"].replace("LOOP_SETUPS = {}\n", ""),
+    }
+    scan, pypi = _scan(tmp_path, cache, "mixlib", MIXLIB_V1, v2, "import mixlib\n")
+    assert (scan.package("mixlib").counts, scan.package("mixlib").internal) == ((0, 0), 1)
+    # The table says why the package is "API changed" with no public change to count.
+    assert "| API changed, imported by your code | 0 (+1) | 0 |" in render_markdown(scan)
+    tools = Tools(cache, registry=ModelRegistry(cache, offline=True), pypi=pypi)
+    out = tools.api_changes("mixlib", cutoff="2025-07-31")
+    assert "- 0 breaking changes, 0 new deprecations (+1 internal)" in out
+    assert out.rstrip().endswith(
+        "No breaking changes or new deprecations found in the public API; "
+        "include_internal=true lists the 1 internal."
+    )
 
 
 def test_an_object_the_new_release_only_re_exports_is_compared_inside(tmp_path: Path):

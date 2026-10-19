@@ -5,9 +5,9 @@ account, no server of its own and no telemetry, and it collects no personal data
 
 ## What it reads on your machine
 
-- Your project's dependency files (lockfiles, `requirements*.txt`, `pyproject.toml`, `.venv`
-  metadata) and its Python files, to see which dependencies you pin and which of their names
-  your code uses. This stays on your machine.
+- Your project's dependency files (lockfiles, `requirements*.txt`, `pyproject.toml`, a conda
+  `environment.yml`, `.venv` metadata) and its Python files, to see which dependencies you pin
+  and which of their names your code uses. This stays on your machine.
 - The notes block in `AGENTS.md` or `CLAUDE.md`, for `sync`, `status` and `unapply`.
 - Without `--model`, the model fields of your coding agent's settings (Claude Code, Codex,
   Gemini CLI, OpenCode, Aider) and the `SINCE_CUTOFF_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`
@@ -42,7 +42,9 @@ to what it receives.
 - `.since-cutoff/` in your project: reports and `results.json` (it adds a `.gitignore` that
   ignores itself).
 - A local cache of PyPI data, package sources, API diffs and model answers. `since-cutoff cache
-  path` shows where it is; `since-cutoff cache clear` removes it.
+  info` shows where it is and how big each part is; `since-cutoff cache clear` removes it, or
+  with `--sources`, `--diffs` or `--pypi` only that part. The package sources are capped at
+  2 GB (`SINCE_CUTOFF_CACHE_MAX_MB`): the least recently used go first.
 - With `sync` (after it shows you the diff and you agree, or with `--yes`) or `run --apply`
   only: one marked block in `AGENTS.md` or `CLAUDE.md`. Text outside it is left as it is, and
   `since-cutoff unapply` removes the block.

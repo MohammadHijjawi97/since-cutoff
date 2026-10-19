@@ -33,6 +33,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.AsyncClient.__init__",
     "httpx.Client.__init__"
@@ -49,7 +50,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -77,6 +79,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.AsyncClient.__init__",
     "httpx.Client.__init__"
@@ -94,7 +97,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -120,6 +124,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.create_ssl_context"
    ],
@@ -133,7 +138,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -159,6 +165,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.delete"
    ],
@@ -172,7 +179,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -198,6 +206,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.delete"
    ],
@@ -211,7 +220,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -237,6 +247,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.get"
    ],
@@ -250,7 +261,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -276,6 +288,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.get"
    ],
@@ -289,7 +302,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -315,6 +329,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.head"
    ],
@@ -328,7 +343,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -354,6 +370,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.head"
    ],
@@ -367,7 +384,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -393,6 +411,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.options"
    ],
@@ -406,7 +425,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -432,6 +452,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.options"
    ],
@@ -445,7 +466,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -471,6 +493,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.patch"
    ],
@@ -484,7 +507,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -510,6 +534,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.patch"
    ],
@@ -523,7 +548,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -549,6 +575,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.post"
    ],
@@ -562,7 +589,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -588,6 +616,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.post"
    ],
@@ -601,7 +630,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -627,6 +657,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.put"
    ],
@@ -640,7 +671,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -666,6 +698,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.put"
    ],
@@ -679,7 +712,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -705,6 +739,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.request"
    ],
@@ -718,7 +753,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -744,6 +780,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.request"
    ],
@@ -757,7 +794,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -783,6 +821,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.stream"
    ],
@@ -796,7 +835,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   },
   {
    "package": "httpx",
@@ -822,6 +862,7 @@
    "namesake": null,
    "deprecated_by": null,
    "call_form": null,
+   "call_form_only": null,
    "import_paths": [
     "httpx.stream"
    ],
@@ -835,7 +876,8 @@
    "deprecation_file": null,
    "renamed": false,
    "request_extras": [],
-   "dependency": null
+   "dependency": null,
+   "tier": "public"
   }
  ]
 }

@@ -96,6 +96,24 @@ def test_model_cutoff_takes_ids_from_any_vendor_the_registry_knows(
     assert out.startswith(start) and f"training cutoff {cutoff}" in out
 
 
+@pytest.mark.parametrize(
+    ("spec", "maker"),
+    [
+        ("qwen:qwen3-coder-plus", "alibaba"),
+        ("dashscope:qwen3-coder-plus", "alibaba"),
+        ("moonshot:kimi-k2.7-code", "moonshotai"),
+        ("kimi:kimi-k2.7-code", "moonshotai"),
+        ("zhipu:glm-4.6", "zai"),
+        ("glm:glm-4.6", "zai"),
+    ],
+)
+def test_model_cutoff_takes_the_makers_other_names(tools: Tools, spec: str, maker: str) -> None:
+    """The provider aliases (models.PROVIDER_ALIASES) on the path that reads a ``provider:id``
+    spec: each names the maker's own listing (issue #87)."""
+    model = spec.split(":", 1)[1]
+    assert tools.model_cutoff(spec).startswith(f"{model} ({maker}")
+
+
 def test_the_change_tools_take_openai_and_google_ids(tools: Tools) -> None:
     out = tools.api_changes("toylib", model="google:gemini-2.5-pro")
     # 30 days before gemini-2.5-pro's cutoff (2025-01-31): the comparison release is 0.9.
@@ -163,6 +181,10 @@ def test_the_tools_say_when_a_release_list_is_an_older_copy(tmp_path, tools, fak
     )
     assert warning in tools.api_changes("toylib", cutoff="2025-07").splitlines()
     out = tools.project_changes(str(make_app(tmp_path)), cutoff="2025-07")
+    assert warning in out.splitlines()
+    # Also when the copy shows no release by the cutoff: a release it does not know may be one.
+    out = tools.api_changes("toylib", cutoff="2024-01")
+    assert out.startswith("# toylib: no release on or before the cutoff\n")
     assert warning in out.splitlines()
 
 
@@ -452,6 +474,7 @@ def test_server_speaks_mcp_and_turns_failures_into_tool_errors(tools: Tools) -> 
                 "to_version",
                 "symbol",
                 "limit",
+                "include_internal",
                 "cutoff_margin",
             }
             assert (api.description or "").startswith("List the public API changes")
@@ -851,10 +874,10 @@ def test_the_tools_compare_names_from_a_sibling_distribution_or_say_so(
         "- Warning: mcplike 2.0: changes to mcplike.types are not reported (re-exported from "
         f"mcplike-types 2.0, which could not be downloaded: {SIBLING_LIMIT_ERROR})"
     )
-    out = tools.api_changes("mcplike", cutoff="2025-07")
+    out = tools.api_changes("mcplike", cutoff="2025-07", include_internal=True)
     assert ("mcplike.types.Tool.inputSchema" in out) is sibling
     assert (warning in out.splitlines()) is not sibling
     app = make_app(tmp_path, "mcplike==2.0", "from mcplike.types import Tool\n")
-    out = tools.project_changes(str(app), cutoff="2025-07")
+    out = tools.project_changes(str(app), cutoff="2025-07", include_internal=True)
     assert ("inputSchema" in out) is sibling
     assert (warning in out.splitlines()) is not sibling

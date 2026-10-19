@@ -760,8 +760,8 @@ def test_the_metadata_tag_reads_back_and_is_explained_only_when_used(tmp_path) -
         (TAG_DIFF, TAG_METADATA),
     )
     legend = (
-        "[metadata] the two releases' declared requirements (Requires-Dist in their wheels' "
-        "METADATA)"
+        "[metadata] PyPI metadata: the two releases' Requires-Dist (in their wheels' METADATA), "
+        "or a package's release dates, summary and changelog URL"
     )
     assert tag_legend([TAG_DIFF, TAG_METADATA])[-1] == legend
     assert legend not in tag_legend([TAG_DIFF])
@@ -1119,7 +1119,7 @@ def test_the_scan_says_where_what_is_installed_and_what_the_source_names(tmp_pat
         "objects are not newhttp objects." in " ".join(text.split())
     )
     assert "Runtime: 2's source still names oldhttp (pkg/_compat.py:3)" in " ".join(text.split())
-    assert "[metadata] the two releases' declared requirements" in " ".join(text.split())
+    assert "[metadata] PyPI metadata: the two releases' Requires-Dist" in " ".join(text.split())
     # Not installed: said so, and nothing is suggested about removing it when it is.
     scan = _scan(tmp_path, change, OLD_FORM_CODE)
     lines = " ".join(" ".join(line.plain for line in scan_lines(scan, width=100)).split())

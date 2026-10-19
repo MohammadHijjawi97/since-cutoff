@@ -39,7 +39,9 @@ PROVIDER_ALIASES = {
     "zhipu": "zai",
     "glm": "zai",
     "llama": "llama",
-    "meta": "llama",
+    # models.dev has a provider "meta" of its own, Meta's Muse Spark models: a maker, and not
+    # an alias of "llama", Meta's Llama API.
+    "meta": "meta",
 }
 # The model makers themselves: preferred over resellers that list the same model id.
 FIRST_PARTY = frozenset(PROVIDER_ALIASES.values())
@@ -152,6 +154,12 @@ def normalize_model_id(model_id: str) -> list[str]:
     return [c for c in candidates if c]
 
 
+def listing_note(info: ModelInfo) -> str:
+    """Whose listing a cutoff is from (:meth:`ModelRegistry.lookup`) when it is not the model
+    maker's own: ``deepinfra's listing``, for the model line; empty for a maker's."""
+    return "" if info.provider in FIRST_PARTY else f"{info.provider}'s listing"
+
+
 class ModelRegistry:
     def __init__(self, cache: DiskCache, *, offline: bool = False) -> None:
         self.cache = cache
@@ -201,25 +209,59 @@ class ModelRegistry:
         return out
 
     def lookup(self, model_id: str, provider: str | None = None) -> ModelInfo | None:
-        """Find a model by id, preferring the given provider, then any provider with a cutoff."""
+        """Find a model by id, among the listings of its spellings (:func:`normalize_model_id`,
+        most specific first), each matched by the listing's id as written or by its *bare* id
+        (:func:`bare_model_id`: Amazon Bedrock's ``qwen.qwen3-coder-480b-a35b-v1:0``,
+        Cloudflare's ``@cf/meta/llama-3.2-3b-instruct``, OpenRouter's
+        ``aion-labs/aion-rp-llama-3.1-8b``):
+
+        1. the given provider's own listing, also under its own spelling
+           (``cloudflare-workers-ai`` and ``@cf/meta/...``), when it has a cutoff;
+        2. else the model maker's own listing (:data:`FIRST_PARTY`) with a cutoff, of the most
+           specific spelling it lists: the model (``claude-sonnet-4``) for a dated snapshot
+           without a cutoff (``claude-sonnet-4-20250514``), before a reseller's dated listing;
+        3. else, among the listings of all its spellings that have a cutoff, the one with the
+           earliest: gateways and resellers disagree on a model the maker lists without a
+           cutoff yet (issue #87), and an earlier cutoff gives more notes, the safe side; so
+           the answer does not depend on which route's spelling is asked for.
+
+        A listing without a cutoff is the answer only when none has one (for the error that
+        says so). Which listing it is: :func:`listing_note`.
+        """
         pref = PROVIDER_ALIASES.get(provider or "", provider)
         if "/" in model_id and not pref:
             pref = PROVIDER_ALIASES.get(model_id.split("/", 1)[0], model_id.split("/", 1)[0])
         models = self.all_models()
-        for cand in normalize_model_id(model_id):
-            hits = [m for m in models if m.id.lower() == cand]
-            if not hits:
-                continue
-            hits.sort(
-                key=lambda m: (
-                    m.provider != pref,
-                    m.knowledge is None,
-                    m.provider not in FIRST_PARTY,
-                    m.provider,
-                )
-            )
-            return hits[0]
-        return None
+        candidates = normalize_model_id(model_id)
+        by_id: dict[str, list[ModelInfo]] = {}
+        by_bare: dict[str, list[ModelInfo]] = {}
+        for m in models:
+            by_id.setdefault(m.id.lower(), []).append(m)
+            by_bare.setdefault(bare_model_id(m.id), []).append(m)
+
+        def listed(cand: str) -> list[ModelInfo]:
+            exact = by_id.get(cand, [])
+            return exact + [m for m in by_bare.get(cand, []) if m not in exact]
+
+        as_written = re.sub(r"\[[^\]]*\]$", "", model_id.strip().lower())
+        spellings = [listed(c) for c in dict.fromkeys([as_written, *candidates])]
+
+        def earliest(hits: list[ModelInfo]) -> ModelInfo:
+            return min(hits, key=lambda m: (m.knowledge or date.max, m.provider, m.id))
+
+        first: ModelInfo | None = None
+        for keep in (lambda m: m.provider == pref, lambda m: m.provider in FIRST_PARTY):
+            for hits in spellings:
+                kept = [m for m in hits if keep(m)]
+                dated = [m for m in kept if m.knowledge is not None]
+                if dated:
+                    return earliest(dated)
+                first = first or (kept[0] if kept else None)
+        every = [m for hits in spellings for m in hits]
+        dated = [m for m in every if m.knowledge is not None]
+        if dated:
+            return earliest(dated)
+        return first or (every[0] if every else None)
 
     def latest_in_family(self, provider: str, family_word: str, today: date) -> ModelInfo | None:
         """Resolve aliases such as ``sonnet`` to the newest released model of that family."""

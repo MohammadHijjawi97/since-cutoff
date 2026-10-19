@@ -30,7 +30,7 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -50,12 +50,14 @@ from since_cutoff.apidiff import (
     PARAM_POSITIONAL_ONLY,
     PARAM_REMOVED,
     PARAM_REQUIRED,
+    TIER_INTERNAL,
     APIChange,
     dependency_module,
     diff_sources_with_unread,
     griffe_version,
     load_api,
     requirements,
+    unread_text,
 )
 from since_cutoff.apidiff import (
     DEPRECATED as CHANGE_DEPRECATED,
@@ -76,6 +78,7 @@ from since_cutoff.models import (
     ModelInfo,
     ModelRegistry,
     compare_date,
+    listing_note,
 )
 from since_cutoff.notes import (
     IMPORTED_APIS,
@@ -90,24 +93,34 @@ from since_cutoff.notes import (
     deps_hash,
     diff_note,
     diff_notes,
+    new_package_note,
     render_block,
     render_legacy_block,
 )
 from since_cutoff.project import Dependency, FileUse, Project
 from since_cutoff.providers import KNOWN_PROVIDERS, Provider, check_spec, split_spec
-from since_cutoff.pypi import SOURCE_SCHEMA, PyPI, Release, SourceTree, is_placeholder
+from since_cutoff.pypi import (
+    SOURCE_SCHEMA,
+    PyPI,
+    Release,
+    SourceTree,
+    changelog_url,
+    is_placeholder,
+)
 from since_cutoff.selection import (
     NAME_MATCH,
+    NAME_ONLY,
     OLD_FORM,
     PATH_MATCH,
     USES_API,
     Use,
     collapse,
     imported_rank,
+    match,
     ordered,
     project_rank,
     select,
-    used_names,
+    type_project,
     uses,
 )
 from since_cutoff.taskfile import TaskFile
@@ -275,6 +288,10 @@ class Settings:
     tasks_from: TaskFile | None = None
     # Baseline notes blocks tested next to the run's notes (``run --compare``).
     compare: list[str] = field(default_factory=list)
+    # ``--include-name-matches``: the uses matched by a member's name alone
+    # (selection.NAME_ONLY) are shown (tagged), written to the notes and counted by
+    # ``--fail-on`` and ``--annotate``; without it, no report has them.
+    include_name_matches: bool = False
 
 
 @dataclass
@@ -336,9 +353,15 @@ class PackageScan:
     # NEW (no release by the cutoff): the day of its first release, from the release list the
     # scan read anyway.
     first_released: str | None = None
+    # From the package's PyPI metadata, read with its release list: its one-line summary (NEW
+    # only), and where it documents its releases (pypi.changelog_url: a Changelog URL, else the
+    # GitHub releases page), for the notes. None when PyPI lists neither.
+    summary: str | None = None
+    changelog: str | None = None
     # CHANGED: modules the pinned release ships compiled, without a source or a stub, that hid
     # something the release at the cutoff had: the diff did not report its removal, and could
-    # not compare it (issue #52; diff_sources_with_unread).
+    # not compare it (issue #52; diff_sources_with_unread); and classes whose attributes a
+    # base outside the package may set, which were not compared (apidiff.UNREAD_BASE).
     unread: list[str] = field(default_factory=list)
     # CHANGED: modules of the pinned release that take their names from another distribution
     # (mcp 2.3's ``mcp/types/__init__.py`` is ``from mcp_types import *``) which could not be
@@ -369,10 +392,16 @@ class PackageScan:
 
     @property
     def counts(self) -> tuple[int, int]:
-        """``(breaking, deprecated)``, counted as in :attr:`distinct`."""
-        distinct = self.distinct
+        """``(breaking, deprecated)``, counted as in :attr:`distinct`, for the changes to
+        public APIs (APIChange.tier); :attr:`internal` counts the others."""
+        distinct = [c for c in self.distinct if c.tier != TIER_INTERNAL]
         deprecated = sum(c.kind == CHANGE_DEPRECATED for c in distinct)
         return len(distinct) - deprecated, deprecated
+
+    @property
+    def internal(self) -> int:
+        """The distinct changes to internal APIs (APIChange.tier), breaking or deprecated."""
+        return sum(c.tier == TIER_INTERNAL for c in self.distinct)
 
     def to_dict(self) -> dict[str, Any]:
         d = {k: v for k, v in self.__dict__.items() if k != "changes" and not k.startswith("_")}
@@ -392,7 +421,7 @@ class UsedAPI:
     note: Note
     uses: list[Use]  # most specific first (selection.uses)
     forms: dict[str, str]  # change id -> OLD_FORM or USES_API (selection.form)
-    match: str | None  # PATH_MATCH, or NAME_MATCH when only a name matched
+    match: str | None  # PATH_MATCH; NAME_MATCH when only a name matched; NAME_ONLY (tagged)
     # A switched dependency (DEPENDENCY_SWITCHED): the project's own entry for the distribution
     # the package no longer requires, ``{"name", "version", "source", "direct"}`` as
     # Project.dependencies has it (a lockfile, the environment, a pin), or None when the
@@ -428,16 +457,9 @@ def stale_warning(stale: dict[str, date]) -> str:
 
 
 def unread_warning(s: PackageScan) -> str:
-    """The scan's warning for a package whose pinned release ships compiled modules that hid
-    something the release at the cutoff had (:attr:`PackageScan.unread`)."""
-    one = len(s.unread) == 1
-    what = "is a compiled module" if one else "are compiled modules"
-    it = "it" if one else "them"
-    return (
-        f"{s.name} {s.locked}: {', '.join(s.unread)} {what} without a .py source or a .pyi "
-        f"stub, unlike in {s.cutoff_version}; since-cutoff does not run code, so changes to "
-        f"{it} and to the names taken from {it} are not reported"
-    )
+    """The scan's warning for a package whose diff could not compare everything
+    (:attr:`PackageScan.unread`: compiled modules, classes with a base outside the package)."""
+    return unread_text(s.name, s.locked or "?", s.cutoff_version or "?", s.unread)
 
 
 def reexport_warning(s: PackageScan) -> str:
@@ -599,6 +621,10 @@ class ScanResult:
     # reached, with the day of each copy (PyPI.stale, this scan's packages only): its warning
     # is in ``warnings``, and here for reports that pick which warnings to show (MCP).
     stale: dict[str, date] = field(default_factory=dict)
+    # Whether the reports, the notes (diff_notes, the block), ``--fail-on`` and ``--annotate``
+    # have the uses matched by a member's name alone (selection.NAME_ONLY): hidden from all of
+    # them unless Settings.include_name_matches asked for them (:meth:`uses`).
+    name_matches: bool = False
 
     @property
     def changed(self) -> list[PackageScan]:
@@ -616,12 +642,19 @@ class ScanResult:
     def package(self, name: str) -> PackageScan:
         return next(p for p in self.packages if p.name == name)
 
-    def uses(self, package: PackageScan) -> tuple[FileUse, ...]:
+    def uses(
+        self, package: PackageScan, *, name_matches: bool | None = None
+    ) -> tuple[FileUse, ...]:
         """The files of the project's code that import the package (none when it does not).
 
-        ``create`` in a file says nothing about a package that file does not import.
+        ``create`` in a file says nothing about a package that file does not import. Without
+        ``name_matches`` (by default, :attr:`name_matches`), the files keep no names for the
+        name-only tier (FileUse.loose): no report, note or count has a NAME_ONLY use.
         """
-        return self.project.code_use(package.import_names)
+        files = self.project.code_use(package.import_names)
+        if self.name_matches if name_matches is None else name_matches:
+            return files
+        return tuple(replace(f, loose=frozenset()) if f.loose else f for f in files)
 
     def ranked(self, package: PackageScan, *, scope: str = SCOPE_USED) -> list[APIChange]:
         """The package's distinct changes, those the project's code uses first
@@ -634,22 +667,63 @@ class ScanResult:
         key = imported_rank if scope == SCOPE_IMPORTED else project_rank
         return sorted(package.distinct, key=lambda c: key(c, files))
 
-    def used_changes(self, package: PackageScan) -> list[APIChange]:
+    def used_changes(
+        self, package: PackageScan, *, name_matches: bool | None = None
+    ) -> list[APIChange]:
         """The package's distinct changes that the project's code uses
-        (:func:`selection.used_names`), in the order of :meth:`ranked`."""
-        files = self.uses(package)
+        (:func:`selection.used_names`), in the order of :meth:`ranked`; those matched by a
+        member's name alone (selection.NAME_ONLY) only with ``name_matches`` (by default,
+        :attr:`name_matches`)."""
+        files = self.uses(package, name_matches=name_matches)
         if not files:
             return []
-        return [c for c in self.ranked(package) if used_names(c, files)]
+        return [c for c in self.ranked(package) if match(c, files) is not None]
 
-    def diff_notes(self, *, suggestions: bool = False) -> list[Note]:
+    def diff_notes(
+        self,
+        *,
+        suggestions: bool = False,
+        merge: bool = False,
+        exclude: Collection[str] = (),
+        name_matches: bool | None = None,
+    ) -> list[Note]:
         """A note from the API diff (:func:`notes.diff_note`) for each changed API the project's
-        code uses, package by package in the order of the reports. No model is called, and
-        nothing of the libraries is run."""
+        code uses, package by package in the order of the reports; with ``merge``, one for
+        APIs that say the same (:func:`notes.diff_notes`). ``exclude`` (APIChange.api_key)
+        leaves out the APIs whose note a ``[type-checked]`` one stands in for (sync.propose),
+        before the others merge, so that a bullet they shared still names the rest. No model
+        is called, and nothing of the libraries is run. ``name_matches``: as for
+        :meth:`used_changes`."""
         return [
             note
             for p in self.changed
-            for note in diff_notes(self.used_changes(p), suggestions=suggestions)
+            for note in diff_notes(
+                [
+                    c
+                    for c in self.used_changes(p, name_matches=name_matches)
+                    if c.api_key not in exclude
+                ],
+                suggestions=suggestions,
+                changelog=p.changelog,
+                merge=merge,
+            )
+        ]
+
+    def new_package_notes(self) -> list[Note]:
+        """One note (:func:`notes.new_package_note`, ``[metadata]``) for each dependency first
+        released after the cutoff, or within the margin before it, that the project's code
+        imports (:meth:`new_imported`)."""
+        return [
+            new_package_note(
+                p.name,
+                p.locked or "",
+                p.first_released,
+                p.summary,
+                p.changelog,
+                p.locked_date,
+                self.target.margin if self.target.released_within_margin(p) else None,
+            )
+            for p in self.new_imported()
         ]
 
     def used_apis(self) -> list[UsedAPI]:
@@ -658,6 +732,7 @@ class ScanResult:
 
         Packages in the order of the reports, those the code uses in the old form first; in a
         package, the APIs used in the old form first, then in the order of :meth:`diff_notes`.
+        The uses matched by a member's name alone only with :attr:`name_matches`.
         """
         key = self._used_key()
         cached = self.__dict__.get("_used")
@@ -674,15 +749,19 @@ class ScanResult:
             }
             found = ordered(u for its in per_change.values() for u in its)
             how = {u.how for u in found}
-            match = PATH_MATCH if PATH_MATCH in how else NAME_MATCH if how else None
+            matched = next((m for m in (PATH_MATCH, NAME_MATCH, NAME_ONLY) if m in how), None)
             installed = self.installed(note.change)
             by_package.setdefault(p.name, []).append(
-                UsedAPI(p, note, found, forms, match, installed)
+                UsedAPI(p, note, found, forms, matched, installed)
             )
         order = [p.name for p in self.packages if p.name in by_package]
         order.sort(key=lambda name: all(u.form != OLD_FORM for u in by_package[name]))
         used = [
-            u for name in order for u in sorted(by_package[name], key=lambda u: u.form != OLD_FORM)
+            u
+            for name in order
+            for u in sorted(
+                by_package[name], key=lambda u: (u.match == NAME_ONLY, u.form != OLD_FORM)
+            )
         ]
         self.__dict__["_used"] = (key, used)
         return list(used)
@@ -714,6 +793,7 @@ class ScanResult:
         return (
             id(self.project.files),
             len(self.project.files),
+            self.name_matches,
             tuple((p.name, p.status, id(p.changes), len(p.changes)) for p in self.packages),
         )
 
@@ -749,17 +829,24 @@ class ScanResult:
         *,
         suggestions: bool = False,
         per_package: int | None = None,
+        exclude: Collection[str] = (),
     ) -> list[Note]:
-        """The notes from the API diff that a block of ``scope`` holds: for the changed APIs
-        the code uses (SCOPE_USED, :meth:`diff_notes`), or, for each changed package the code
-        imports, for those and the next most likely to matter, up to ``per_package``
+        """The notes a block of ``scope`` holds: from the API diff, for the changed APIs
+        the code uses (SCOPE_USED, :meth:`diff_notes`, APIs that say the same merged), or, for
+        each changed package the code imports, for those and the next most likely to matter,
+        up to ``per_package``
         (:data:`IMPORTED_APIS` by default) APIs in all (SCOPE_IMPORTED, ``sync --scope
         imported``; :meth:`ranked`'s order for that scope, in which a subpackage's move counts
         once, however many modules moved: selection.package_moves). Of the APIs the code does
         not use, a params class's field that mirrors a callable's lost parameter and an
-        internal hook get no note (:func:`_not_worth_a_note`)."""
+        internal hook get no note (:func:`_not_worth_a_note`). With either scope, one note per
+        dependency first released after the cutoff that the code imports
+        (:meth:`new_package_notes`). ``exclude`` is as in :meth:`diff_notes`: the APIs whose
+        note a ``[type-checked]`` one stands in for, left out before the rest merge (they still
+        count towards ``per_package``)."""
         if scope != SCOPE_IMPORTED:
-            return self.diff_notes(suggestions=suggestions)
+            from_diff = self.diff_notes(suggestions=suggestions, merge=True, exclude=exclude)
+            return from_diff + self.new_package_notes()
         budget = per_package or IMPORTED_APIS
         notes: list[Note] = []
         for p in self.changed:
@@ -780,9 +867,12 @@ class ScanResult:
                 if key in used or not all(_not_worth_a_note(c, lost) for c in changes):
                     chosen.append(key)
             notes += diff_notes(
-                [c for c in ranked if c.api_key in set(chosen)], suggestions=suggestions
+                [c for c in ranked if c.api_key in set(chosen) and c.api_key not in exclude],
+                suggestions=suggestions,
+                changelog=p.changelog,
+                merge=True,
             )
-        return notes
+        return notes + self.new_package_notes()
 
     def notes_block(self, notes: list[Note], scope: str = SCOPE_USED) -> str | None:
         """The AGENTS.md block (format 2) for ``notes``, or None when there are none."""
@@ -1217,9 +1307,10 @@ class Engine:
             )
         info = self.registry.require(model_id, provider_name or None)
         assert info.knowledge is not None
-        return ModelTarget(
-            spec, info.id, info.knowledge, "models.dev" + source_note, info, effort, margin
-        )
+        # Whose listing the cutoff is from, when not the maker's (issue #87).
+        listing = listing_note(info)
+        source = "models.dev" + (f", {listing}" if listing else "") + source_note
+        return ModelTarget(spec, info.id, info.knowledge, source, info, effort, margin)
 
     def _check_spec(self, allow_calls: bool) -> None:
         """:func:`check_spec` for the tested model, with the vendors the registry knows (read
@@ -1311,12 +1402,17 @@ class Engine:
             self.reporter.warn(warnings[-1])
         for s in scans:
             s.imported = project.imports(s.import_names) if s.import_names else None
+        # The receivers of the project's code, typed from the pinned releases' annotations
+        # (selection.type_project): a copy of the project, so that another scan starts afresh.
+        project = type_project(project, scans, self.pypi, self.store)
         # Every report lists the packages in this order: those with changes first, of those
         # the ones the code imports, then by breaking changes and deprecations.
         scans.sort(
             key=lambda s: (s.status != CHANGED, not s.imported, *(-n for n in s.counts), s.name)
         )
-        return ScanResult(project, target, scans, warnings, stale)
+        return ScanResult(
+            project, target, scans, warnings, stale, self.settings.include_name_matches
+        )
 
     def _scan_versions(self, dep: Dependency, target: ModelTarget, project: Project) -> PackageScan:
         """Which release of ``dep`` the model is compared from: the newest published by
@@ -1332,12 +1428,14 @@ class Engine:
             assert scan.locked is not None
             locked = self.pypi.release(dep.key, scan.locked)
             scan.locked_date = locked.uploaded.date().isoformat()
+            # From the metadata the release list came with (cached): no request of its own.
+            scan.changelog = changelog_url(self.pypi.project_urls(dep.key))
             at_cutoff = self.pypi.version_at(dep.key, target.compare_date)
             if at_cutoff is None:
                 scan.status, scan.reason = NEW, "first released after the cutoff"
-                # From the release list version_at just read (cached): no request of its own.
                 first = min((r.uploaded for r in self.pypi.releases(dep.key)), default=None)
                 scan.first_released = first.date().isoformat() if first else None
+                scan.summary = self.pypi.summary(dep.key)
                 if first is not None and target.compare_date < first.date() <= target.cutoff:
                     scan.reason = (
                         f"first released within {target.margin} days of the cutoff "
@@ -2120,7 +2218,8 @@ class Engine:
                 example_type_checks=True,
             )
         # No example that type-checks: the note from the diff, which says only what it shows.
-        note = diff_note([change], lambda c: self._new_api(c, scan))
+        changelog = next((p.changelog for p in scan.packages if p.name == change.package), None)
+        note = diff_note([change], lambda c: self._new_api(c, scan), changelog=changelog)
         note.example_type_checks = False if checked else None
         return note
 
