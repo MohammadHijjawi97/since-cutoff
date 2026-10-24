@@ -41,6 +41,87 @@ welcome, and first-time contributors are very welcome.
 | `cli.py` | Command-line interface; it imports the modules above only in the commands that use them, so that `--help` and `status --hook` start fast |
 | `progress.py` | The CLI's progress output with rich: stage lines, a live bar in a terminal, lines in a log |
 
+### Module relationships and I/O boundaries
+
+The diagram groups the stages by command: a **scan** follows the lockfile to the
+release at the model's knowledge cutoff, diffs its API, finds uses in the
+project and prepares evidence-backed notes. Only **run** invokes a model.
+Solid arrows show imports or calls confirmed against the source; dotted arrows show
+the *order of stages orchestrated by the engine*, not additional direct imports.
+Modules shared by both paths are shown with scan to keep the diagram compact.
+
+```mermaid
+flowchart TB
+  CLI["cli.py (commands)"] --> ENG["engine.py (scan / run)"]
+  MCP["mcp_server.py (tools)"] --> ENG
+  CLI --> REPORT["report.py (output)"]
+  CLI --> SYNC["sync.py (notes / status)"]
+  SYNC --> ENG
+
+  subgraph SCAN["scan: lockfile to versioned notes"]
+    direction LR
+    PROJECT["project.py (lockfiles / imports)"]
+    PYPI["pypi.py (releases / sources)"]
+    API["apidiff.py (static API diff)"]
+    SEL["selection.py (uses in code)"]
+    NOTES["notes.py (evidence / notes)"]
+    CACHE["cache.py (disk cache)"]
+    MODELS["models.py (cutoff registry)"]
+    HOSTS["hosts.py (agent settings)"]
+    PROJECT -.-> PYPI -.-> API -.-> SEL -.-> NOTES
+  end
+
+  subgraph RUN["run: model probes and evaluation"]
+    direction LR
+    PROMPTS["prompts.py (run tasks)"]
+    PROVIDERS["providers/ (model invocation)"]
+    CHECK["checker.py (type checks)"]
+    BASE["baselines.py (comparators)"]
+    TASK["taskfile.py (task files)"]
+    STATS["stats.py (statistics)"]
+    PROMPTS -.-> PROVIDERS -.-> CHECK -.-> BASE -.-> TASK
+  end
+
+  ENG --> PROJECT
+  ENG --> PYPI
+  ENG --> API
+  ENG --> SEL
+  ENG --> NOTES
+  ENG --> CACHE
+  ENG --> MODELS
+  ENG --> HOSTS
+  ENG --> PROMPTS
+  ENG --> PROVIDERS
+  ENG --> CHECK
+  ENG --> BASE
+  ENG --> TASK
+  NOTES -.-> REPORT
+  NOTES -.-> SYNC
+  REPORT --> STATS
+  PYPI --> NET["net.py (PyPI / models.dev / HTTP)"]
+  MODELS --> NET
+  PROVIDERS --> NET
+  PROVIDERS --> MODEL(("model API / Claude CLI"))
+
+  classDef network stroke:#d78400,stroke-width:2px,stroke-dasharray:5 4;
+  classDef model stroke:#c358ad,stroke-width:3px;
+  class NET network;
+  class MODEL model;
+```
+
+The network boundary (dashed outline) is reached through `net.py` by
+`pypi.py` (PyPI), `models.py` (models.dev), and the HTTP providers in
+`providers/http_api.py` (Anthropic and OpenAI-compatible APIs). The Claude Code
+provider instead starts the `claude` CLI. Only `Engine.run()` calls model
+providers; `scan`, `sync` and `status` do not.
+
+The source-level relationships are: `cli.py` calls the engine, report and sync;
+`mcp_server.py` and `sync.py` use the engine; the engine imports the scan and
+run modules shown; `report.py` imports `stats.py`; and `pypi.py`, `models.py`,
+and `providers/http_api.py` import `net.py`. The dotted stage order is a
+readable summary of `Engine.scan()` / `Engine.run()`, not an extra dependency
+graph.
+
 ## Development setup
 
 See the [environment, files and exit-code reference](docs/reference.md) for runtime settings.
