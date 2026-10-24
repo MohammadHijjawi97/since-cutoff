@@ -341,7 +341,7 @@ huggingface-hub 那条说明并不完全准确：`resume_download` 是在 1.0 �
 一份技术报告（2026 年 10 月）在 1,607 次 Agent 会话中测试了 `sync` 写入的块，并把结果放进一个盈亏平衡模型，其中所有长度都按模型调用次数计算。主要发现：
 
 - **节省很小，而且只出现在一个模型上。** 在 Opus 5.5 上，主研究中该块把成本降到单独使用 Claude Code 的 0.80 倍（95% CI 0.70-0.90），在 8 个新任务上把 token 降到 0.79 倍（经 Holm 校正后未检测到，p = 0.094）；一次重复实验没有达到预先登记的标准，Sonnet 5.5、Haiku 5.5 和一个开放权重 Agent 都没有可检测到的节省。所有任务都由 Opus 5.5 编写。
-- **只用头部的效果差不多。** 没有任何预先登记的检验能把完整的块与只列出已变更包名的头部区分开，也无法把它与一条通用的“检查已安装的签名”提醒区分开。
+- **只用头部的效果差不多。** 没有任何预先登记的检验能把完整的块与只列出已变更包名的头部区分开，也无法把它与一条通用的“检查已安装的签名”提醒区分开。since-cutoff 0.6.0 起，`sync --header-only` 可以只写这个头部。
 - **成本很低，但仅靠受影响的会话收不回来。** 在作者的 Agent 上下文中，一个 704 token 的块约占一个上下文成本的 0.4%；假设每个受影响上下文的节省固定，只有当需要已变更 API 的上下文占全部上下文的 14%-49% 时，这些上下文才能单独收回成本，而估计的比例只有 0.8%-7%。
 - **起决定作用的是对其他所有会话的影响。** 对照任务估计它能节省 6.6%，但无法与零区分开。默认关闭是一种规避损失的选择，并不证明它会亏钱；一次每组约 2,500-2,900 次会话的线上 A/B 测试可以给出答案。
 
@@ -475,7 +475,7 @@ jobs:
 | `step-summary` | `true` | 把 Markdown 摘要加到任务摘要（job summary）中 |
 | `cache` | `true` | 在多次运行之间保留 PyPI 元数据、包源码和 API 对比结果（`fail-on-changes` 让任务失败时也会保留） |
 | `args` | | 额外的 `since-cutoff scan` 参数，例如 `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.5.0` | 要运行的 since-cutoff 版本，或 `latest` |
+| `since-cutoff-version` | `0.6.0` | 要运行的 since-cutoff 版本，或 `latest` |
 
 `args: --fail-on old-form --annotate github` 只在你的代码以旧写法用到有变更的 API 时让任务失败，并为每个用到这类 API 的文件添加注解：旧写法为警告（warning），其他情况为提示（notice）。
 
@@ -487,7 +487,7 @@ jobs:
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # 加上 --fail-on=old-form 可以阻止提交

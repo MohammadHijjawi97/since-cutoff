@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-24
+
+Upgrading: cached sources are extracted again once and cached diffs are recomputed (source
+schema 3, diff schema 22, receiver map schema 3); `run` does not reuse tasks or answers cached by
+0.5 (prompt version 3), and it needs the `[run]` extra. A notes block written by an earlier
+version compared from the cutoff itself, so `status` and `sync --check` report it out of date
+until `since-cutoff sync` rewrites it (`--cutoff-margin 0` keeps the old comparison).
+
+- The comparison release is the latest release published at least 30 days before the model's
+  training cutoff, not the last one before it: a model knows the last weeks before its cutoff
+  least. llama-index-core 0.13.0, which removed `ReActAgent.from_tools` and
+  `FunctionCallingAgent`, was uploaded the day before claude-sonnet-4-5's cutoff; a project
+  pinning 0.14.25 that uses both was told it used none of the changed APIs, and now gets both
+  (#98). `--cutoff-margin DAYS`, `SINCE_CUTOFF_CUTOFF_MARGIN`, the MCP tools' `cutoff_margin` and
+  the Action's `cutoff-margin` set it (`0` for the old rule). Every message calls it the
+  comparison release and says what the changes came after: "Your code uses 2 APIs that changed
+  after 2025-07-01, 30 days before claude-sonnet-4-5's training cutoff (2025-07-31)" (#115).
+- Method calls on objects whose class the file never names are matched, typed from the pinned
+  release's own annotations (`df = pd.read_csv(...)` is a `DataFrame`; `llm.predict(q)` on a
+  `ChatOpenAI` is langchain-core's `BaseChatModel.predict`): a project pinning pandas 3.0.6 and
+  polars 2.0.0 went from 4 APIs used to 10 (#100). A change to an inherited method is matched
+  under the public classes that inherit it (#97). Matches by a method's name alone are hidden
+  unless `--include-name-matches` asks for them, and the scan says how many it hid (#115).
+- More of what changed is seen: parameters removed behind `**kwargs: Unpack[SomeTypedDict]`
+  (pandas 3.0's `read_csv` lost five that way; #60, #97), and names a module star-imports from
+  another distribution (mcp 2.3's `mcp.types` comes from mcp-types, which renamed every field;
+  #98). Each change is public or internal: counts give the internal ones apart ("+3 internal",
+  "19 (+3)"), and `scan --internal` lists them (#97).
+- Warnings instead of wrong answers where the diff cannot see: a module shipped compiled
+  without a `.py` or `.pyi` (#52, #83), attributes a base class in another package may set, a
+  star-imported distribution that could not be downloaded, and sources in a syntax the running
+  Python cannot parse, now a package that could not be checked, with the Python that can, where
+  0.5 said numpy 2.5.4 had no breaking changes on Python 3.10 (`scan --fail-on` exits with 3)
+  (#116). A metapackage says which of its parts were checked and is in no count of
+  dependencies, a project whose only dependency is one no longer fails, and an empty placeholder
+  release is counted apart (#115).
+- PEP 702's `@deprecated` imported through a compatibility module is recognised (#44, #82); a
+  class that became a function, or the reverse, is no longer "old form" at a plain call; a
+  docstring's `versionadded`/`versionchanged` note stops a wrong "probable rename".
+- Reproducible diffs: modules are read in name order, cached diffs are keyed on griffe's
+  version, griffe 2.3.1's parameter kinds are read correctly, and golden diffs of httpx 0.27.2
+  -> 0.28.1 and click 8.1.8 -> 8.2.0 run in CI (#85, #92, #93). Each download is checked against
+  the sha256 PyPI lists (#75).
+- Notes name the replacement the library's own deprecation text gives, in its words, tagged
+  `[diff + library]` (httpx 0.28: "Use `proxy` or `mounts` instead of `proxies`"), read also from
+  `.. deprecated::` bodies, `@Appender` docstrings, a removed member's deprecated class and the
+  public subclasses (pandas' `NDFrame.swapaxes`: "Use `DataFrame.transpose` or
+  `Series.transpose` instead."), with the library's code quoted whole (#14, #99, #116). Where the
+  text names none, the note links the migration guide, changelog or releases page "for the
+  changes since" the comparison release. Bullets that say the same of several APIs of a package
+  merge (#5); a dependency first released after the cutoff, or within the margin, gets a
+  `[metadata]` note; a deprecated call form (an `@overload`) is named by its own keywords.
+- `sync --header-only` writes only the block's header: each changed package with its pinned
+  version and the release it is compared from, and the instruction to follow them, with no
+  change lines. It is the block of the benchmark's header-only arm, and the block keeps the
+  choice (`--no-header-only` writes the change lines again). `sync --profile evaluated` selects
+  the configuration the benchmark measured, `--scope imported` with up to 5 APIs per package
+  (#121).
+- With both AGENTS.md and CLAUDE.md, `sync` and `run --apply` write the block to both when
+  CLAUDE.md does not import AGENTS.md (Claude Code reads only CLAUDE.md), and say how to keep
+  one copy (#13, #102).
+- For scripts and agents: `sync --json` (#89), `models --json` and `--makers` (#25), and the MCP
+  prompts `check_project` and `before_upgrade` (#78). Gemini CLI's model is read from
+  `GEMINI_MODEL` or `.gemini/settings.json` (#76), Qwen, Kimi, GLM and Llama ids resolve to their
+  makers (#77), and a model listed by its maker and by gateways takes the requested provider's
+  cutoff, else the maker's, else the earliest (#87).
+- The pip block of a conda `environment.yml` is read like a requirements file, with its `-r`
+  includes (#3, #10). When PyPI cannot be reached, a release list cached more than 12 hours
+  earlier is used and dated (#54, #84). `--base-url` wins over `OPENAI_BASE_URL` (#94, #95).
+- basedpyright, which only `run` uses, is the `[run]` extra: `pip install "since-cutoff[run]"`
+  or `uvx --with basedpyright since-cutoff run` (#96). A plain install measured 73.8 MB of
+  packages, against 255.1 MB with the extra (pip, Windows, Python 3.13). `--help` and
+  `--version` start in about 130 ms there. `cache info` shows the cache by kind, `cache clear
+  --sources`, `--diffs` or `--pypi` keeps `run`'s paid model answers (#30), and
+  `SINCE_CUTOFF_CACHE_MAX_MB` caps the extracted sources (default 2048).
+- Research: a technical report on whether the block `sync` writes pays for its tokens
+  (research/dependency-block-study, with its data and scripts; summarised in docs/research.md
+  and the four READMEs) (#120). Over 1,607 agent sessions the block saved cost only on Opus 5.5
+  (0.80 of no block in the main study), the header alone did about as well, and in real agent
+  contexts it costs about 0.4% of a context, so whether it pays depends on its uncertain effect
+  on the contexts that need no changed API; a live A/B test would settle it.
+- Docs: a README for newcomers with a quick start and a FAQ, in all four languages (#101), a
+  troubleshooting guide (#91), a reference for environment variables, files and exit codes with
+  a drift check (#69, #88), the 30-day margin described everywhere (#103, #115), and the docs
+  site, the AI stack page and the scan image made again with 0.6 (#117).
+
+Thanks to @soyeladice-svg (#76, #77, #78, #88, #89, #91), @wufangyong973 (#10), @HeaTTap (#75)
+and @atharvayewale84-stack (#79) for their contributions.
+
+<details><summary>All changes in 0.6.0</summary>
+
 - Add a technical report on whether the dependency block that `sync` writes pays for its tokens
   (research/dependency-block-study: the paper and its PDF, de-identified per-run data, the
   protocols and the analysis scripts; summary in docs/research.md, linked from the docs site's
@@ -528,6 +619,8 @@
   an included file that does not exist. The pre-commit hooks, the Action's cache key and the
   README's workflow `paths:` take `environment.yml` and `environment.yaml` into account. PyYAML
   6.0.1 or later is now a dependency (6.0 does not install on Python 3.12 and later).
+
+</details>
 
 ## 0.5.0 - 2026-09-28
 

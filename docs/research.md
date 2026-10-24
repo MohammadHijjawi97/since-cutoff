@@ -50,7 +50,8 @@ saving was detected on Sonnet 5.5, Haiku 5.5, the older-cutoff model or the open
 
 **The header alone did about as well.** No pre-committed test separated the full block from the header alone or
 from the generic warning. In the study that ran all five arms together, tokens were 0.73 of no block with the header,
-0.75 with the full block, 0.81 with the irrelevant lines and 0.94 with the generic warning.
+0.75 with the full block, 0.81 with the irrelevant lines and 0.94 with the generic warning. since-cutoff 0.6.0 writes
+the header alone with `sync --header-only`, the full block's header word for word.
 
 **The block is cheap, but affected contexts alone do not repay it.** Every length in the break-even model is counted
 in model calls. In the author's 1,308 agent contexts (mostly subagent runs, 45.3 model calls on average) the median

@@ -121,7 +121,7 @@ A meta line records the model, cutoff and hashes of the dependencies and block, 
 \paragraph{Evaluated configuration.}
 All agent studies but one small follow-up (Appendix~\ref{app:followup}) used release 0.4.1 with a non-default scope (\code{sync} \flag{scope} \code{imported} \flag{model} \code{<id>} \flag{target} \code{CLAUDE.md}), which writes lines on every changed API of each imported package, called or not, at the default cap of five lines per package.
 The default \code{used} scope (changed APIs the code uses) is unevaluated; in our random sample (\S\ref{sec:exposure}) it writes a block for 13\% of repositories (imported scope: 47\%).
-Header-only output, which a deployment would need to run the header alone, is in no release of the tool (the latest release when this report was written is 0.5.0).
+Header-only output, which a deployment would need to run the header alone, was added after these studies and ships in \tool 0.6.0 (\code{sync} \flag{header-only}, which writes the full block's header word for word).
 
 \paragraph{Detector quality.}
 Of 154 documented changes in seven libraries, 0.4.1 found 49\%\ci{41}{57}, AexPy 53\% and \code{griffe check} 55\% (\code{griffe check} found 10 that 0.4.1 missed, none the reverse); all 56 sampled 0.4.1 reports were accurate, and a five-line block holds 8.4\% of the 154 (AI-judged; Appendix~\ref{app:recall}); we contribute delivery and evaluation, not a better diff.
@@ -285,7 +285,7 @@ step & what to do (evidence) \\
 \midrule
 Exposure & Run \code{sync} \flag{dry-run} \flag{scope}~\code{imported} \flag{model}~\code{<id>}; no block, no need (47\% of random repositories get one). \\
 Default & Off, as a loss-averse choice, unless a live A/B test shows a net saving (Lesson~2). Saving only on Opus 5.5, on tasks it wrote; a 704-token block adds about 0.4\% to a context's cost and pays at the author's measured $f$ once $u$ exceeds 0.2--0.4\%, which our controls neither show nor exclude. \\
-Test & Pass rate first if below ceiling; then cost, against header-only and generic-warning arms in the same batches (\aGen is a control; header-only output is in no release); pre-selected affected sessions give $s$, others $u$. \\
+Test & Pass rate first if below ceiling; then cost, against header-only and generic-warning arms in the same batches (\aGen is a control; header-only output ships in 0.6.0 as \code{sync} \flag{header-only}); pre-selected affected sessions give $s$, others $u$. \\
 Measure & $f$ (the author: 0.8--7\% of agent contexts) and the net effect over all sessions in a live A/B test (about 2,500--2,900 sessions per arm at our spread). \\
 Size & Under about $2{,}700$--$5{,}100 \times f$ tokens at $u$ = 0 in contexts like ours (43 at $f$ = 0.8\%); change lines only for APIs your sessions hit (7 of 25). \\
 Guard & Fail CI on a stale block (\code{sync} \flag{check}; offline: \code{status}); review like code; \code{unapply} rolls back. \\

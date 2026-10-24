@@ -680,6 +680,7 @@ resultados principales:
   ningún ahorro detectable. Todas las tareas las escribió Opus 5.5.
 - **La cabecera sola funcionó casi igual.** Ninguna prueba registrada de antemano distinguió el bloque completo de
   una cabecera que solo nombra los paquetes cambiados, ni de un aviso genérico de "comprueba las firmas instaladas".
+  Desde since-cutoff 0.6.0, `sync --header-only` escribe solo esa cabecera.
 - **Barato, pero las sesiones afectadas no lo amortizan por sí solas.** En los contextos de agente del autor, un
   bloque de 704 tokens cuesta alrededor del 0,4 % de un contexto; suponiendo un ahorro fijo por contexto afectado, los
   contextos que necesitan una API cambiada solo lo
@@ -847,7 +848,7 @@ modificada.
 | `step-summary` | `true` | añade el resumen en Markdown al resumen del trabajo |
 | `cache` | `true` | conserva entre ejecuciones los metadatos de PyPI, el código fuente de los paquetes y los diffs de API (también cuando `fail-on-changes` hace fallar el trabajo) |
 | `args` | | más argumentos para `since-cutoff scan`, p. ej. `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.5.0` | la versión de since-cutoff que se ejecuta, o `latest` |
+| `since-cutoff-version` | `0.6.0` | la versión de since-cutoff que se ejecuta, o `latest` |
 
 `args: --fail-on old-form --annotate github` solo hace fallar el trabajo cuando tu código usa una
 API modificada en la forma antigua, y anota cada archivo que usa una: un aviso (*warning*) para la
@@ -865,7 +866,7 @@ de importación se cuenta una sola vez.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # añade --fail-on=old-form para bloquear el commit

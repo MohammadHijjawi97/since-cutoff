@@ -689,7 +689,7 @@ résultats :
   n'ont montré aucune économie détectable. Toutes les tâches ont été écrites par Opus 5.5.
 - **L'en-tête seul a fait presque aussi bien.** Aucun test enregistré à l'avance n'a distingué le bloc complet d'un
   en-tête qui ne fait que nommer les paquets modifiés, ni d'un avertissement générique « vérifiez les signatures
-  installées ».
+  installées ». Depuis since-cutoff 0.6.0, `sync --header-only` n'écrit que cet en-tête.
 - **Peu coûteux, mais pas remboursé par les seules sessions concernées.** Dans les contextes d'agent de l'auteur, un
   bloc de 704 tokens coûte environ 0,4 % d'un contexte ; en supposant une économie fixe par contexte concerné, les
   contextes qui ont besoin d'une API modifiée ne le
@@ -859,7 +859,7 @@ modifiée.
 | `step-summary` | `true` | ajoute le résumé Markdown au résumé du job |
 | `cache` | `true` | conserve entre les exécutions les métadonnées PyPI, les sources des paquets et les diffs d'API (y compris quand `fail-on-changes` fait échouer le job) |
 | `args` | | arguments supplémentaires pour `since-cutoff scan`, par exemple `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.5.0` | la version de since-cutoff à exécuter, ou `latest` |
+| `since-cutoff-version` | `0.6.0` | la version de since-cutoff à exécuter, ou `latest` |
 
 `args: --fail-on old-form --annotate github` ne fait échouer le job que si votre code utilise une
 API modifiée sous l'ancienne forme, et annote chaque fichier qui en utilise une : un
@@ -877,7 +877,7 @@ plusieurs chemins d'import n'est compté qu'une fois.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # ajoutez --fail-on=old-form pour bloquer le commit

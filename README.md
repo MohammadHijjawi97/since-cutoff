@@ -634,7 +634,8 @@ a break-even model, with every length counted in model calls. The key findings:
   replication did not meet its pre-committed rule, and
   Sonnet 5.5, Haiku 5.5 and an open-weight agent showed no detectable saving. All tasks were written by Opus 5.5.
 - **The header alone did about as well.** No pre-committed test separated the full block from a header that only
-  names the changed packages, or from a generic "check the installed signatures" warning.
+  names the changed packages, or from a generic "check the installed signatures" warning. since-cutoff 0.6.0 writes
+  that header alone with `sync --header-only`.
 - **Cheap, but not repaid by the affected sessions alone.** In the author's agent contexts a 704-token block costs
   about 0.4% of a context; assuming a fixed saving per affected context, the contexts that need a changed API repay it only once they make up 14-49% of all
   contexts, against an estimated 0.8-7%.
@@ -802,7 +803,7 @@ Without `paths`, the job also runs when a code change starts using a changed API
 | `step-summary` | `true` | add the Markdown summary to the job summary |
 | `cache` | `true` | keep PyPI metadata, package sources and API diffs between runs (also when `fail-on-changes` fails the job) |
 | `args` | | more `since-cutoff scan` arguments, e.g. `--all-deps --limit 20` |
-| `since-cutoff-version` | `0.5.0` | the since-cutoff release to run, or `latest` |
+| `since-cutoff-version` | `0.6.0` | the since-cutoff release to run, or `latest` |
 
 `args: --fail-on old-form --annotate github` fails the job only when your code uses a changed
 API in the old form, and annotates each file that uses one: a warning for the old form, a notice
@@ -819,7 +820,7 @@ Outputs: `changed-packages` (comma-separated), `changes` (breaking changes), `de
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/MohammadHijjawi97/since-cutoff
-    rev: v0.5.0
+    rev: v0.6.0
     hooks:
       - id: since-cutoff-scan
         args: [--model=anthropic:claude-sonnet-4-5]  # add --fail-on=old-form to block the commit

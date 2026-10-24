@@ -37,7 +37,8 @@ developer's real agent contexts.
    model and one open-weight agent (Qwen3-Coder) showed no detectable saving.
 3. **The header alone did about as well.** No pre-committed test separated the full block from the header alone or
    from the generic warning; in the study that ran all arms together, tokens were 0.73 of no block with the header and
-   0.75 with the full block.
+   0.75 with the full block. since-cutoff 0.6.0 writes the header alone with `sync --header-only`, the full block's
+   header word for word.
 4. **The block is cheap, but affected contexts alone do not repay it.** In the author's 1,308 agent contexts (mostly
    subagent runs, 45.3 model calls on average) the median real block (704 tokens) costs about $0.012 per context,
    0.4% of a context's measured cost ($2.96). At no effect on other contexts, and assuming a fixed saving per affected context, it pays only once 14% of contexts need a
