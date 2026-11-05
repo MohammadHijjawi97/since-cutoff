@@ -2,9 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-.env
 build/
 dist/
+temp_auto_push.bat
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
@@ -13,3 +13,7 @@ dist/
 htmlcov/
 .since-cutoff/
 study/
+.gitignore
+branch_structure.json
+config.bat
+node_modules
